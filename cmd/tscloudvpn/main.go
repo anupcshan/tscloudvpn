@@ -337,7 +337,9 @@ func Main() error {
 				if r.Method == "POST" {
 					if r.PostFormValue("action") != "delete" {
 						logger := log.New(io.MultiWriter(flushWriter{w}, os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
-						err := createInstance(r.Context(), logger, tsClient, awsConfig, region)
+						ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
+						defer cancelFunc()
+						err := createInstance(ctx, logger, tsClient, awsConfig, region)
 						if err != nil {
 							w.Write([]byte(err.Error()))
 						} else {
