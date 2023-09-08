@@ -6,6 +6,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.21.0
 	github.com/aws/aws-sdk-go-v2/config v1.18.38
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.115.0
+	github.com/bradenaw/juniper v0.13.1
 	github.com/tailscale/tailscale-client-go v1.12.0
 	tailscale.com v1.48.1
 )

@@ -1,0 +1,28 @@
+{{ template "header.tmpl" . }}
+
+<div class="row">
+  <div class="col-md-12">
+    <h1>Regions</h1>
+    <table class="table">
+      <tbody>
+        {{ range . }}
+        <tr>
+          <td><a href="/regions/{{.Region}}">{{.Region}}</a></td>
+          <td>{{if .HasNode}}<span class="label label-success">running</span>{{end}}</td>
+          <td>
+            <form action="/regions/{{.Region}}" method="post">
+            {{if .HasNode}}
+              <button class="btn btn-danger" name="action" value="delete" type="submit">Delete</button>
+            {{else}}
+              <button class="btn btn-primary" name="action" value="create" type="submit">Create</button>
+            {{end}}
+            </form>
+          </td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{{ template "footer.tmpl" . }}

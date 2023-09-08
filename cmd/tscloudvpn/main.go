@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	html_template "html/template"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"text/template"
@@ -17,10 +19,15 @@ import (
 
 	_ "embed"
 
+	"github.com/anupcshan/tscloudvpn/cmd/tscloudvpn/assets"
+	"github.com/anupcshan/tscloudvpn/internal/utils"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/bradenaw/juniper/container/tree"
+	"github.com/bradenaw/juniper/xslices"
+	"github.com/bradenaw/juniper/xsort"
 
 	"github.com/tailscale/tailscale-client-go/tailscale"
 
@@ -32,8 +39,12 @@ const (
 	debianImageName = "debian-12-arm64-20230723-1450"
 )
 
-//go:embed install.sh.tmpl
-var initData string
+var (
+	//go:embed install.sh.tmpl
+	initData string
+
+	templates = html_template.Must(html_template.New("root").ParseFS(assets.Assets, "*.tmpl"))
+)
 
 func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale.Client, awsConfig aws.Config, region string) error {
 	capabilities := tailscale.KeyCapabilities{}
@@ -183,9 +194,30 @@ func (f flushWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+func listRegions(ctx context.Context, awsConfig aws.Config) ([]string, error) {
+	// Any region works. Pick something close to where this process is running to minimize latency.
+	awsConfig.Region = "us-west-2"
+	client := ec2.NewFromConfig(awsConfig)
+
+	regionsResp, err := client.DescribeRegions(ctx, &ec2.DescribeRegionsInput{})
+	if err != nil {
+		return nil, err
+	}
+
+	var regions []string
+	for _, region := range regionsResp.Regions {
+		regions = append(regions, aws.ToString(region.RegionName))
+	}
+
+	sort.Strings(regions)
+
+	return regions, nil
+}
+
 func Main() error {
 	log.SetFlags(log.Lshortfile | log.Lmicroseconds)
 	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
 	awsConfig, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return err
@@ -246,6 +278,12 @@ func Main() error {
 		s.Close()
 	}()
 
+	lazyListRegions := utils.LazyWithErrors(
+		func() ([]string, error) {
+			return listRegions(ctx, awsConfig)
+		},
+	)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/create", func(w http.ResponseWriter, r *http.Request) {
 		region := r.URL.Query().Get("region")
@@ -257,6 +295,86 @@ func Main() error {
 			w.Write([]byte("ok"))
 		}
 	})
+	mux.Handle("/", http.RedirectHandler("/regions", http.StatusTemporaryRedirect))
+	mux.HandleFunc("/regions", func(w http.ResponseWriter, r *http.Request) {
+		regions := lazyListRegions()
+
+		devices, err := tsClient.Devices(ctx)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(err.Error()))
+			return
+		}
+
+		deviceSet := tree.NewSet(xsort.OrderedLess[string])
+		xslices.Map(devices, func(device tailscale.Device) string {
+			deviceSet.Add(device.Hostname)
+			return device.Hostname
+		})
+
+		type mappedRegion struct {
+			Region  string
+			HasNode bool
+		}
+
+		mappedRegions := xslices.Map(regions, func(region string) mappedRegion {
+			return mappedRegion{
+				Region:  region,
+				HasNode: deviceSet.Contains(fmt.Sprintf("ec2-%s", region)),
+			}
+		})
+
+		if err := templates.ExecuteTemplate(w, "list_regions.tmpl", mappedRegions); err != nil {
+			w.Write([]byte(err.Error()))
+		}
+	})
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets.Assets))))
+
+	go func() {
+		for _, region := range lazyListRegions() {
+			region := region
+			mux.HandleFunc(fmt.Sprintf("/regions/%s", region), func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "POST" {
+					if r.PostFormValue("action") != "delete" {
+						logger := log.New(io.MultiWriter(flushWriter{w}, os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
+						err := createInstance(r.Context(), logger, tsClient, awsConfig, region)
+						if err != nil {
+							w.Write([]byte(err.Error()))
+						} else {
+							w.Write([]byte("ok"))
+						}
+					} else {
+						ctx := r.Context()
+						devices, err := tsClient.Devices(ctx)
+						if err != nil {
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write([]byte(err.Error()))
+							return
+						}
+
+						filtered := xslices.Filter(devices, func(device tailscale.Device) bool {
+							return device.Hostname == fmt.Sprintf("ec2-%s", region)
+						})
+
+						if len(filtered) > 0 {
+							err := tsClient.DeleteDevice(ctx, filtered[0].ID)
+							if err != nil {
+								w.WriteHeader(http.StatusInternalServerError)
+								w.Write([]byte(err.Error()))
+								return
+							} else {
+								fmt.Fprint(w, "ok")
+							}
+						}
+					}
+
+					return
+				}
+
+				fmt.Fprintf(w, "Method %s not implemented", r.Method)
+			})
+		}
+	}()
 
 	return http.Serve(ln, mux)
 }
