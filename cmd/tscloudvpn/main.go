@@ -25,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/bradenaw/juniper/container/tree"
 	"github.com/bradenaw/juniper/xslices"
 	"github.com/bradenaw/juniper/xsort"
@@ -35,8 +36,7 @@ import (
 )
 
 const (
-	debianOwnerId   = "136693071363"
-	debianImageName = "debian-12-arm64-20230723-1450"
+	debianLatestImageSSMPath = "/aws/service/debian/release/12/latest/arm64"
 )
 
 var (
@@ -60,21 +60,16 @@ func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale
 	awsConfig.Region = region
 
 	client := ec2.NewFromConfig(awsConfig)
+	ssmClient := ssm.NewFromConfig(awsConfig)
 
-	images, err := client.DescribeImages(ctx, &ec2.DescribeImagesInput{
-		Filters: []types.Filter{
-			{Name: aws.String("owner-id"), Values: []string{debianOwnerId}},
-			{Name: aws.String("name"), Values: []string{debianImageName}},
-		},
+	imageParam, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
+		Name: aws.String(debianLatestImageSSMPath),
 	})
 	if err != nil {
 		return err
 	}
 
-	if images == nil || len(images.Images) == 0 {
-		return fmt.Errorf("No images found")
-	}
-	logger.Printf("Found image id %s in region %s", aws.ToString(images.Images[0].ImageId), awsConfig.Region)
+	logger.Printf("Found image id %s in region %s", aws.ToString(imageParam.Parameter.Value), awsConfig.Region)
 
 	tmplOut := new(bytes.Buffer)
 	hostname := fmt.Sprintf("ec2-%s", awsConfig.Region)
@@ -93,7 +88,7 @@ func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale
 	launchTime := time.Now()
 
 	input := &ec2.RunInstancesInput{
-		ImageId:                           images.Images[0].ImageId,
+		ImageId:                           imageParam.Parameter.Value,
 		InstanceType:                      types.InstanceTypeT4gNano,
 		MinCount:                          aws.Int32(1),
 		MaxCount:                          aws.Int32(1),
@@ -250,14 +245,14 @@ func Main() error {
 		return err
 	}
 
-	s := &tsnet.Server{
+	tsnetSrv := &tsnet.Server{
 		Hostname:  "tscloudvpn",
 		Ephemeral: true,
 		AuthKey:   key.Key,
 		Logf:      func(string, ...any) {}, // Silence logspam from tsnet
 	}
 
-	ln, err := s.Listen("tcp", ":80")
+	ln, err := tsnetSrv.Listen("tcp", ":80")
 	if err != nil {
 		return err
 	}
@@ -275,8 +270,26 @@ func Main() error {
 	go func() {
 		<-ctx.Done()
 		ln.Close()
-		s.Close()
+		tsnetSrv.Close()
 	}()
+
+	// go func() {
+	// 	lc, _ := tsnetSrv.LocalClient()
+	// 	for {
+	// 		t := time.Now()
+	// 		st, err := lc.Status(ctx)
+	// 		if err != nil {
+	// 			log.Println(err)
+	// 			return
+	// 		}
+
+	// 		log.Printf("[%s] Status: %+v", time.Since(t), st)
+	// 		for k, v := range st.Peer {
+	// 			log.Printf("Peer %s -> %s %t", k, v.HostName, v.ExitNodeOption)
+	// 		}
+	// 		time.Sleep(time.Second)
+	// 	}
+	// }()
 
 	lazyListRegions := utils.LazyWithErrors(
 		func() ([]string, error) {
