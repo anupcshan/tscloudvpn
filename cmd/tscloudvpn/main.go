@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"flag"
 	"fmt"
 	html_template "html/template"
 	"io"
@@ -29,6 +30,7 @@ import (
 	"github.com/bradenaw/juniper/container/tree"
 	"github.com/bradenaw/juniper/xslices"
 	"github.com/bradenaw/juniper/xsort"
+	"github.com/felixge/httpsnoop"
 
 	"github.com/tailscale/tailscale-client-go/tailscale"
 
@@ -125,13 +127,11 @@ func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale
 
 		ipAddr := aws.ToString(status.Reservations[0].Instances[0].PublicIpAddress)
 		if ipAddr != "" {
-			fmt.Println()
 			logger.Printf("Instance IP: %s", ipAddr)
 			break
 		}
 
 		time.Sleep(time.Second)
-		fmt.Print(".")
 	}
 
 	logger.Printf("Waiting for instance to register on Tailscale")
@@ -148,14 +148,12 @@ func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale
 			if device.Hostname == hostname && launchTime.Before(device.Created.Time) {
 				deviceId = device.ID
 				nodeName = strings.SplitN(device.Name, ".", 2)[0]
-				fmt.Println()
 				logger.Printf("Instance registered on Tailscale with ID %s, name %s", deviceId, nodeName)
 				break
 			}
 		}
 
 		if deviceId == "" {
-			fmt.Print(".")
 			time.Sleep(time.Second)
 			continue
 		}
@@ -391,10 +389,26 @@ func Main() error {
 		}
 	}()
 
-	return http.Serve(ln, mux)
+	return http.Serve(ln, logRequest(mux))
+}
+
+func logRequest(handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m := httpsnoop.CaptureMetrics(handler, w, r)
+		log.Printf(
+			"%s %d %s %s %s",
+			r.RemoteAddr,
+			m.Code,
+			r.Method,
+			r.URL,
+			m.Duration,
+		)
+	})
 }
 
 func main() {
+	flag.Parse()
+
 	if err := Main(); err != nil {
 		log.Fatal(err)
 	}
