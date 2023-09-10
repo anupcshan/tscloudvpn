@@ -271,23 +271,10 @@ func Main() error {
 		tsnetSrv.Close()
 	}()
 
-	// go func() {
-	// 	lc, _ := tsnetSrv.LocalClient()
-	// 	for {
-	// 		t := time.Now()
-	// 		st, err := lc.Status(ctx)
-	// 		if err != nil {
-	// 			log.Println(err)
-	// 			return
-	// 		}
-
-	// 		log.Printf("[%s] Status: %+v", time.Since(t), st)
-	// 		for k, v := range st.Peer {
-	// 			log.Printf("Peer %s -> %s %t", k, v.HostName, v.ExitNodeOption)
-	// 		}
-	// 		time.Sleep(time.Second)
-	// 	}
-	// }()
+	tsLocalClient, err := tsnetSrv.LocalClient()
+	if err != nil {
+		return err
+	}
 
 	lazyListRegions := utils.LazyWithErrors(
 		func() ([]string, error) {
@@ -310,7 +297,7 @@ func Main() error {
 	mux.HandleFunc("/regions", func(w http.ResponseWriter, r *http.Request) {
 		regions := lazyListRegions()
 
-		devices, err := tsClient.Devices(ctx)
+		tsStatus, err := tsLocalClient.Status(ctx)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(err.Error()))
@@ -318,10 +305,9 @@ func Main() error {
 		}
 
 		deviceSet := tree.NewSet(xsort.OrderedLess[string])
-		xslices.Map(devices, func(device tailscale.Device) string {
-			deviceSet.Add(device.Hostname)
-			return device.Hostname
-		})
+		for _, peer := range tsStatus.Peer {
+			deviceSet.Add(peer.HostName)
+		}
 
 		type mappedRegion struct {
 			Region  string
