@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.36.3
 	github.com/bradenaw/juniper v0.13.1
 	github.com/felixge/httpsnoop v1.0.3
+	github.com/hako/durafmt v0.0.0-20210608085754-5c1018a4e16b
 	github.com/tailscale/tailscale-client-go v1.12.0
 	tailscale.com v1.48.1
 )

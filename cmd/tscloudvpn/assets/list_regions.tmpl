@@ -7,8 +7,8 @@
       <tbody>
         {{ range . }}
         <tr>
-          <td><a href="/regions/{{.Region}}">{{.Region}}</a></td>
-          <td>{{if .HasNode}}<span class="label label-success">running</span>{{end}}</td>
+          <td>{{.Region}}</td>
+          <td>{{if .HasNode}}<span class="label label-success" title="{{.CreatedTS}}">running for {{.SinceCreated}}</span>{{end}}</td>
           <td>
             <form action="/regions/{{.Region}}" method="post">
             {{if .HasNode}}

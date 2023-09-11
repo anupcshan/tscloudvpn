@@ -27,13 +27,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
-	"github.com/bradenaw/juniper/container/tree"
 	"github.com/bradenaw/juniper/xslices"
-	"github.com/bradenaw/juniper/xsort"
 	"github.com/felixge/httpsnoop"
+	"github.com/hako/durafmt"
 
 	"github.com/tailscale/tailscale-client-go/tailscale"
 
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
 )
 
@@ -304,20 +304,31 @@ func Main() error {
 			return
 		}
 
-		deviceSet := tree.NewSet(xsort.OrderedLess[string])
+		deviceMap := make(map[string]*ipnstate.PeerStatus)
 		for _, peer := range tsStatus.Peer {
-			deviceSet.Add(peer.HostName)
+			deviceMap[peer.HostName] = peer
 		}
 
 		type mappedRegion struct {
-			Region  string
-			HasNode bool
+			Region       string
+			HasNode      bool
+			SinceCreated string
+			CreatedTS    time.Time
 		}
 
 		mappedRegions := xslices.Map(regions, func(region string) mappedRegion {
+			node, hasNode := deviceMap[fmt.Sprintf("ec2-%s", region)]
+			var sinceCreated string
+			var createdTS time.Time
+			if hasNode {
+				createdTS = node.Created
+				sinceCreated = durafmt.ParseShort(time.Since(node.Created)).String()
+			}
 			return mappedRegion{
-				Region:  region,
-				HasNode: deviceSet.Contains(fmt.Sprintf("ec2-%s", region)),
+				Region:       region,
+				HasNode:      hasNode,
+				CreatedTS:    createdTS,
+				SinceCreated: sinceCreated,
 			}
 		})
 
