@@ -48,6 +48,10 @@ var (
 	templates = html_template.Must(html_template.New("root").ParseFS(assets.Assets, "*.tmpl"))
 )
 
+func ec2InstanceHostname(region string) string {
+	return fmt.Sprintf("ec2-%s", region)
+}
+
 func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale.Client, awsConfig aws.Config, region string) error {
 	capabilities := tailscale.KeyCapabilities{}
 	capabilities.Devices.Create.Tags = []string{"tag:untrusted"}
@@ -74,7 +78,7 @@ func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale
 	logger.Printf("Found image id %s in region %s", aws.ToString(imageParam.Parameter.Value), awsConfig.Region)
 
 	tmplOut := new(bytes.Buffer)
-	hostname := fmt.Sprintf("ec2-%s", awsConfig.Region)
+	hostname := ec2InstanceHostname(awsConfig.Region)
 	if err := template.Must(template.New("tmpl").Parse(initData)).Execute(tmplOut, struct {
 		Args string
 	}{
@@ -317,7 +321,7 @@ func Main() error {
 		}
 
 		mappedRegions := xslices.Map(regions, func(region string) mappedRegion {
-			node, hasNode := deviceMap[fmt.Sprintf("ec2-%s", region)]
+			node, hasNode := deviceMap[ec2InstanceHostname(region)]
 			var sinceCreated string
 			var createdTS time.Time
 			if hasNode {
@@ -353,7 +357,7 @@ func Main() error {
 						}
 
 						filtered := xslices.Filter(devices, func(device tailscale.Device) bool {
-							return device.Hostname == fmt.Sprintf("ec2-%s", region)
+							return device.Hostname == ec2InstanceHostname(region)
 						})
 
 						if len(filtered) > 0 {
