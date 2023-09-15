@@ -343,17 +343,7 @@ func Main() error {
 			region := region
 			mux.HandleFunc(fmt.Sprintf("/regions/%s", region), func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == "POST" {
-					if r.PostFormValue("action") != "delete" {
-						logger := log.New(io.MultiWriter(flushWriter{w}, os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
-						ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
-						defer cancelFunc()
-						err := createInstance(ctx, logger, tsClient, awsConfig, region)
-						if err != nil {
-							w.Write([]byte(err.Error()))
-						} else {
-							w.Write([]byte("ok"))
-						}
-					} else {
+					if r.PostFormValue("action") == "delete" {
 						ctx := r.Context()
 						devices, err := tsClient.Devices(ctx)
 						if err != nil {
@@ -375,6 +365,16 @@ func Main() error {
 							} else {
 								fmt.Fprint(w, "ok")
 							}
+						}
+					} else {
+						logger := log.New(io.MultiWriter(flushWriter{w}, os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
+						ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
+						defer cancelFunc()
+						err := createInstance(ctx, logger, tsClient, awsConfig, region)
+						if err != nil {
+							w.Write([]byte(err.Error()))
+						} else {
+							w.Write([]byte("ok"))
 						}
 					}
 
