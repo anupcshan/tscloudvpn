@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"flag"
 	"fmt"
 	html_template "html/template"
@@ -12,21 +10,17 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"syscall"
-	"text/template"
 	"time"
 
 	_ "embed"
 
 	"github.com/anupcshan/tscloudvpn/cmd/tscloudvpn/assets"
+	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/anupcshan/tscloudvpn/internal/providers/ec2"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/bradenaw/juniper/xslices"
 	"github.com/felixge/httpsnoop"
 	"github.com/hako/durafmt"
@@ -37,22 +31,11 @@ import (
 	"tailscale.com/tsnet"
 )
 
-const (
-	debianLatestImageSSMPath = "/aws/service/debian/release/12/latest/arm64"
-)
-
 var (
-	//go:embed install.sh.tmpl
-	initData string
-
 	templates = html_template.Must(html_template.New("root").ParseFS(assets.Assets, "*.tmpl"))
 )
 
-func ec2InstanceHostname(region string) string {
-	return fmt.Sprintf("ec2-%s", region)
-}
-
-func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale.Client, awsConfig aws.Config, region string) error {
+func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale.Client, provider providers.Provider, region string) error {
 	capabilities := tailscale.KeyCapabilities{}
 	capabilities.Devices.Create.Tags = []string{"tag:untrusted"}
 	capabilities.Devices.Create.Ephemeral = true
@@ -63,81 +46,14 @@ func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale
 		return err
 	}
 
-	awsConfig.Region = region
-
-	client := ec2.NewFromConfig(awsConfig)
-	ssmClient := ssm.NewFromConfig(awsConfig)
-
-	imageParam, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
-		Name: aws.String(debianLatestImageSSMPath),
-	})
-	if err != nil {
-		return err
-	}
-
-	logger.Printf("Found image id %s in region %s", aws.ToString(imageParam.Parameter.Value), awsConfig.Region)
-
-	tmplOut := new(bytes.Buffer)
-	hostname := ec2InstanceHostname(awsConfig.Region)
-	if err := template.Must(template.New("tmpl").Parse(initData)).Execute(tmplOut, struct {
-		Args string
-	}{
-		Args: fmt.Sprintf(
-			`--advertise-tags="tag:untrusted" --authkey="%s" --hostname=%s`,
-			key.Key,
-			hostname,
-		),
-	}); err != nil {
-		return err
-	}
-
 	launchTime := time.Now()
 
-	input := &ec2.RunInstancesInput{
-		ImageId:                           imageParam.Parameter.Value,
-		InstanceType:                      types.InstanceTypeT4gNano,
-		MinCount:                          aws.Int32(1),
-		MaxCount:                          aws.Int32(1),
-		InstanceInitiatedShutdownBehavior: types.ShutdownBehaviorTerminate,
-		// To debug:
-		// KeyName:                           aws.String("ssh-key-name"),
-		// SecurityGroupIds:                  []string{"sg-..."},
-		TagSpecifications: []types.TagSpecification{
-			{
-				ResourceType: "instance",
-				Tags: []types.Tag{
-					{Key: aws.String("tscloudvpn"), Value: aws.String("true")},
-				},
-			},
-		},
-		UserData: aws.String(base64.StdEncoding.EncodeToString(tmplOut.Bytes())),
-	}
-
-	output, err := client.RunInstances(ctx, input)
+	hostname, err := provider.CreateInstance(ctx, region, key)
 	if err != nil {
 		return err
 	}
 
-	logger.Printf("Launched instance %s", aws.ToString(output.Instances[0].InstanceId))
-	logger.Printf("Waiting for instance to be allocated an IP address")
-
-	for {
-		status, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-			InstanceIds: []string{aws.ToString(output.Instances[0].InstanceId)},
-		})
-		if err != nil {
-			return err
-		}
-
-		ipAddr := aws.ToString(status.Reservations[0].Instances[0].PublicIpAddress)
-		if ipAddr != "" {
-			logger.Printf("Instance IP: %s", ipAddr)
-			break
-		}
-
-		time.Sleep(time.Second)
-	}
-
+	logger.Printf("Launched instance %s", hostname)
 	logger.Printf("Waiting for instance to register on Tailscale")
 
 	for {
@@ -191,34 +107,17 @@ func (f flushWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func listRegions(ctx context.Context, awsConfig aws.Config) ([]string, error) {
-	// Any region works. Pick something close to where this process is running to minimize latency.
-	awsConfig.Region = "us-west-2"
-	client := ec2.NewFromConfig(awsConfig)
-
-	regionsResp, err := client.DescribeRegions(ctx, &ec2.DescribeRegionsInput{})
-	if err != nil {
-		return nil, err
-	}
-
-	var regions []string
-	for _, region := range regionsResp.Regions {
-		regions = append(regions, aws.ToString(region.RegionName))
-	}
-
-	sort.Strings(regions)
-
-	return regions, nil
-}
-
 func Main() error {
 	log.SetFlags(log.Lshortfile | log.Lmicroseconds)
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
+
 	awsConfig, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return err
 	}
+
+	ec2Provider := ec2.NewProvider(awsConfig)
 
 	oauthClientId := os.Getenv("TAILSCALE_CLIENT_ID")
 	oauthSecret := os.Getenv("TAILSCALE_CLIENT_SECRET")
@@ -282,21 +181,11 @@ func Main() error {
 
 	lazyListRegions := utils.LazyWithErrors(
 		func() ([]string, error) {
-			return listRegions(ctx, awsConfig)
+			return ec2Provider.ListRegions(ctx)
 		},
 	)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/create", func(w http.ResponseWriter, r *http.Request) {
-		region := r.URL.Query().Get("region")
-		logger := log.New(io.MultiWriter(flushWriter{w}, os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
-		err := createInstance(r.Context(), logger, tsClient, awsConfig, region)
-		if err != nil {
-			w.Write([]byte(err.Error()))
-		} else {
-			w.Write([]byte("ok"))
-		}
-	})
 	mux.Handle("/", http.RedirectHandler("/regions", http.StatusTemporaryRedirect))
 	mux.HandleFunc("/regions", func(w http.ResponseWriter, r *http.Request) {
 		regions := lazyListRegions()
@@ -321,7 +210,7 @@ func Main() error {
 		}
 
 		mappedRegions := xslices.Map(regions, func(region string) mappedRegion {
-			node, hasNode := deviceMap[ec2InstanceHostname(region)]
+			node, hasNode := deviceMap[ec2Provider.Hostname(region)]
 			var sinceCreated string
 			var createdTS time.Time
 			if hasNode {
@@ -357,7 +246,7 @@ func Main() error {
 						}
 
 						filtered := xslices.Filter(devices, func(device tailscale.Device) bool {
-							return device.Hostname == ec2InstanceHostname(region)
+							return device.Hostname == ec2Provider.Hostname(region)
 						})
 
 						if len(filtered) > 0 {
@@ -374,7 +263,7 @@ func Main() error {
 						logger := log.New(io.MultiWriter(flushWriter{w}, os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
 						ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
 						defer cancelFunc()
-						err := createInstance(ctx, logger, tsClient, awsConfig, region)
+						err := createInstance(ctx, logger, tsClient, ec2Provider, region)
 						if err != nil {
 							w.Write([]byte(err.Error()))
 						} else {
