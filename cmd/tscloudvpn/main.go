@@ -19,6 +19,7 @@ import (
 
 	"github.com/anupcshan/tscloudvpn/cmd/tscloudvpn/assets"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	_ "github.com/anupcshan/tscloudvpn/internal/providers/ec2"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
 	"github.com/bradenaw/juniper/xslices"
 	"github.com/felixge/httpsnoop"
@@ -113,10 +114,15 @@ func Main() error {
 
 	var cloudProviders []providers.Provider
 
-	for _, providerFactory := range providers.ProviderFactoryRegistry {
+	for key, providerFactory := range providers.ProviderFactoryRegistry {
+		log.Printf("Processing cloud provider %s", key)
 		cloudProvider, err := providerFactory(ctx)
 		if err != nil {
 			return err
+		}
+		if cloudProvider == nil {
+			log.Printf("Skipping unconfigured cloud provider %s", key)
+			continue
 		}
 
 		cloudProviders = append(cloudProviders, cloudProvider)

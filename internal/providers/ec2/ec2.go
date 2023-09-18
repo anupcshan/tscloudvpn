@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
-	"os"
 	"sort"
 	"strings"
 	"text/template"
@@ -31,14 +30,14 @@ type ec2Provider struct {
 }
 
 func NewProvider(ctx context.Context) (providers.Provider, error) {
-	if os.Getenv("AWS_ACCESS_KEY_ID") == "" || os.Getenv("AWS_SECRET_ACCESS_KEY") == "" {
-		// Not enough config
-		return nil, nil
-	}
-
 	awsConfig, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	if _, err := awsConfig.Credentials.Retrieve(ctx); err != nil {
+		// No credentials set. Nothing to do
+		return nil, nil
 	}
 
 	return &ec2Provider{
