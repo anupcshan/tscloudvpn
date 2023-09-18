@@ -26,11 +26,6 @@ const (
 	providerName             = "ec2"
 )
 
-var (
-	//go:embed install.sh.tmpl
-	initData string
-)
-
 type ec2Provider struct {
 	cfg aws.Config
 }
@@ -96,7 +91,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key tai
 
 	tmplOut := new(bytes.Buffer)
 	hostname := ec2InstanceHostname(e.cfg.Region)
-	if err := template.Must(template.New("tmpl").Parse(initData)).Execute(tmplOut, struct {
+	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
 		Args string
 	}{
 		Args: fmt.Sprintf(

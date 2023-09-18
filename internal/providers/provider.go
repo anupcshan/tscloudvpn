@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	_ "embed"
 
 	"github.com/tailscale/tailscale-client-go/tailscale"
 )
@@ -15,8 +16,12 @@ type Provider interface {
 
 type ProviderFactory func(ctx context.Context) (Provider, error)
 
-var ProviderFactoryRegistry = make(map[string]ProviderFactory)
-
 func Register(name string, providerFactory ProviderFactory) {
 	ProviderFactoryRegistry[name] = providerFactory
 }
+
+var (
+	//go:embed install.sh.tmpl
+	InitData                string
+	ProviderFactoryRegistry = make(map[string]ProviderFactory)
+)
