@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"text/template"
@@ -22,6 +23,7 @@ import (
 
 const (
 	debianLatestImageSSMPath = "/aws/service/debian/release/12/latest/arm64"
+	providerName             = "ec2"
 )
 
 var (
@@ -34,6 +36,11 @@ type ec2Provider struct {
 }
 
 func NewProvider(ctx context.Context) (providers.Provider, error) {
+	if os.Getenv("AWS_ACCESS_KEY_ID") == "" || os.Getenv("AWS_SECRET_ACCESS_KEY") == "" {
+		// Not enough config
+		return nil, nil
+	}
+
 	awsConfig, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -49,7 +56,7 @@ func ec2InstanceHostname(region string) string {
 }
 
 func (e *ec2Provider) GetName() string {
-	return "ec2"
+	return providerName
 }
 
 func (e *ec2Provider) ListRegions(ctx context.Context) ([]string, error) {
@@ -133,4 +140,8 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key tai
 
 func (e *ec2Provider) Hostname(region string) string {
 	return ec2InstanceHostname(region)
+}
+
+func init() {
+	providers.Register(providerName, NewProvider)
 }

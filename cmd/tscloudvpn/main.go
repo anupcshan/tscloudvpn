@@ -19,7 +19,6 @@ import (
 
 	"github.com/anupcshan/tscloudvpn/cmd/tscloudvpn/assets"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
-	"github.com/anupcshan/tscloudvpn/internal/providers/ec2"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
 	"github.com/bradenaw/juniper/xslices"
 	"github.com/felixge/httpsnoop"
@@ -114,12 +113,14 @@ func Main() error {
 
 	var cloudProviders []providers.Provider
 
-	ec2Provider, err := ec2.NewProvider(ctx)
-	if err != nil {
-		return err
-	}
+	for _, providerFactory := range providers.ProviderFactoryRegistry {
+		cloudProvider, err := providerFactory(ctx)
+		if err != nil {
+			return err
+		}
 
-	cloudProviders = append(cloudProviders, ec2Provider)
+		cloudProviders = append(cloudProviders, cloudProvider)
+	}
 
 	oauthClientId := os.Getenv("TAILSCALE_CLIENT_ID")
 	oauthSecret := os.Getenv("TAILSCALE_CLIENT_SECRET")

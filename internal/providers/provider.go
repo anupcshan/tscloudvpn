@@ -12,3 +12,11 @@ type Provider interface {
 	Hostname(region string) string
 	GetName() string
 }
+
+type ProviderFactory func(ctx context.Context) (Provider, error)
+
+var ProviderFactoryRegistry = make(map[string]ProviderFactory)
+
+func Register(name string, providerFactory ProviderFactory) {
+	ProviderFactoryRegistry[name] = providerFactory
+}
