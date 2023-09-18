@@ -10,7 +10,7 @@
           <td>{{.Region}}</td>
           <td>{{if .HasNode}}<span class="label label-success" title="{{.CreatedTS}}">running for {{.SinceCreated}}</span>{{end}}</td>
           <td>
-            <form action="/regions/{{.Region}}" method="post">
+            <form action="/providers/{{.Provider}}/regions/{{.Region}}" method="post">
             {{if .HasNode}}
               <button class="btn btn-danger" name="action" value="delete" type="submit">Delete</button>
             {{else}}

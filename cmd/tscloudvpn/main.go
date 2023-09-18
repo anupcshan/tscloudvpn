@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -20,7 +21,6 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/anupcshan/tscloudvpn/internal/providers/ec2"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/bradenaw/juniper/xslices"
 	"github.com/felixge/httpsnoop"
 	"github.com/hako/durafmt"
@@ -112,12 +112,14 @@ func Main() error {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
 
-	awsConfig, err := config.LoadDefaultConfig(ctx)
+	var cloudProviders []providers.Provider
+
+	ec2Provider, err := ec2.NewProvider(ctx)
 	if err != nil {
 		return err
 	}
 
-	ec2Provider := ec2.NewProvider(awsConfig)
+	cloudProviders = append(cloudProviders, ec2Provider)
 
 	oauthClientId := os.Getenv("TAILSCALE_CLIENT_ID")
 	oauthSecret := os.Getenv("TAILSCALE_CLIENT_SECRET")
@@ -179,62 +181,75 @@ func Main() error {
 		return err
 	}
 
-	lazyListRegions := utils.LazyWithErrors(
-		func() ([]string, error) {
-			return ec2Provider.ListRegions(ctx)
-		},
-	)
-
 	mux := http.NewServeMux()
-	mux.Handle("/", http.RedirectHandler("/regions", http.StatusTemporaryRedirect))
-	mux.HandleFunc("/regions", func(w http.ResponseWriter, r *http.Request) {
-		regions := lazyListRegions()
-
-		tsStatus, err := tsLocalClient.Status(ctx)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(err.Error()))
-			return
+	mux.Handle("/", http.RedirectHandler("/providers", http.StatusTemporaryRedirect))
+	mux.HandleFunc("/providers", func(w http.ResponseWriter, r *http.Request) {
+		var providerNames []string
+		for _, provider := range cloudProviders {
+			providerNames = append(providerNames, provider.GetName())
 		}
-
-		deviceMap := make(map[string]*ipnstate.PeerStatus)
-		for _, peer := range tsStatus.Peer {
-			deviceMap[peer.HostName] = peer
-		}
-
-		type mappedRegion struct {
-			Region       string
-			HasNode      bool
-			SinceCreated string
-			CreatedTS    time.Time
-		}
-
-		mappedRegions := xslices.Map(regions, func(region string) mappedRegion {
-			node, hasNode := deviceMap[ec2Provider.Hostname(region)]
-			var sinceCreated string
-			var createdTS time.Time
-			if hasNode {
-				createdTS = node.Created
-				sinceCreated = durafmt.ParseShort(time.Since(node.Created)).String()
-			}
-			return mappedRegion{
-				Region:       region,
-				HasNode:      hasNode,
-				CreatedTS:    createdTS,
-				SinceCreated: sinceCreated,
-			}
-		})
-
-		if err := templates.ExecuteTemplate(w, "list_regions.tmpl", mappedRegions); err != nil {
+		sort.Strings(providerNames)
+		if err := templates.ExecuteTemplate(w, "list_providers.tmpl", providerNames); err != nil {
 			w.Write([]byte(err.Error()))
 		}
 	})
-	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets.Assets))))
+	for _, provider := range cloudProviders {
+		provider := provider
 
-	go func() {
+		lazyListRegions := utils.LazyWithErrors(
+			func() ([]string, error) {
+				return provider.ListRegions(ctx)
+			},
+		)
+
+		mux.HandleFunc(fmt.Sprintf("/providers/%s", provider.GetName()), func(w http.ResponseWriter, r *http.Request) {
+			regions := lazyListRegions()
+
+			tsStatus, err := tsLocalClient.Status(ctx)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(err.Error()))
+				return
+			}
+
+			deviceMap := make(map[string]*ipnstate.PeerStatus)
+			for _, peer := range tsStatus.Peer {
+				deviceMap[peer.HostName] = peer
+			}
+
+			type mappedRegion struct {
+				Provider     string
+				Region       string
+				HasNode      bool
+				SinceCreated string
+				CreatedTS    time.Time
+			}
+
+			mappedRegions := xslices.Map(regions, func(region string) mappedRegion {
+				node, hasNode := deviceMap[provider.Hostname(region)]
+				var sinceCreated string
+				var createdTS time.Time
+				if hasNode {
+					createdTS = node.Created
+					sinceCreated = durafmt.ParseShort(time.Since(node.Created)).String()
+				}
+				return mappedRegion{
+					Provider:     provider.GetName(),
+					Region:       region,
+					HasNode:      hasNode,
+					CreatedTS:    createdTS,
+					SinceCreated: sinceCreated,
+				}
+			})
+
+			if err := templates.ExecuteTemplate(w, "list_regions.tmpl", mappedRegions); err != nil {
+				w.Write([]byte(err.Error()))
+			}
+		})
+
 		for _, region := range lazyListRegions() {
 			region := region
-			mux.HandleFunc(fmt.Sprintf("/regions/%s", region), func(w http.ResponseWriter, r *http.Request) {
+			mux.HandleFunc(fmt.Sprintf("/providers/%s/regions/%s", provider.GetName(), region), func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == "POST" {
 					if r.PostFormValue("action") == "delete" {
 						ctx := r.Context()
@@ -246,7 +261,7 @@ func Main() error {
 						}
 
 						filtered := xslices.Filter(devices, func(device tailscale.Device) bool {
-							return device.Hostname == ec2Provider.Hostname(region)
+							return device.Hostname == provider.Hostname(region)
 						})
 
 						if len(filtered) > 0 {
@@ -263,7 +278,7 @@ func Main() error {
 						logger := log.New(io.MultiWriter(flushWriter{w}, os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
 						ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
 						defer cancelFunc()
-						err := createInstance(ctx, logger, tsClient, ec2Provider, region)
+						err := createInstance(ctx, logger, tsClient, provider, region)
 						if err != nil {
 							w.Write([]byte(err.Error()))
 						} else {
@@ -277,7 +292,9 @@ func Main() error {
 				fmt.Fprintf(w, "Method %s not implemented", r.Method)
 			})
 		}
-	}()
+	}
+
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets.Assets))))
 
 	return http.Serve(ln, logRequest(mux))
 }

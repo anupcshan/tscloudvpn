@@ -13,6 +13,7 @@ import (
 
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
@@ -32,14 +33,23 @@ type ec2Provider struct {
 	cfg aws.Config
 }
 
-func NewProvider(cfg aws.Config) providers.Provider {
-	return &ec2Provider{
-		cfg: cfg,
+func NewProvider(ctx context.Context) (providers.Provider, error) {
+	awsConfig, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return nil, err
 	}
+
+	return &ec2Provider{
+		cfg: awsConfig,
+	}, nil
 }
 
 func ec2InstanceHostname(region string) string {
 	return fmt.Sprintf("ec2-%s", region)
+}
+
+func (e *ec2Provider) GetName() string {
+	return "ec2"
 }
 
 func (e *ec2Provider) ListRegions(ctx context.Context) ([]string, error) {
