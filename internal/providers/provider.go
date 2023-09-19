@@ -11,7 +11,6 @@ type Provider interface {
 	CreateInstance(ctx context.Context, region string, key tailscale.Key) (string, error)
 	ListRegions(ctx context.Context) ([]string, error)
 	Hostname(region string) string
-	GetName() string
 }
 
 type ProviderFactory func(ctx context.Context) (Provider, error)

@@ -49,10 +49,6 @@ func ec2InstanceHostname(region string) string {
 	return fmt.Sprintf("ec2-%s", region)
 }
 
-func (e *ec2Provider) GetName() string {
-	return providerName
-}
-
 func (e *ec2Provider) ListRegions(ctx context.Context) ([]string, error) {
 	// Any region works. Pick something close to where this process is running to minimize latency.
 	e.cfg.Region = "us-west-2"

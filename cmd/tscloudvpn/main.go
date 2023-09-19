@@ -112,7 +112,7 @@ func Main() error {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
 
-	var cloudProviders []providers.Provider
+	cloudProviders := make(map[string]providers.Provider)
 
 	for key, providerFactory := range providers.ProviderFactoryRegistry {
 		log.Printf("Processing cloud provider %s", key)
@@ -125,7 +125,7 @@ func Main() error {
 			continue
 		}
 
-		cloudProviders = append(cloudProviders, cloudProvider)
+		cloudProviders[key] = cloudProvider
 	}
 
 	oauthClientId := os.Getenv("TAILSCALE_CLIENT_ID")
@@ -192,16 +192,17 @@ func Main() error {
 	mux.Handle("/", http.RedirectHandler("/providers", http.StatusTemporaryRedirect))
 	mux.HandleFunc("/providers", func(w http.ResponseWriter, r *http.Request) {
 		var providerNames []string
-		for _, provider := range cloudProviders {
-			providerNames = append(providerNames, provider.GetName())
+		for providerName := range cloudProviders {
+			providerNames = append(providerNames, providerName)
 		}
 		sort.Strings(providerNames)
 		if err := templates.ExecuteTemplate(w, "list_providers.tmpl", providerNames); err != nil {
 			w.Write([]byte(err.Error()))
 		}
 	})
-	for _, provider := range cloudProviders {
+	for providerName, provider := range cloudProviders {
 		provider := provider
+		providerName := providerName
 
 		lazyListRegions := utils.LazyWithErrors(
 			func() ([]string, error) {
@@ -209,7 +210,7 @@ func Main() error {
 			},
 		)
 
-		mux.HandleFunc(fmt.Sprintf("/providers/%s", provider.GetName()), func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc(fmt.Sprintf("/providers/%s", providerName), func(w http.ResponseWriter, r *http.Request) {
 			regions := lazyListRegions()
 
 			tsStatus, err := tsLocalClient.Status(ctx)
@@ -241,7 +242,7 @@ func Main() error {
 					sinceCreated = durafmt.ParseShort(time.Since(node.Created)).String()
 				}
 				return mappedRegion{
-					Provider:     provider.GetName(),
+					Provider:     providerName,
 					Region:       region,
 					HasNode:      hasNode,
 					CreatedTS:    createdTS,
@@ -256,7 +257,7 @@ func Main() error {
 
 		for _, region := range lazyListRegions() {
 			region := region
-			mux.HandleFunc(fmt.Sprintf("/providers/%s/regions/%s", provider.GetName(), region), func(w http.ResponseWriter, r *http.Request) {
+			mux.HandleFunc(fmt.Sprintf("/providers/%s/regions/%s", providerName, region), func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == "POST" {
 					if r.PostFormValue("action") == "delete" {
 						ctx := r.Context()
