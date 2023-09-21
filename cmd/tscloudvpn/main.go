@@ -107,6 +107,24 @@ func (f flushWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+type statusInfo[T any] struct {
+	ProviderCount int
+	RegionCount   int
+	Detail        T
+}
+
+func wrapWithStatusInfo[T any](t T, cloudProviders map[string]providers.Provider, lazyListRegionsMap map[string]func() []string) statusInfo[T] {
+	regionCount := 0
+	for _, f := range lazyListRegionsMap {
+		regionCount += len(f())
+	}
+	return statusInfo[T]{
+		ProviderCount: len(cloudProviders),
+		RegionCount:   regionCount,
+		Detail:        t,
+	}
+}
+
 func Main() error {
 	log.SetFlags(log.Lshortfile | log.Lmicroseconds)
 	ctx, cancelFunc := context.WithCancel(context.Background())
@@ -188,6 +206,18 @@ func Main() error {
 		return err
 	}
 
+	lazyListRegionsMap := make(map[string]func() []string)
+
+	for providerName, provider := range cloudProviders {
+		provider := provider
+
+		lazyListRegionsMap[providerName] = utils.LazyWithErrors(
+			func() ([]string, error) {
+				return provider.ListRegions(ctx)
+			},
+		)
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/", http.RedirectHandler("/providers", http.StatusTemporaryRedirect))
 	mux.HandleFunc("/providers", func(w http.ResponseWriter, r *http.Request) {
@@ -196,19 +226,16 @@ func Main() error {
 			providerNames = append(providerNames, providerName)
 		}
 		sort.Strings(providerNames)
-		if err := templates.ExecuteTemplate(w, "list_providers.tmpl", providerNames); err != nil {
+		if err := templates.ExecuteTemplate(w, "list_providers.tmpl", wrapWithStatusInfo(providerNames, cloudProviders, lazyListRegionsMap)); err != nil {
 			w.Write([]byte(err.Error()))
 		}
 	})
+
 	for providerName, provider := range cloudProviders {
 		provider := provider
 		providerName := providerName
 
-		lazyListRegions := utils.LazyWithErrors(
-			func() ([]string, error) {
-				return provider.ListRegions(ctx)
-			},
-		)
+		lazyListRegions := lazyListRegionsMap[providerName]
 
 		mux.HandleFunc(fmt.Sprintf("/providers/%s", providerName), func(w http.ResponseWriter, r *http.Request) {
 			regions := lazyListRegions()
@@ -250,7 +277,7 @@ func Main() error {
 				}
 			})
 
-			if err := templates.ExecuteTemplate(w, "list_regions.tmpl", mappedRegions); err != nil {
+			if err := templates.ExecuteTemplate(w, "list_regions.tmpl", wrapWithStatusInfo(mappedRegions, cloudProviders, lazyListRegionsMap)); err != nil {
 				w.Write([]byte(err.Error()))
 			}
 		})

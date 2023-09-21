@@ -5,7 +5,7 @@
     <h1>Regions</h1>
     <table class="table">
       <tbody>
-        {{ range . }}
+        {{ range .Detail }}
         <tr>
           <td>{{.Region}}</td>
           <td>{{if .HasNode}}<span class="label label-success" title="{{.CreatedTS}}">running for {{.SinceCreated}}</span>{{end}}</td>
