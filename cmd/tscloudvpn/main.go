@@ -21,6 +21,7 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/ec2"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
+	"github.com/bradenaw/juniper/xmaps"
 	"github.com/bradenaw/juniper/xslices"
 	"github.com/felixge/httpsnoop"
 	"github.com/hako/durafmt"
@@ -110,17 +111,27 @@ func (f flushWriter) Write(b []byte) (int, error) {
 type statusInfo[T any] struct {
 	ProviderCount int
 	RegionCount   int
+	ActiveNodes   int
 	Detail        T
 }
 
-func wrapWithStatusInfo[T any](t T, cloudProviders map[string]providers.Provider, lazyListRegionsMap map[string]func() []string) statusInfo[T] {
+func wrapWithStatusInfo[T any](t T, cloudProviders map[string]providers.Provider, lazyListRegionsMap map[string]func() []string, tsStatus *ipnstate.Status) statusInfo[T] {
 	regionCount := 0
-	for _, f := range lazyListRegionsMap {
-		regionCount += len(f())
+	deviceMap := xmaps.Set[string]{}
+	expectedHostnameMap := xmaps.Set[string]{}
+	for _, peer := range tsStatus.Peer {
+		deviceMap.Add(peer.HostName)
+	}
+	for providerName, f := range lazyListRegionsMap {
+		for _, region := range f() {
+			regionCount++
+			expectedHostnameMap.Add(cloudProviders[providerName].Hostname(region))
+		}
 	}
 	return statusInfo[T]{
 		ProviderCount: len(cloudProviders),
 		RegionCount:   regionCount,
+		ActiveNodes:   len(xmaps.Intersection(deviceMap, expectedHostnameMap)),
 		Detail:        t,
 	}
 }
@@ -226,7 +237,15 @@ func Main() error {
 			providerNames = append(providerNames, providerName)
 		}
 		sort.Strings(providerNames)
-		if err := templates.ExecuteTemplate(w, "list_providers.tmpl", wrapWithStatusInfo(providerNames, cloudProviders, lazyListRegionsMap)); err != nil {
+
+		tsStatus, err := tsLocalClient.Status(ctx)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(err.Error()))
+			return
+		}
+
+		if err := templates.ExecuteTemplate(w, "list_providers.tmpl", wrapWithStatusInfo(providerNames, cloudProviders, lazyListRegionsMap, tsStatus)); err != nil {
 			w.Write([]byte(err.Error()))
 		}
 	})
@@ -277,7 +296,7 @@ func Main() error {
 				}
 			})
 
-			if err := templates.ExecuteTemplate(w, "list_regions.tmpl", wrapWithStatusInfo(mappedRegions, cloudProviders, lazyListRegionsMap)); err != nil {
+			if err := templates.ExecuteTemplate(w, "list_regions.tmpl", wrapWithStatusInfo(mappedRegions, cloudProviders, lazyListRegionsMap, tsStatus)); err != nil {
 				w.Write([]byte(err.Error()))
 			}
 		})
