@@ -49,22 +49,34 @@ func ec2InstanceHostname(region string) string {
 	return fmt.Sprintf("ec2-%s", region)
 }
 
-func (e *ec2Provider) ListRegions(ctx context.Context) ([]string, error) {
+func (e *ec2Provider) ListRegions(ctx context.Context) ([]providers.Region, error) {
 	// Any region works. Pick something close to where this process is running to minimize latency.
 	e.cfg.Region = "us-west-2"
 	client := ec2.NewFromConfig(e.cfg)
+	ssmClient := ssm.NewFromConfig(e.cfg)
 
 	regionsResp, err := client.DescribeRegions(ctx, &ec2.DescribeRegionsInput{})
 	if err != nil {
 		return nil, err
 	}
 
-	var regions []string
+	var regions []providers.Region
 	for _, region := range regionsResp.Regions {
-		regions = append(regions, aws.ToString(region.RegionName))
+		location, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
+			Name: aws.String(fmt.Sprintf("/aws/service/global-infrastructure/regions/%s/longName", *region.RegionName)),
+		})
+		if err != nil {
+			return nil, err
+		}
+		regions = append(regions, providers.Region{
+			Code:     aws.ToString(region.RegionName),
+			LongName: aws.ToString(location.Parameter.Value),
+		})
 	}
 
-	sort.Strings(regions)
+	sort.Slice(regions, func(i, j int) bool {
+		return regions[i].Code < regions[j].Code
+	})
 
 	return regions, nil
 }

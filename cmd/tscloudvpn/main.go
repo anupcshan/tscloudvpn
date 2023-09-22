@@ -115,7 +115,7 @@ type statusInfo[T any] struct {
 	Detail        T
 }
 
-func wrapWithStatusInfo[T any](t T, cloudProviders map[string]providers.Provider, lazyListRegionsMap map[string]func() []string, tsStatus *ipnstate.Status) statusInfo[T] {
+func wrapWithStatusInfo[T any](t T, cloudProviders map[string]providers.Provider, lazyListRegionsMap map[string]func() []providers.Region, tsStatus *ipnstate.Status) statusInfo[T] {
 	regionCount := 0
 	deviceMap := xmaps.Set[string]{}
 	expectedHostnameMap := xmaps.Set[string]{}
@@ -125,7 +125,7 @@ func wrapWithStatusInfo[T any](t T, cloudProviders map[string]providers.Provider
 	for providerName, f := range lazyListRegionsMap {
 		for _, region := range f() {
 			regionCount++
-			expectedHostnameMap.Add(cloudProviders[providerName].Hostname(region))
+			expectedHostnameMap.Add(cloudProviders[providerName].Hostname(region.Code))
 		}
 	}
 	return statusInfo[T]{
@@ -217,13 +217,13 @@ func Main() error {
 		return err
 	}
 
-	lazyListRegionsMap := make(map[string]func() []string)
+	lazyListRegionsMap := make(map[string]func() []providers.Region)
 
 	for providerName, provider := range cloudProviders {
 		provider := provider
 
 		lazyListRegionsMap[providerName] = utils.LazyWithErrors(
-			func() ([]string, error) {
+			func() ([]providers.Region, error) {
 				return provider.ListRegions(ctx)
 			},
 		)
@@ -274,13 +274,14 @@ func Main() error {
 			type mappedRegion struct {
 				Provider     string
 				Region       string
+				LongName     string
 				HasNode      bool
 				SinceCreated string
 				CreatedTS    time.Time
 			}
 
-			mappedRegions := xslices.Map(regions, func(region string) mappedRegion {
-				node, hasNode := deviceMap[provider.Hostname(region)]
+			mappedRegions := xslices.Map(regions, func(region providers.Region) mappedRegion {
+				node, hasNode := deviceMap[provider.Hostname(region.Code)]
 				var sinceCreated string
 				var createdTS time.Time
 				if hasNode {
@@ -289,7 +290,8 @@ func Main() error {
 				}
 				return mappedRegion{
 					Provider:     providerName,
-					Region:       region,
+					Region:       region.Code,
+					LongName:     region.LongName,
 					HasNode:      hasNode,
 					CreatedTS:    createdTS,
 					SinceCreated: sinceCreated,
@@ -315,7 +317,7 @@ func Main() error {
 						}
 
 						filtered := xslices.Filter(devices, func(device tailscale.Device) bool {
-							return device.Hostname == provider.Hostname(region)
+							return device.Hostname == provider.Hostname(region.Code)
 						})
 
 						if len(filtered) > 0 {
@@ -332,7 +334,7 @@ func Main() error {
 						logger := log.New(io.MultiWriter(flushWriter{w}, os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
 						ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
 						defer cancelFunc()
-						err := createInstance(ctx, logger, tsClient, provider, region)
+						err := createInstance(ctx, logger, tsClient, provider, region.Code)
 						if err != nil {
 							w.Write([]byte(err.Error()))
 						} else {

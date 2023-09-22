@@ -7,9 +7,14 @@ import (
 	"github.com/tailscale/tailscale-client-go/tailscale"
 )
 
+type Region struct {
+	Code     string
+	LongName string
+}
+
 type Provider interface {
 	CreateInstance(ctx context.Context, region string, key tailscale.Key) (string, error)
-	ListRegions(ctx context.Context) ([]string, error)
+	ListRegions(ctx context.Context) ([]Region, error)
 	Hostname(region string) string
 }
 
