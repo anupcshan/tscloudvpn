@@ -293,7 +293,7 @@ func Main() error {
 		lazyListRegions := lazyListRegionsMap[providerName]
 		for _, region := range lazyListRegions() {
 			region := region
-			mux.HandleFunc(fmt.Sprintf("/providers/%s/regions/%s", providerName, region), func(w http.ResponseWriter, r *http.Request) {
+			mux.HandleFunc(fmt.Sprintf("/providers/%s/regions/%s", providerName, region.Code), func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == "POST" {
 					if r.PostFormValue("action") == "delete" {
 						ctx := r.Context()
