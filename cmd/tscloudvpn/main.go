@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -230,13 +229,18 @@ func Main() error {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/", http.RedirectHandler("/providers", http.StatusTemporaryRedirect))
-	mux.HandleFunc("/providers", func(w http.ResponseWriter, r *http.Request) {
-		var providerNames []string
-		for providerName := range cloudProviders {
-			providerNames = append(providerNames, providerName)
+	mux.Handle("/", http.RedirectHandler("/regions", http.StatusTemporaryRedirect))
+
+	mux.HandleFunc("/regions", func(w http.ResponseWriter, r *http.Request) {
+		type mappedRegion struct {
+			Provider     string
+			Region       string
+			LongName     string
+			HasNode      bool
+			SinceCreated string
+			CreatedTS    time.Time
 		}
-		sort.Strings(providerNames)
+		var mappedRegions []mappedRegion
 
 		tsStatus, err := tsLocalClient.Status(ctx)
 		if err != nil {
@@ -245,42 +249,20 @@ func Main() error {
 			return
 		}
 
-		if err := templates.ExecuteTemplate(w, "list_providers.tmpl", wrapWithStatusInfo(providerNames, cloudProviders, lazyListRegionsMap, tsStatus)); err != nil {
-			w.Write([]byte(err.Error()))
-		}
-	})
+		for providerName, provider := range cloudProviders {
+			provider := provider
+			providerName := providerName
 
-	for providerName, provider := range cloudProviders {
-		provider := provider
-		providerName := providerName
+			lazyListRegions := lazyListRegionsMap[providerName]
 
-		lazyListRegions := lazyListRegionsMap[providerName]
-
-		mux.HandleFunc(fmt.Sprintf("/providers/%s", providerName), func(w http.ResponseWriter, r *http.Request) {
 			regions := lazyListRegions()
-
-			tsStatus, err := tsLocalClient.Status(ctx)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				w.Write([]byte(err.Error()))
-				return
-			}
 
 			deviceMap := make(map[string]*ipnstate.PeerStatus)
 			for _, peer := range tsStatus.Peer {
 				deviceMap[peer.HostName] = peer
 			}
 
-			type mappedRegion struct {
-				Provider     string
-				Region       string
-				LongName     string
-				HasNode      bool
-				SinceCreated string
-				CreatedTS    time.Time
-			}
-
-			mappedRegions := xslices.Map(regions, func(region providers.Region) mappedRegion {
+			mappedRegions = append(mappedRegions, xslices.Map(regions, func(region providers.Region) mappedRegion {
 				node, hasNode := deviceMap[provider.Hostname(region.Code)]
 				var sinceCreated string
 				var createdTS time.Time
@@ -296,13 +278,19 @@ func Main() error {
 					CreatedTS:    createdTS,
 					SinceCreated: sinceCreated,
 				}
-			})
+			})...)
+		}
 
-			if err := templates.ExecuteTemplate(w, "list_regions.tmpl", wrapWithStatusInfo(mappedRegions, cloudProviders, lazyListRegionsMap, tsStatus)); err != nil {
-				w.Write([]byte(err.Error()))
-			}
-		})
+		if err := templates.ExecuteTemplate(w, "list_regions.tmpl", wrapWithStatusInfo(mappedRegions, cloudProviders, lazyListRegionsMap, tsStatus)); err != nil {
+			w.Write([]byte(err.Error()))
+		}
+	})
 
+	for providerName, provider := range cloudProviders {
+		provider := provider
+		providerName := providerName
+
+		lazyListRegions := lazyListRegionsMap[providerName]
 		for _, region := range lazyListRegions() {
 			region := region
 			mux.HandleFunc(fmt.Sprintf("/providers/%s/regions/%s", providerName, region), func(w http.ResponseWriter, r *http.Request) {

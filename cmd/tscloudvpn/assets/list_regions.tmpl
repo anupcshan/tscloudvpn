@@ -7,6 +7,7 @@
       <tbody>
         {{ range .Detail }}
         <tr>
+          <td>{{.Provider}}</td>
           <td>{{.Region}}</td>
           <td>{{.LongName}}</td>
           <td>{{if .HasNode}}<span class="label label-success" title="{{.CreatedTS}}">running for {{.SinceCreated}}</span>{{end}}</td>
