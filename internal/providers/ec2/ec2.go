@@ -99,7 +99,8 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key tai
 	tmplOut := new(bytes.Buffer)
 	hostname := ec2InstanceHostname(e.cfg.Region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
-		Args string
+		Args   string
+		OnExit string
 	}{
 		Args: fmt.Sprintf(
 			`--advertise-tags="%s" --authkey="%s" --hostname=%s`,
@@ -107,6 +108,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key tai
 			key.Key,
 			hostname,
 		),
+		OnExit: "sudo /sbin/poweroff",
 	}); err != nil {
 		return "", err
 	}
