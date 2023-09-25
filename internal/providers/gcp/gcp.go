@@ -23,6 +23,52 @@ const (
 	providerName      = "gcp"
 )
 
+var (
+	regionLocationMap = map[string]string{
+		// From https://cloud.google.com/compute/docs/regions-zones#available
+		// There isn't a way to get this info programmatically
+		"asia-east1":              "Changhua County, Taiwan, APAC",
+		"asia-east2":              "Hong Kong, APAC",
+		"asia-northeast1":         "Tokyo, Japan, APAC",
+		"asia-northeast2":         "Osaka, Japan, APAC",
+		"asia-northeast3":         "Seoul, South Korea, APAC",
+		"asia-south1":             "Mumbai, India, APAC",
+		"asia-south2":             "Delhi, India, APAC",
+		"asia-southeast1":         "Jurong West, Singapore, APAC",
+		"asia-southeast2":         "Jakarta, Indonesia, APAC",
+		"australia-southeast1":    "Sydney, Australia, APAC",
+		"australia-southeast2":    "Melbourne, Australia, APAC",
+		"europe-central2":         "Warsaw, Poland, Europe",
+		"europe-north1":           "Hamina, Finland, Europe",
+		"europe-southwest1":       "Madrid, Spain, Europe",
+		"europe-west1":            "St. Ghislain, Belgium, Europe",
+		"europe-west10":           "Berlin, Germany, Europe",
+		"europe-west12":           "Turin, Italy, Europe",
+		"europe-west2":            "London, England, Europe",
+		"europe-west3":            "Frankfurt, Germany, Europe",
+		"europe-west4":            "Eemshaven, Netherlands, Europe",
+		"europe-west6":            "Zurich, Switzerland, Europe",
+		"europe-west8":            "Milan, Italy, Europe",
+		"europe-west9":            "Paris, France, Europe",
+		"me-central1":             "Doha, Qatar, Middle East",
+		"me-central2":             "Dammam, Saudi Arabia, Middle East",
+		"me-west1":                "Tel Aviv, Israel, Middle East",
+		"northamerica-northeast1": "Montréal, Québec, North America",
+		"northamerica-northeast2": "Toronto, Ontario, North America",
+		"southamerica-east1":      "Osasco, São Paulo, Brazil, South America",
+		"southamerica-west1":      "Santiago, Chile, South America",
+		"us-central1":             "Council Bluffs, Iowa, North America",
+		"us-east1":                "Moncks Corner, South Carolina, North America",
+		"us-east4":                "Ashburn, Virginia, North America",
+		"us-east5":                "Columbus, Ohio, North America",
+		"us-south1":               "Dallas, Texas, North America",
+		"us-west1":                "The Dalles, Oregon, North America",
+		"us-west2":                "Los Angeles, California, North America",
+		"us-west3":                "Salt Lake City, Utah, North America",
+		"us-west4":                "Las Vegas, Nevada, North America",
+	}
+)
+
 type gcpProvider struct {
 	projectId      string
 	serviceAccount string
@@ -62,9 +108,13 @@ func (g *gcpProvider) ListRegions(ctx context.Context) ([]providers.Region, erro
 
 	var regions []providers.Region
 	for _, region := range regionsList.Items {
+		longName := region.Name
+		if regionLocation, ok := regionLocationMap[region.Name]; ok {
+			longName = regionLocation
+		}
 		regions = append(regions, providers.Region{
 			Code:     region.Name,
-			LongName: region.Name,
+			LongName: longName,
 		})
 	}
 
