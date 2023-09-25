@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/anupcshan/tscloudvpn/cmd/tscloudvpn/assets"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/ec2"
+	_ "github.com/anupcshan/tscloudvpn/internal/providers/gcp"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
 	"github.com/bradenaw/juniper/xmaps"
 	"github.com/bradenaw/juniper/xslices"
@@ -280,6 +282,13 @@ func Main() error {
 				}
 			})...)
 		}
+
+		sort.Slice(mappedRegions, func(i, j int) bool {
+			if mappedRegions[i].Provider != mappedRegions[j].Provider {
+				return mappedRegions[i].Provider < mappedRegions[j].Provider
+			}
+			return mappedRegions[i].Region < mappedRegions[j].Region
+		})
 
 		if err := templates.ExecuteTemplate(w, "list_regions.tmpl", wrapWithStatusInfo(mappedRegions, cloudProviders, lazyListRegionsMap, tsStatus)); err != nil {
 			w.Write([]byte(err.Error()))
