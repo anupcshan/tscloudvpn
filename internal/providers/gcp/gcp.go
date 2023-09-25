@@ -77,12 +77,17 @@ type gcpProvider struct {
 }
 
 func NewProvider(ctx context.Context) (providers.Provider, error) {
-	gcpCredentialsJson := os.Getenv("GCP_CREDENTIALS_JSON")
+	gcpCredentialsJsonFile := os.Getenv("GCP_CREDENTIALS_JSON_FILE")
 	gcpProjectId := os.Getenv("GCP_PROJECT_ID")
 	gcpServiceAccount := os.Getenv("GCP_SERVICE_ACCOUNT")
 
-	if gcpCredentialsJson == "" || gcpProjectId == "" || gcpServiceAccount == "" {
+	if gcpCredentialsJsonFile == "" || gcpProjectId == "" || gcpServiceAccount == "" {
 		return nil, nil
+	}
+
+	gcpCredentialsJson, err := os.ReadFile(gcpCredentialsJsonFile)
+	if err != nil {
+		return nil, err
 	}
 
 	service, err := compute.NewService(ctx, option.WithCredentialsJSON([]byte(gcpCredentialsJson)))
