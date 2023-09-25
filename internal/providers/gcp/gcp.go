@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"sort"
 	"strings"
@@ -127,7 +128,14 @@ func (g *gcpProvider) ListRegions(ctx context.Context) ([]providers.Region, erro
 
 func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key tailscale.Key) (string, error) {
 	prefix := "https://www.googleapis.com/compute/v1/projects/" + g.projectId
-	zone := region + "-c" // Choose region with suffix c. Chosen by fair dice roll. Guaranteed to to be random.
+	zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, region)).Do()
+	if err != nil {
+		return "", err
+	}
+
+	zone := zones.Items[rand.Intn(len(zones.Items))].Name
+	log.Printf("Creating instance in zone %s", zone)
+
 	name := "tscloudvpn-" + zone
 
 	tmplOut := new(bytes.Buffer)
@@ -147,7 +155,7 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key tai
 		return "", err
 	}
 
-	_, err := compute.NewInstancesService(g.service).Insert(g.projectId, zone, &compute.Instance{
+	_, err = compute.NewInstancesService(g.service).Insert(g.projectId, zone, &compute.Instance{
 		Name:        name,
 		MachineType: prefix + "/zones/" + zone + "/machineTypes/f1-micro",
 		Disks: []*compute.AttachedDisk{
