@@ -12,8 +12,18 @@ type Region struct {
 	LongName string
 }
 
+type InstanceStatus int
+
+const (
+	// No running instance in this region
+	InstanceStatusMissing InstanceStatus = iota
+	// Running means an instance exists - it could be starting/stopping/running
+	InstanceStatusRunning
+)
+
 type Provider interface {
 	CreateInstance(ctx context.Context, region string, key tailscale.Key) (string, error)
+	GetInstanceStatus(ctx context.Context, region string) (InstanceStatus, error)
 	ListRegions(ctx context.Context) ([]Region, error)
 	Hostname(region string) string
 }

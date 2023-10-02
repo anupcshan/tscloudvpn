@@ -8,9 +8,11 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -209,6 +211,43 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key tai
 	log.Printf("Launched instance %s", name)
 
 	return hostname, nil
+}
+
+func (g *gcpProvider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {
+	zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, region)).Do()
+	if err != nil {
+		return providers.InstanceStatusMissing, err
+	}
+
+	var instances []*compute.Instance
+	for _, zone := range zones.Items {
+		instanceList, err := compute.NewInstancesService(g.service).List(g.projectId, zone.Name).Filter("labels.tscloudvpn:*").Context(ctx).Do()
+		if err != nil {
+			return providers.InstanceStatusMissing, err
+		}
+
+		instances = append(instances, instanceList.Items...)
+	}
+
+	slices.SortFunc(instances, func(i, j *compute.Instance) int {
+		iTime, err := time.Parse(time.RFC3339, i.CreationTimestamp)
+		if err != nil {
+			return 0
+		}
+		jTime, err := time.Parse(time.RFC3339, j.CreationTimestamp)
+		if err != nil {
+			return 0
+		}
+		return iTime.Compare(jTime)
+	})
+
+	for _, instance := range instances {
+		if instance.Status != "TERMINATED" {
+			return providers.InstanceStatusRunning, nil
+		}
+	}
+
+	return providers.InstanceStatusMissing, err
 }
 
 func (g *gcpProvider) Hostname(region string) string {

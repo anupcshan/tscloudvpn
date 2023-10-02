@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/tailscale/tailscale-client-go/tailscale"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -140,6 +141,41 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key tai
 	log.Printf("Launched instance %s", aws.ToString(output.Instances[0].InstanceId))
 
 	return hostname, nil
+}
+
+func (e *ec2Provider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {
+	e.cfg.Region = region
+
+	client := ec2.NewFromConfig(e.cfg)
+	listInstances, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []types.Filter{
+			{
+				Name:   aws.String("tag-key"),
+				Values: []string{"tscloudvpn"},
+			},
+		},
+	})
+
+	if err != nil {
+		return providers.InstanceStatusMissing, err
+	}
+
+	var instances []types.Instance
+	for _, reservation := range listInstances.Reservations {
+		instances = append(instances, reservation.Instances...)
+	}
+
+	slices.SortFunc(instances, func(i, j types.Instance) int {
+		return -aws.ToTime(i.LaunchTime).Compare(aws.ToTime(j.LaunchTime))
+	})
+
+	for _, instance := range instances {
+		if instance.State.Name != types.InstanceStateNameTerminated {
+			return providers.InstanceStatusRunning, nil
+		}
+	}
+
+	return providers.InstanceStatusMissing, err
 }
 
 func (e *ec2Provider) Hostname(region string) string {

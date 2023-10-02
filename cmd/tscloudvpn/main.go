@@ -59,6 +59,18 @@ func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale
 	logger.Printf("Waiting for instance to register on Tailscale")
 
 	for {
+		time.Sleep(time.Second)
+
+		status, err := provider.GetInstanceStatus(ctx, region)
+		if err != nil {
+			return err
+		}
+
+		if status != providers.InstanceStatusRunning {
+			logger.Printf("Instance %s failed to launch", hostname)
+			return fmt.Errorf("Instance no longer running")
+		}
+
 		devices, err := tsClient.Devices(ctx)
 		if err != nil {
 			return err
@@ -76,7 +88,6 @@ func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale
 		}
 
 		if deviceId == "" {
-			time.Sleep(time.Second)
 			continue
 		}
 
