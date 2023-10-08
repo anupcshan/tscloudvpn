@@ -11,8 +11,9 @@ require (
 	github.com/felixge/httpsnoop v1.0.3
 	github.com/hako/durafmt v0.0.0-20210608085754-5c1018a4e16b
 	github.com/tailscale/tailscale-client-go v1.13.0
+	golang.org/x/exp v0.0.0-20230725093048-515e97ebf090
 	google.golang.org/api v0.143.0
-	tailscale.com v1.50.0
+	tailscale.com v1.50.1
 )
 
 require (
@@ -78,7 +79,6 @@ require (
 	go4.org/mem v0.0.0-20220726221520-4f986261bf13 // indirect
 	go4.org/netipx v0.0.0-20230728180743-ad4cb58a6516 // indirect
 	golang.org/x/crypto v0.13.0 // indirect
-	golang.org/x/exp v0.0.0-20230725093048-515e97ebf090 // indirect
 	golang.org/x/mod v0.11.0 // indirect
 	golang.org/x/net v0.15.0 // indirect
 	golang.org/x/oauth2 v0.12.0 // indirect
