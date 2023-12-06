@@ -28,7 +28,7 @@ type Provider interface {
 	Hostname(region string) string
 }
 
-type ProviderFactory func(ctx context.Context) (Provider, error)
+type ProviderFactory func(ctx context.Context, sshKey string) (Provider, error)
 
 func Register(name string, providerFactory ProviderFactory) {
 	ProviderFactoryRegistry[name] = providerFactory

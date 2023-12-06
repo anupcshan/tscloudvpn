@@ -76,9 +76,10 @@ type gcpProvider struct {
 	projectId      string
 	serviceAccount string
 	service        *compute.Service
+	sshKey         string
 }
 
-func NewProvider(ctx context.Context) (providers.Provider, error) {
+func NewProvider(ctx context.Context, sshKey string) (providers.Provider, error) {
 	gcpCredentialsJsonFile := os.Getenv("GCP_CREDENTIALS_JSON_FILE")
 	gcpProjectId := os.Getenv("GCP_PROJECT_ID")
 	gcpServiceAccount := os.Getenv("GCP_SERVICE_ACCOUNT")
@@ -150,6 +151,7 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key tai
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
 		Args   string
 		OnExit string
+		SSHKey string
 	}{
 		Args: fmt.Sprintf(
 			`--advertise-tags="%s" --authkey="%s" --hostname=%s`,
@@ -158,6 +160,7 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key tai
 			hostname,
 		),
 		OnExit: fmt.Sprintf(`gcloud compute instances delete %s --quiet --zone=%s`, name, zone),
+		SSHKey: g.sshKey,
 	}); err != nil {
 		return "", err
 	}

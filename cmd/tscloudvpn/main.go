@@ -157,7 +157,7 @@ func Main() error {
 
 	for key, providerFactory := range providers.ProviderFactoryRegistry {
 		log.Printf("Processing cloud provider %s", key)
-		cloudProvider, err := providerFactory(ctx)
+		cloudProvider, err := providerFactory(ctx, os.Getenv("SSH_PUBKEY"))
 		if err != nil {
 			return err
 		}

@@ -17,6 +17,11 @@ sudo systemctl restart tailscaled.service
 
 timeout 5m sudo tailscale up --accept-routes --advertise-exit-node {{.Args}}
 
+if [[ -n "{{.SSHKey}}" ]]; then
+  mkdir -p $HOME/.ssh
+  echo "{{.SSHKey}}" | tee -a $HOME/.ssh/authorized_keys
+fi
+
 set +x
 # If instance is removed from Tailscale, shut it down
 while [[ $(tailscale status --json | jq .Self.Online) == "true" ]]; do sleep 1; done

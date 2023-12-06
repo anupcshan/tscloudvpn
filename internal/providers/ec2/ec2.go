@@ -27,10 +27,11 @@ const (
 )
 
 type ec2Provider struct {
-	cfg aws.Config
+	cfg    aws.Config
+	sshKey string
 }
 
-func NewProvider(ctx context.Context) (providers.Provider, error) {
+func NewProvider(ctx context.Context, sshKey string) (providers.Provider, error) {
 	awsConfig, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -102,6 +103,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key tai
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
 		Args   string
 		OnExit string
+		SSHKey string
 	}{
 		Args: fmt.Sprintf(
 			`--advertise-tags="%s" --authkey="%s" --hostname=%s`,
@@ -110,6 +112,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key tai
 			hostname,
 		),
 		OnExit: "sudo /sbin/poweroff",
+		SSHKey: e.sshKey,
 	}); err != nil {
 		return "", err
 	}
