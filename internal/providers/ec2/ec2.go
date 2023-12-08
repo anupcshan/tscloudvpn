@@ -43,7 +43,8 @@ func NewProvider(ctx context.Context, sshKey string) (providers.Provider, error)
 	}
 
 	return &ec2Provider{
-		cfg: awsConfig,
+		cfg:    awsConfig,
+		sshKey: sshKey,
 	}, nil
 }
 

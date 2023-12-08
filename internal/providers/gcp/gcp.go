@@ -102,6 +102,7 @@ func NewProvider(ctx context.Context, sshKey string) (providers.Provider, error)
 		projectId:      gcpProjectId,
 		serviceAccount: gcpServiceAccount,
 		service:        service,
+		sshKey:         sshKey,
 	}, nil
 }
 

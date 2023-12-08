@@ -18,8 +18,8 @@ sudo systemctl restart tailscaled.service
 timeout 5m sudo tailscale up --accept-routes --advertise-exit-node {{.Args}}
 
 if [[ -n "{{.SSHKey}}" ]]; then
-  mkdir -p $HOME/.ssh
-  echo "{{.SSHKey}}" | tee -a $HOME/.ssh/authorized_keys
+  mkdir -p /root/.ssh
+  echo "{{.SSHKey}}" | tee -a /root/.ssh/authorized_keys
 fi
 
 set +x
