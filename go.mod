@@ -10,7 +10,7 @@ require (
 	github.com/bradenaw/juniper v0.15.1
 	github.com/felixge/httpsnoop v1.0.4
 	github.com/hako/durafmt v0.0.0-20210608085754-5c1018a4e16b
-	github.com/tailscale/tailscale-client-go v1.14.0
+	github.com/tailscale/tailscale-client-go v1.15.0
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d
 	google.golang.org/api v0.153.0
 	tailscale.com v1.54.1

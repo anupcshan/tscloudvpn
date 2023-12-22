@@ -239,8 +239,8 @@ github.com/tailscale/hujson v0.0.0-20221223112325-20486734a56a h1:SJy1Pu0eH1C29X
 github.com/tailscale/hujson v0.0.0-20221223112325-20486734a56a/go.mod h1:DFSS3NAGHthKo1gTlmEcSBiZrRJXi28rLNd/1udP1c8=
 github.com/tailscale/netlink v1.1.1-0.20211101221916-cabfb018fe85 h1:zrsUcqrG2uQSPhaUPjUQwozcRdDdSxxqhNgNZ3drZFk=
 github.com/tailscale/netlink v1.1.1-0.20211101221916-cabfb018fe85/go.mod h1:NzVQi3Mleb+qzq8VmcWpSkcSYxXIg0DkI6XDzpVkhJ0=
-github.com/tailscale/tailscale-client-go v1.14.0 h1:Trjj1JFv9+39hJFGsCRBsKGEQwYivQjGA8yUQWSKB0U=
-github.com/tailscale/tailscale-client-go v1.14.0/go.mod h1:RMwBhvUj9/L1gGcX4PTEFPDoHIRtsNkGWEwBUrDHoIg=
+github.com/tailscale/tailscale-client-go v1.15.0 h1:5M1f7k3nOcRbCC6bs3TLDhWyP/Q6OH455ER88QMN7SI=
+github.com/tailscale/tailscale-client-go v1.15.0/go.mod h1:RMwBhvUj9/L1gGcX4PTEFPDoHIRtsNkGWEwBUrDHoIg=
 github.com/tailscale/web-client-prebuilt v0.0.0-20231114171715-25f8d12b3c2d h1:6bpLeKxSPVTwxzoy+0SrDLEaa60G6jnGqgLAcdDhkDg=
 github.com/tailscale/web-client-prebuilt v0.0.0-20231114171715-25f8d12b3c2d/go.mod h1:agQPE6y6ldqCOui2gkIh7ZMztTkIQKH049tv8siLuNQ=
 github.com/tailscale/wireguard-go v0.0.0-20231101022006-db7604d1aa90 h1:lMGYrokOq9NKDw1UMBH7AsS4boZ41jcduvYaRIdedhE=
