@@ -21,6 +21,7 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/ec2"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/gcp"
+	_ "github.com/anupcshan/tscloudvpn/internal/providers/vultr"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
 	"github.com/bradenaw/juniper/xmaps"
 	"github.com/bradenaw/juniper/xslices"
@@ -35,6 +36,12 @@ import (
 
 var (
 	templates = html_template.Must(html_template.New("root").ParseFS(assets.Assets, "*.tmpl"))
+)
+
+const (
+	// Time from issuing CreateInstance to when the instance should be available on GetInstanceStatus.
+	// This is needed to work around providers that have eventually consistent APIs (like Vultr).
+	instanceLaunchDetectTimeout = time.Minute
 )
 
 func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale.Client, provider providers.Provider, region string) error {
@@ -56,6 +63,28 @@ func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale
 	}
 
 	logger.Printf("Launched instance %s", hostname)
+	logger.Printf("Waiting for instance to be listed via provider API")
+
+	startTime := time.Now()
+	for {
+		if time.Since(startTime) > instanceLaunchDetectTimeout {
+			return fmt.Errorf("Instance %s failed to be available in provider API in %s", hostname, instanceLaunchDetectTimeout)
+		}
+
+		status, err := provider.GetInstanceStatus(ctx, region)
+		if err != nil {
+			return err
+		}
+
+		if status != providers.InstanceStatusRunning {
+			time.Sleep(time.Second)
+			continue
+		}
+
+		break
+	}
+
+	logger.Printf("Instance available in provider API")
 	logger.Printf("Waiting for instance to register on Tailscale")
 
 	for {

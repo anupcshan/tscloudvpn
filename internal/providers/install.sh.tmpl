@@ -1,12 +1,18 @@
 #!/bin/bash -eux
 
-trap '{{.OnExit}}' ERR EXIT
+cat <<\EOF > /tmp/onexit.sh
+{{.OnExit}}
+EOF
+
+chmod +x /tmp/onexit.sh
+
+trap /tmp/onexit.sh ERR EXIT
 
 curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
 curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
 
 sudo apt-get update
-sudo apt-get install -y --no-install-recommends tailscale jq
+sudo apt-get install -y --no-install-recommends tailscale jq curl
 
 echo 'net.ipv4.ip_forward = 1' | sudo tee -a /etc/sysctl.d/99-tailscale.conf
 echo 'net.ipv6.conf.all.forwarding = 1' | sudo tee -a /etc/sysctl.d/99-tailscale.conf
