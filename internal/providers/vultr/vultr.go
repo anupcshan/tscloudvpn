@@ -69,7 +69,9 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key t
 		return "", err
 	}
 
-	plans, _, _, err := v.vultrClient.Plan.List(ctx, "vc2", nil)
+	plans, _, _, err := v.vultrClient.Plan.List(ctx, "all", &govultr.ListOptions{
+		PerPage: 500,
+	})
 	if err != nil {
 		return "", err
 	}
