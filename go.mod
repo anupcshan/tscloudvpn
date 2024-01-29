@@ -15,7 +15,7 @@ require (
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d
 	golang.org/x/oauth2 v0.16.0
 	google.golang.org/api v0.157.0
-	tailscale.com v1.58.0
+	tailscale.com v1.58.2
 )
 
 require (
