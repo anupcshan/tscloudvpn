@@ -5,7 +5,7 @@ go 1.21
 require (
 	github.com/aws/aws-sdk-go-v2 v1.24.1
 	github.com/aws/aws-sdk-go-v2/config v1.26.5
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.144.0
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.146.0
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.44.7
 	github.com/bradenaw/juniper v0.15.2
 	github.com/felixge/httpsnoop v1.0.4
