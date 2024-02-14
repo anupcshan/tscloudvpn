@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -27,10 +28,12 @@ import (
 	"github.com/bradenaw/juniper/xslices"
 	"github.com/felixge/httpsnoop"
 	"github.com/hako/durafmt"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/tailscale/tailscale-client-go/tailscale"
 
 	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 )
 
@@ -270,17 +273,64 @@ func Main() error {
 		)
 	}
 
+	pingMap := make(map[string]time.Time)
+	var pingMapLock sync.Mutex
+
+	go func() {
+		expectedHostnameMap := xmaps.Set[string]{}
+		for providerName, f := range lazyListRegionsMap {
+			for _, region := range f() {
+				expectedHostnameMap.Add(cloudProviders[providerName].Hostname(region.Code))
+			}
+		}
+
+		ticker := time.NewTicker(5 * time.Second)
+		for {
+			<-ticker.C
+			func() {
+				subctx, cancelFunc := context.WithTimeout(ctx, 5*time.Second)
+				defer cancelFunc()
+				errG := errgroup.Group{}
+				tsStatus, err := tsLocalClient.Status(ctx)
+				if err != nil {
+					log.Printf("Error getting status: %s", err)
+					return
+				}
+				for _, peer := range tsStatus.Peer {
+					peer := peer
+					if !expectedHostnameMap.Contains(peer.HostName) {
+						continue
+					}
+					errG.Go(func() error {
+						_, err := tsLocalClient.Ping(subctx, peer.TailscaleIPs[0], tailcfg.PingDisco)
+						if err != nil {
+							log.Printf("Ping error from %s (%s): %s", peer.HostName, peer.TailscaleIPs[0], err)
+						} else {
+							pingMapLock.Lock()
+							pingMap[peer.HostName] = time.Now()
+							pingMapLock.Unlock()
+						}
+						return nil
+					})
+				}
+
+				_ = errG.Wait()
+			}()
+		}
+	}()
+
 	mux := http.NewServeMux()
 	mux.Handle("/", http.RedirectHandler("/regions", http.StatusTemporaryRedirect))
 
 	mux.HandleFunc("/regions", func(w http.ResponseWriter, r *http.Request) {
 		type mappedRegion struct {
-			Provider     string
-			Region       string
-			LongName     string
-			HasNode      bool
-			SinceCreated string
-			CreatedTS    time.Time
+			Provider          string
+			Region            string
+			LongName          string
+			HasNode           bool
+			SinceCreated      string
+			RecentPingSuccess bool
+			CreatedTS         time.Time
 		}
 		var mappedRegions []mappedRegion
 
@@ -308,17 +358,28 @@ func Main() error {
 				node, hasNode := deviceMap[provider.Hostname(region.Code)]
 				var sinceCreated string
 				var createdTS time.Time
+				var recentPingSuccess bool
 				if hasNode {
 					createdTS = node.Created
-					sinceCreated = durafmt.ParseShort(time.Since(node.Created)).String()
+					sinceCreated = durafmt.ParseShort(time.Since(node.Created)).InternationalString()
+					pingMapLock.Lock()
+					lastPingTimestamp := pingMap[provider.Hostname(region.Code)]
+					if !lastPingTimestamp.IsZero() {
+						timeSinceLastPing := time.Since(lastPingTimestamp)
+						if timeSinceLastPing < 30*time.Second {
+							recentPingSuccess = true
+						}
+					}
+					pingMapLock.Unlock()
 				}
 				return mappedRegion{
-					Provider:     providerName,
-					Region:       region.Code,
-					LongName:     region.LongName,
-					HasNode:      hasNode,
-					CreatedTS:    createdTS,
-					SinceCreated: sinceCreated,
+					Provider:          providerName,
+					Region:            region.Code,
+					LongName:          region.LongName,
+					HasNode:           hasNode,
+					CreatedTS:         createdTS,
+					SinceCreated:      sinceCreated,
+					RecentPingSuccess: recentPingSuccess,
 				}
 			})...)
 		}

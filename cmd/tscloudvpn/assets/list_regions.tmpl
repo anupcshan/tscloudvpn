@@ -10,7 +10,13 @@
           <td>{{.Provider}}</td>
           <td>{{.Region}}</td>
           <td>{{.LongName}}</td>
-          <td>{{if .HasNode}}<span class="label label-success" title="{{.CreatedTS}}">running for {{.SinceCreated}}</span>{{end}}</td>
+          <td>
+            {{if .HasNode}}
+            <span class="label {{if .RecentPingSuccess}}label-success{{else}}label-warning{{end}}" title="{{.CreatedTS}}" style="margin-right: 0.25em">
+              running for {{.SinceCreated}}
+            </span>
+            {{end}}
+          </td>
           <td>
             <form action="/providers/{{.Provider}}/regions/{{.Region}}" method="post">
             {{if .HasNode}}
