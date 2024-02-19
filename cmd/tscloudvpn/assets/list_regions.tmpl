@@ -3,8 +3,21 @@
 <div class="row">
   <div class="col-md-12">
     <h1>Regions</h1>
+    <div>
+      <input class="form-control" id="filterInput" type="text" placeholder="Filter">
+      <script>
+      $(document).ready(function(){
+        $("#filterInput").on("keyup", function() {
+          var value = $(this).val().toLowerCase();
+          $("#regionsTable tr").filter(function() {
+            $(this).toggle($(this).text().toLowerCase().indexOf(value) > -1)
+          });
+        });
+      });
+      </script>
+    </div>
     <table class="table">
-      <tbody>
+      <tbody id="regionsTable">
         {{ range .Detail }}
         <tr>
           <td>{{.Provider}}</td>
