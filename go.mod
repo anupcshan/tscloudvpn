@@ -6,7 +6,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.25.0
 	github.com/aws/aws-sdk-go-v2/config v1.26.6
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.147.0
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.46.1
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.47.0
 	github.com/bradenaw/juniper v0.15.3
 	github.com/felixge/httpsnoop v1.0.4
 	github.com/hako/durafmt v0.0.0-20210608085754-5c1018a4e16b
@@ -14,6 +14,7 @@ require (
 	github.com/vultr/govultr/v3 v3.6.1
 	golang.org/x/exp v0.0.0-20240119083558-1b970713d09a
 	golang.org/x/oauth2 v0.17.0
+	golang.org/x/sync v0.6.0
 	google.golang.org/api v0.165.0
 	tailscale.com v1.60.0
 )
@@ -97,7 +98,6 @@ require (
 	golang.org/x/crypto v0.19.0 // indirect
 	golang.org/x/mod v0.14.0 // indirect
 	golang.org/x/net v0.21.0 // indirect
-	golang.org/x/sync v0.6.0 // indirect
 	golang.org/x/sys v0.17.0 // indirect
 	golang.org/x/term v0.17.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
