@@ -11,7 +11,7 @@ require (
 	github.com/felixge/httpsnoop v1.0.4
 	github.com/hako/durafmt v0.0.0-20210608085754-5c1018a4e16b
 	github.com/tailscale/tailscale-client-go v1.16.0
-	github.com/vultr/govultr/v3 v3.6.1
+	github.com/vultr/govultr/v3 v3.6.2
 	golang.org/x/exp v0.0.0-20240119083558-1b970713d09a
 	golang.org/x/oauth2 v0.17.0
 	golang.org/x/sync v0.6.0
