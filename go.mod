@@ -14,7 +14,7 @@ require (
 	github.com/vultr/govultr/v3 v3.6.4
 	golang.org/x/exp v0.0.0-20240119083558-1b970713d09a
 	golang.org/x/oauth2 v0.18.0
-	golang.org/x/sync v0.6.0
+	golang.org/x/sync v0.7.0
 	google.golang.org/api v0.172.0
 	tailscale.com v1.60.0
 )
