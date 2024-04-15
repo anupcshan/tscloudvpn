@@ -16,7 +16,7 @@ require (
 	golang.org/x/oauth2 v0.18.0
 	golang.org/x/sync v0.6.0
 	google.golang.org/api v0.172.0
-	tailscale.com v1.60.0
+	tailscale.com v1.64.1
 )
 
 require (
@@ -36,11 +36,13 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.21.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.26.7 // indirect
 	github.com/aws/smithy-go v1.20.2 // indirect
+	github.com/bits-and-blooms/bitset v1.13.0 // indirect
 	github.com/coreos/go-iptables v0.7.0 // indirect
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/dblohm7/wingoes v0.0.0-20240119213807-a09d6be7affa // indirect
 	github.com/digitalocean/go-smbios v0.0.0-20180907143718-390a4f403a8e // indirect
 	github.com/fxamacker/cbor/v2 v2.5.0 // indirect
+	github.com/gaissmai/bart v0.4.1 // indirect
 	github.com/go-logr/logr v1.4.1 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
@@ -81,7 +83,8 @@ require (
 	github.com/tailscale/goupnp v1.0.1-0.20210804011211-c64d0f06ea05 // indirect
 	github.com/tailscale/hujson v0.0.0-20221223112325-20486734a56a // indirect
 	github.com/tailscale/netlink v1.1.1-0.20211101221916-cabfb018fe85 // indirect
-	github.com/tailscale/web-client-prebuilt v0.0.0-20240208184856-443a64766f61 // indirect
+	github.com/tailscale/peercred v0.0.0-20240214030740-b535050b2aa4 // indirect
+	github.com/tailscale/web-client-prebuilt v0.0.0-20240226180453-5db17b287bf1 // indirect
 	github.com/tailscale/wireguard-go v0.0.0-20231121184858-cc193a0b3272 // indirect
 	github.com/tcnksm/go-httpstat v0.2.0 // indirect
 	github.com/u-root/uio v0.0.0-20240118234441-a3c409a6018e // indirect
@@ -109,7 +112,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240318140521-94a12d6c2237 // indirect
 	google.golang.org/grpc v1.62.1 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
-	gvisor.dev/gvisor v0.0.0-20240119233241-c9c1d4f9b186 // indirect
-	inet.af/peercred v0.0.0-20210906144145-0893ea02156a // indirect
+	gvisor.dev/gvisor v0.0.0-20240306221502-ee1e1f6070e3 // indirect
 	nhooyr.io/websocket v1.8.10 // indirect
 )
