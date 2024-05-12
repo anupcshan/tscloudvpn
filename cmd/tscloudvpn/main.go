@@ -180,18 +180,14 @@ func wrapWithStatusInfo[T any](t T, cloudProviders map[string]providers.Provider
 	}
 }
 
-func Main() error {
-	log.SetFlags(log.Lshortfile | log.Lmicroseconds)
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	defer cancelFunc()
-
+func initCloudProviders(ctx context.Context, sshPubKey string) (map[string]providers.Provider, error) {
 	cloudProviders := make(map[string]providers.Provider)
 
 	for key, providerFactory := range providers.ProviderFactoryRegistry {
 		log.Printf("Processing cloud provider %s", key)
-		cloudProvider, err := providerFactory(ctx, os.Getenv("SSH_PUBKEY"))
+		cloudProvider, err := providerFactory(ctx, sshPubKey)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if cloudProvider == nil {
 			log.Printf("Skipping unconfigured cloud provider %s", key)
@@ -201,9 +197,23 @@ func Main() error {
 		cloudProviders[key] = cloudProvider
 	}
 
+	return cloudProviders, nil
+}
+
+func Main() error {
+	log.SetFlags(log.Lshortfile | log.Lmicroseconds)
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
+
+	sshPubKey := os.Getenv("SSH_PUBKEY")
 	oauthClientId := os.Getenv("TAILSCALE_CLIENT_ID")
 	oauthSecret := os.Getenv("TAILSCALE_CLIENT_SECRET")
 	tailnet := os.Getenv("TAILSCALE_TAILNET")
+
+	cloudProviders, err := initCloudProviders(ctx, sshPubKey)
+	if err != nil {
+		return err
+	}
 
 	tsClient, err := tailscale.NewClient(
 		"",
@@ -450,6 +460,8 @@ func Main() error {
 
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets.Assets))))
 
+	ip4, _ := tsnetSrv.TailscaleIPs()
+	log.Printf("Listening on %s", ip4)
 	return http.Serve(ln, logRequest(mux))
 }
 
