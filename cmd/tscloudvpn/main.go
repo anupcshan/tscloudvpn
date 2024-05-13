@@ -10,9 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -23,17 +21,13 @@ import (
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/ec2"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/gcp"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/vultr"
-	"github.com/anupcshan/tscloudvpn/internal/utils"
 	"github.com/bradenaw/juniper/xmaps"
 	"github.com/bradenaw/juniper/xslices"
 	"github.com/felixge/httpsnoop"
-	"github.com/hako/durafmt"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/tailscale/tailscale-client-go/tailscale"
 
 	"tailscale.com/ipn/ipnstate"
-	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 )
 
@@ -271,137 +265,21 @@ func Main() error {
 		return err
 	}
 
-	lazyListRegionsMap := make(map[string]func() []providers.Region)
-
-	for providerName, provider := range cloudProviders {
-		provider := provider
-
-		lazyListRegionsMap[providerName] = utils.LazyWithErrors(
-			func() ([]providers.Region, error) {
-				return provider.ListRegions(ctx)
-			},
-		)
-	}
-
-	pingMap := make(map[string]time.Time)
-	var pingMapLock sync.Mutex
-
-	go func() {
-		expectedHostnameMap := xmaps.Set[string]{}
-		for providerName, f := range lazyListRegionsMap {
-			for _, region := range f() {
-				expectedHostnameMap.Add(cloudProviders[providerName].Hostname(region.Code))
-			}
-		}
-
-		ticker := time.NewTicker(5 * time.Second)
-		for {
-			<-ticker.C
-			func() {
-				subctx, cancelFunc := context.WithTimeout(ctx, 5*time.Second)
-				defer cancelFunc()
-				errG := errgroup.Group{}
-				tsStatus, err := tsLocalClient.Status(ctx)
-				if err != nil {
-					log.Printf("Error getting status: %s", err)
-					return
-				}
-				for _, peer := range tsStatus.Peer {
-					peer := peer
-					if !expectedHostnameMap.Contains(peer.HostName) {
-						continue
-					}
-					errG.Go(func() error {
-						_, err := tsLocalClient.Ping(subctx, peer.TailscaleIPs[0], tailcfg.PingDisco)
-						if err != nil {
-							log.Printf("Ping error from %s (%s): %s", peer.HostName, peer.TailscaleIPs[0], err)
-						} else {
-							pingMapLock.Lock()
-							pingMap[peer.HostName] = time.Now()
-							pingMapLock.Unlock()
-						}
-						return nil
-					})
-				}
-
-				_ = errG.Wait()
-			}()
-		}
-	}()
+	mgr := NewManager(ctx, cloudProviders, tsLocalClient)
 
 	mux := http.NewServeMux()
 	mux.Handle("/", http.RedirectHandler("/regions", http.StatusTemporaryRedirect))
 
 	mux.HandleFunc("/regions", func(w http.ResponseWriter, r *http.Request) {
-		type mappedRegion struct {
-			Provider          string
-			Region            string
-			LongName          string
-			HasNode           bool
-			SinceCreated      string
-			RecentPingSuccess bool
-			CreatedTS         time.Time
-		}
-		var mappedRegions []mappedRegion
-
-		tsStatus, err := tsLocalClient.Status(ctx)
+		status, err := mgr.GetStatus(ctx)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(err.Error()))
 			return
 		}
 
-		for providerName, provider := range cloudProviders {
-			provider := provider
-			providerName := providerName
-
-			lazyListRegions := lazyListRegionsMap[providerName]
-
-			regions := lazyListRegions()
-
-			deviceMap := make(map[string]*ipnstate.PeerStatus)
-			for _, peer := range tsStatus.Peer {
-				deviceMap[peer.HostName] = peer
-			}
-
-			mappedRegions = append(mappedRegions, xslices.Map(regions, func(region providers.Region) mappedRegion {
-				node, hasNode := deviceMap[provider.Hostname(region.Code)]
-				var sinceCreated string
-				var createdTS time.Time
-				var recentPingSuccess bool
-				if hasNode {
-					createdTS = node.Created
-					sinceCreated = durafmt.ParseShort(time.Since(node.Created)).InternationalString()
-					pingMapLock.Lock()
-					lastPingTimestamp := pingMap[provider.Hostname(region.Code)]
-					if !lastPingTimestamp.IsZero() {
-						timeSinceLastPing := time.Since(lastPingTimestamp)
-						if timeSinceLastPing < 30*time.Second {
-							recentPingSuccess = true
-						}
-					}
-					pingMapLock.Unlock()
-				}
-				return mappedRegion{
-					Provider:          providerName,
-					Region:            region.Code,
-					LongName:          region.LongName,
-					HasNode:           hasNode,
-					CreatedTS:         createdTS,
-					SinceCreated:      sinceCreated,
-					RecentPingSuccess: recentPingSuccess,
-				}
-			})...)
-		}
-
-		sort.Slice(mappedRegions, func(i, j int) bool {
-			if mappedRegions[i].Provider != mappedRegions[j].Provider {
-				return mappedRegions[i].Provider < mappedRegions[j].Provider
-			}
-			return mappedRegions[i].Region < mappedRegions[j].Region
-		})
-
-		if err := templates.ExecuteTemplate(w, "list_regions.tmpl", wrapWithStatusInfo(mappedRegions, cloudProviders, lazyListRegionsMap, tsStatus)); err != nil {
+		if err := templates.ExecuteTemplate(w, "list_regions.tmpl", status); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(err.Error()))
 		}
 	})
@@ -410,7 +288,7 @@ func Main() error {
 		provider := provider
 		providerName := providerName
 
-		lazyListRegions := lazyListRegionsMap[providerName]
+		lazyListRegions := mgr.lazyListRegionsMap[providerName]
 		for _, region := range lazyListRegions() {
 			region := region
 			mux.HandleFunc(fmt.Sprintf("/providers/%s/regions/%s", providerName, region.Code), func(w http.ResponseWriter, r *http.Request) {
