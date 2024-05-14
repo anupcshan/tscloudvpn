@@ -50,6 +50,7 @@ type Manager struct {
 	cloudProviders     map[string]providers.Provider
 	lazyListRegionsMap map[string]func() []providers.Region
 	pingMap            *ConcurrentMap[providers.HostName, time.Time]
+	launchTSMap        *ConcurrentMap[providers.HostName, time.Time]
 	tsLocalClient      *tailscale.LocalClient
 }
 
@@ -74,6 +75,7 @@ func NewManager(
 		cloudProviders:     cloudProviders,
 		tsLocalClient:      tsLocalClient,
 		pingMap:            NewConcurrentMap[providers.HostName, time.Time](),
+		launchTSMap:        NewConcurrentMap[providers.HostName, time.Time](),
 		lazyListRegionsMap: lazyListRegionsMap,
 	}
 
@@ -229,8 +231,15 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, tsClient *tail
 					data[hasNodeKey] = fmt.Sprintf(`<span class="label %s" title="%s" style="margin-right: 0.25em">running for %s</span>`, labelClass, region.CreatedTS, region.SinceCreated)
 					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, opURL)
 				} else {
-					data[hasNodeKey] = ""
-					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-primary" hx-ext="disable-element" hx-disable-element="self" hx-put="%s">Create</button>`, opURL)
+					launchTS := m.launchTSMap.Get(providers.HostName(fmt.Sprintf("%s-%s", region.Provider, region.Region)))
+					disabledFragment := ""
+					if !launchTS.IsZero() {
+						data[hasNodeKey] = fmt.Sprintf(`<span class="badge badge-info">Launched instance %s ago ...</span>`, durafmt.ParseShort(time.Since(launchTS)).InternationalString())
+						disabledFragment = "disabled"
+					} else {
+						data[hasNodeKey] = ""
+					}
+					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-primary" hx-ext="disable-element" hx-disable-element="self" hx-put="%s" %s>Create</button>`, opURL, disabledFragment)
 				}
 			}
 
@@ -305,7 +314,11 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, tsClient *tail
 				case "PUT":
 					logger := log.New(io.MultiWriter(flushWriter{w}, os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
 					ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
-					defer cancelFunc()
+					defer func() {
+						cancelFunc()
+						m.launchTSMap.Set(provider.Hostname(region.Code), time.Time{})
+					}()
+					m.launchTSMap.Set(provider.Hostname(region.Code), time.Now())
 					err := createInstance(ctx, logger, tsClient, provider, region.Code)
 					if err != nil {
 						w.Write([]byte(err.Error()))
