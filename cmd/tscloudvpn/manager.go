@@ -227,10 +227,10 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, tsClient *tail
 					} else {
 						data[hasNodeKey] = fmt.Sprintf(`<span class="label label-warning" title="{{.CreatedTS}}" style="margin-right: 0.25em">running for %s</span>`, region.SinceCreated)
 					}
-					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-delete="%s">Delete</button>`, opURL)
+					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, opURL)
 				} else {
 					data[hasNodeKey] = ""
-					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-primary" hx-put="%s">Create</button>`, opURL)
+					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-primary" hx-ext="disable-element" hx-disable-element="self" hx-put="%s">Create</button>`, opURL)
 				}
 			}
 
