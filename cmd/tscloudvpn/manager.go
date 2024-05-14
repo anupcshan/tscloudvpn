@@ -220,14 +220,18 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, tsClient *tail
 
 			for _, region := range status.Detail {
 				hasNodeKey := fmt.Sprintf("%s-%s-hasnode", region.Provider, region.Region)
+				buttonKey := fmt.Sprintf("%s-%s-button", region.Provider, region.Region)
+				opURL := fmt.Sprintf("/providers/%s/regions/%s", region.Provider, region.Region)
 				if region.HasNode {
 					if region.RecentPingSuccess {
 						data[hasNodeKey] = fmt.Sprintf(`<span class="label label-success" title="{{.CreatedTS}}" style="margin-right: 0.25em">running for %s</span>`, region.SinceCreated)
 					} else {
 						data[hasNodeKey] = fmt.Sprintf(`<span class="label label-warning" title="{{.CreatedTS}}" style="margin-right: 0.25em">running for %s</span>`, region.SinceCreated)
 					}
+					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-delete="%s">Delete</button>`, opURL)
 				} else {
 					data[hasNodeKey] = ""
+					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-primary" hx-put="%s">Create</button>`, opURL)
 				}
 			}
 
@@ -274,46 +278,45 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, tsClient *tail
 		for _, region := range lazyListRegions() {
 			region := region
 			mux.HandleFunc(fmt.Sprintf("/providers/%s/regions/%s", providerName, region.Code), func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == "POST" {
-					if r.PostFormValue("action") == "delete" {
-						ctx := r.Context()
-						devices, err := tsClient.Devices(ctx)
+				switch r.Method {
+				case "DELETE":
+					ctx := r.Context()
+					devices, err := tsClient.Devices(ctx)
+					if err != nil {
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write([]byte(err.Error()))
+						return
+					}
+
+					filtered := xslices.Filter(devices, func(device tailscale_go.Device) bool {
+						return providers.HostName(device.Hostname) == provider.Hostname(region.Code)
+					})
+
+					if len(filtered) > 0 {
+						err := tsClient.DeleteDevice(ctx, filtered[0].ID)
 						if err != nil {
 							w.WriteHeader(http.StatusInternalServerError)
 							w.Write([]byte(err.Error()))
 							return
-						}
-
-						filtered := xslices.Filter(devices, func(device tailscale_go.Device) bool {
-							return providers.HostName(device.Hostname) == provider.Hostname(region.Code)
-						})
-
-						if len(filtered) > 0 {
-							err := tsClient.DeleteDevice(ctx, filtered[0].ID)
-							if err != nil {
-								w.WriteHeader(http.StatusInternalServerError)
-								w.Write([]byte(err.Error()))
-								return
-							} else {
-								fmt.Fprint(w, "ok")
-							}
-						}
-					} else {
-						logger := log.New(io.MultiWriter(flushWriter{w}, os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
-						ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
-						defer cancelFunc()
-						err := createInstance(ctx, logger, tsClient, provider, region.Code)
-						if err != nil {
-							w.Write([]byte(err.Error()))
 						} else {
-							w.Write([]byte("ok"))
+							fmt.Fprint(w, "ok")
 						}
 					}
 
-					return
-				}
+				case "PUT":
+					logger := log.New(io.MultiWriter(flushWriter{w}, os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
+					ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
+					defer cancelFunc()
+					err := createInstance(ctx, logger, tsClient, provider, region.Code)
+					if err != nil {
+						w.Write([]byte(err.Error()))
+					} else {
+						w.Write([]byte("ok"))
+					}
 
-				fmt.Fprintf(w, "Method %s not implemented", r.Method)
+				default:
+					fmt.Fprintf(w, "Method %s not implemented", r.Method)
+				}
 			})
 		}
 	}

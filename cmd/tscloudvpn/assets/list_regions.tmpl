@@ -30,7 +30,7 @@
             </span>
             {{end}}
           </td>
-          <td>
+          <td sse-swap="{{.Provider}}-{{.Region}}-button">
             <form action="/providers/{{.Provider}}/regions/{{.Region}}" method="post">
             {{if .HasNode}}
               <button class="btn btn-danger" name="action" value="delete" type="submit">Delete</button>
