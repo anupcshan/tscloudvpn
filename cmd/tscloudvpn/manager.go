@@ -197,6 +197,60 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 func (m *Manager) Serve(ctx context.Context, listen net.Listener, tsClient *tailscale_go.Client) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.RedirectHandler("/regions", http.StatusTemporaryRedirect))
+	mux.Handle("/events", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		dataCache := make(map[string]string)
+
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+
+		for {
+			status, err := m.GetStatus(ctx)
+			if err != nil {
+				log.Printf("Error getting status: %s", err)
+				continue
+			}
+
+			data := map[string]string{
+				"active-nodes":   fmt.Sprintf("%d", status.ActiveNodes),
+				"region-count":   fmt.Sprintf("%d", status.RegionCount),
+				"provider-count": fmt.Sprintf("%d", status.ProviderCount),
+			}
+
+			for _, region := range status.Detail {
+				hasNodeKey := fmt.Sprintf("%s-%s-hasnode", region.Provider, region.Region)
+				if region.HasNode {
+					if region.RecentPingSuccess {
+						data[hasNodeKey] = fmt.Sprintf(`<span class="label label-success" title="{{.CreatedTS}}" style="margin-right: 0.25em">running for %s</span>`, region.SinceCreated)
+					} else {
+						data[hasNodeKey] = fmt.Sprintf(`<span class="label label-warning" title="{{.CreatedTS}}" style="margin-right: 0.25em">running for %s</span>`, region.SinceCreated)
+					}
+				} else {
+					data[hasNodeKey] = ""
+				}
+			}
+
+			for k, v := range data {
+				if dataCache[k] == v {
+					continue
+				}
+
+				fmt.Fprintf(w, "event: %s\n", k)
+				fmt.Fprintf(w, "data: %s\n", v)
+				fmt.Fprint(w, "\n\n")
+				dataCache[k] = v
+			}
+
+			w.(http.Flusher).Flush()
+
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}))
 
 	mux.HandleFunc("/regions", func(w http.ResponseWriter, r *http.Request) {
 		status, err := m.GetStatus(ctx)

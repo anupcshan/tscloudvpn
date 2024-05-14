@@ -9,8 +9,10 @@
     <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/popper.js@1.14.3/dist/umd/popper.min.js" integrity="sha384-ZMP7rVo3mIykV+2+9J3UJ46jBk0WLaUAdn689aCwoqbBJiSnjAK/l8WvCWPIPm49" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.1.3/dist/js/bootstrap.min.js" integrity="sha384-ChfqqxuZUCnJSK3+MXmPNIyE6ZbWh2IMqE241rYiqJxyMiZ6OW/JmZQ5stwEULTy" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12/dist/ext/sse.js"></script>
   </head>
-  <body>
+  <body hx-ext="sse" sse-connect="/events">
   <nav class="navbar navbar-default">
   <div class="container-fluid">
     <!-- Brand and toggle get grouped for better mobile display -->
@@ -24,15 +26,15 @@
       <table class="navbar-text navbar-right" style="border-spacing: 10px 0; border-collapse: separate">
         <tr>
           <th>Cloud Providers</th>
-          <td>{{.ProviderCount}}</td>
+          <td sse-swap="provider-count"></td>
         </tr>
         <tr>
           <th>Regions</th>
-          <td>{{.RegionCount}}</td>
+          <td sse-swap="region-count"></td>
         </tr>
         <tr>
           <th>Active Nodes</th>
-          <td>{{.ActiveNodes}}</td>
+          <td sse-swap="active-nodes"></td>
         </tr>
       </table>
     </div>

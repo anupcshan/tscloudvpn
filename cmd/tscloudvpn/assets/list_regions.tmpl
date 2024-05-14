@@ -23,7 +23,7 @@
           <td>{{.Provider}}</td>
           <td>{{.Region}}</td>
           <td>{{.LongName}}</td>
-          <td>
+          <td sse-swap="{{.Provider}}-{{.Region}}-hasnode">
             {{if .HasNode}}
             <span class="label {{if .RecentPingSuccess}}label-success{{else}}label-warning{{end}}" title="{{.CreatedTS}}" style="margin-right: 0.25em">
               running for {{.SinceCreated}}
