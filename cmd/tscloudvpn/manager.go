@@ -222,11 +222,11 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, tsClient *tail
 				buttonKey := fmt.Sprintf("%s-%s-button", region.Provider, region.Region)
 				opURL := fmt.Sprintf("/providers/%s/regions/%s", region.Provider, region.Region)
 				if region.HasNode {
+					labelClass := "label-warning"
 					if region.RecentPingSuccess {
-						data[hasNodeKey] = fmt.Sprintf(`<span class="label label-success" title="{{.CreatedTS}}" style="margin-right: 0.25em">running for %s</span>`, region.SinceCreated)
-					} else {
-						data[hasNodeKey] = fmt.Sprintf(`<span class="label label-warning" title="{{.CreatedTS}}" style="margin-right: 0.25em">running for %s</span>`, region.SinceCreated)
+						labelClass = "label-success"
 					}
+					data[hasNodeKey] = fmt.Sprintf(`<span class="label %s" title="%s" style="margin-right: 0.25em">running for %s</span>`, labelClass, region.CreatedTS, region.SinceCreated)
 					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, opURL)
 				} else {
 					data[hasNodeKey] = ""
