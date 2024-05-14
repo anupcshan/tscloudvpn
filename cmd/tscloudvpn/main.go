@@ -22,7 +22,6 @@ import (
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/gcp"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/vultr"
 	"github.com/bradenaw/juniper/xmaps"
-	"github.com/bradenaw/juniper/xslices"
 	"github.com/felixge/httpsnoop"
 
 	"github.com/tailscale/tailscale-client-go/tailscale"
@@ -266,81 +265,7 @@ func Main() error {
 	}
 
 	mgr := NewManager(ctx, cloudProviders, tsLocalClient)
-
-	mux := http.NewServeMux()
-	mux.Handle("/", http.RedirectHandler("/regions", http.StatusTemporaryRedirect))
-
-	mux.HandleFunc("/regions", func(w http.ResponseWriter, r *http.Request) {
-		status, err := mgr.GetStatus(ctx)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(err.Error()))
-			return
-		}
-
-		if err := templates.ExecuteTemplate(w, "list_regions.tmpl", status); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(err.Error()))
-		}
-	})
-
-	for providerName, provider := range cloudProviders {
-		provider := provider
-		providerName := providerName
-
-		lazyListRegions := mgr.lazyListRegionsMap[providerName]
-		for _, region := range lazyListRegions() {
-			region := region
-			mux.HandleFunc(fmt.Sprintf("/providers/%s/regions/%s", providerName, region.Code), func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == "POST" {
-					if r.PostFormValue("action") == "delete" {
-						ctx := r.Context()
-						devices, err := tsClient.Devices(ctx)
-						if err != nil {
-							w.WriteHeader(http.StatusInternalServerError)
-							w.Write([]byte(err.Error()))
-							return
-						}
-
-						filtered := xslices.Filter(devices, func(device tailscale.Device) bool {
-							return providers.HostName(device.Hostname) == provider.Hostname(region.Code)
-						})
-
-						if len(filtered) > 0 {
-							err := tsClient.DeleteDevice(ctx, filtered[0].ID)
-							if err != nil {
-								w.WriteHeader(http.StatusInternalServerError)
-								w.Write([]byte(err.Error()))
-								return
-							} else {
-								fmt.Fprint(w, "ok")
-							}
-						}
-					} else {
-						logger := log.New(io.MultiWriter(flushWriter{w}, os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
-						ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
-						defer cancelFunc()
-						err := createInstance(ctx, logger, tsClient, provider, region.Code)
-						if err != nil {
-							w.Write([]byte(err.Error()))
-						} else {
-							w.Write([]byte("ok"))
-						}
-					}
-
-					return
-				}
-
-				fmt.Fprintf(w, "Method %s not implemented", r.Method)
-			})
-		}
-	}
-
-	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets.Assets))))
-
-	ip4, _ := tsnetSrv.TailscaleIPs()
-	log.Printf("Listening on %s", ip4)
-	return http.Serve(ln, logRequest(mux))
+	return mgr.Serve(ctx, ln, tsClient)
 }
 
 func logRequest(handler http.Handler) http.Handler {

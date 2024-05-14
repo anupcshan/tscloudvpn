@@ -2,16 +2,23 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log"
+	"net"
+	"net/http"
+	"os"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/anupcshan/tscloudvpn/cmd/tscloudvpn/assets"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
 	"github.com/bradenaw/juniper/xmaps"
 	"github.com/bradenaw/juniper/xslices"
 	"github.com/hako/durafmt"
+	tailscale_go "github.com/tailscale/tailscale-client-go/tailscale"
 	"golang.org/x/sync/errgroup"
 	"tailscale.com/client/tailscale"
 	"tailscale.com/ipn/ipnstate"
@@ -185,4 +192,80 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 	})
 
 	return wrapWithStatusInfo(mappedRegions, m.cloudProviders, m.lazyListRegionsMap, tsStatus), nil
+}
+
+func (m *Manager) Serve(ctx context.Context, listen net.Listener, tsClient *tailscale_go.Client) error {
+	mux := http.NewServeMux()
+	mux.Handle("/", http.RedirectHandler("/regions", http.StatusTemporaryRedirect))
+
+	mux.HandleFunc("/regions", func(w http.ResponseWriter, r *http.Request) {
+		status, err := m.GetStatus(ctx)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(err.Error()))
+			return
+		}
+
+		if err := templates.ExecuteTemplate(w, "list_regions.tmpl", status); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(err.Error()))
+		}
+	})
+
+	for providerName, provider := range m.cloudProviders {
+		provider := provider
+		providerName := providerName
+
+		lazyListRegions := m.lazyListRegionsMap[providerName]
+		for _, region := range lazyListRegions() {
+			region := region
+			mux.HandleFunc(fmt.Sprintf("/providers/%s/regions/%s", providerName, region.Code), func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "POST" {
+					if r.PostFormValue("action") == "delete" {
+						ctx := r.Context()
+						devices, err := tsClient.Devices(ctx)
+						if err != nil {
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write([]byte(err.Error()))
+							return
+						}
+
+						filtered := xslices.Filter(devices, func(device tailscale_go.Device) bool {
+							return providers.HostName(device.Hostname) == provider.Hostname(region.Code)
+						})
+
+						if len(filtered) > 0 {
+							err := tsClient.DeleteDevice(ctx, filtered[0].ID)
+							if err != nil {
+								w.WriteHeader(http.StatusInternalServerError)
+								w.Write([]byte(err.Error()))
+								return
+							} else {
+								fmt.Fprint(w, "ok")
+							}
+						}
+					} else {
+						logger := log.New(io.MultiWriter(flushWriter{w}, os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
+						ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
+						defer cancelFunc()
+						err := createInstance(ctx, logger, tsClient, provider, region.Code)
+						if err != nil {
+							w.Write([]byte(err.Error()))
+						} else {
+							w.Write([]byte("ok"))
+						}
+					}
+
+					return
+				}
+
+				fmt.Fprintf(w, "Method %s not implemented", r.Method)
+			})
+		}
+	}
+
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets.Assets))))
+
+	log.Printf("Listening on %s", listen.Addr())
+	return http.Serve(listen, logRequest(mux))
 }
