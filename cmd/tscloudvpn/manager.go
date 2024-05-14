@@ -196,7 +196,6 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 
 func (m *Manager) Serve(ctx context.Context, listen net.Listener, tsClient *tailscale_go.Client) error {
 	mux := http.NewServeMux()
-	mux.Handle("/", http.RedirectHandler("/regions", http.StatusTemporaryRedirect))
 	mux.Handle("/events", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 
@@ -256,7 +255,7 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, tsClient *tail
 		}
 	}))
 
-	mux.HandleFunc("/regions", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		status, err := m.GetStatus(ctx)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
