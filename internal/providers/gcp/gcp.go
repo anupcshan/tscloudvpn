@@ -254,8 +254,8 @@ func (g *gcpProvider) GetInstanceStatus(ctx context.Context, region string) (pro
 	return providers.InstanceStatusMissing, err
 }
 
-func (g *gcpProvider) Hostname(region string) string {
-	return gcpInstanceHostname(region)
+func (g *gcpProvider) Hostname(region string) providers.HostName {
+	return providers.HostName(gcpInstanceHostname(region))
 }
 
 func init() {

@@ -182,8 +182,8 @@ func (e *ec2Provider) GetInstanceStatus(ctx context.Context, region string) (pro
 	return providers.InstanceStatusMissing, err
 }
 
-func (e *ec2Provider) Hostname(region string) string {
-	return ec2InstanceHostname(region)
+func (e *ec2Provider) Hostname(region string) providers.HostName {
+	return providers.HostName(ec2InstanceHostname(region))
 }
 
 func init() {

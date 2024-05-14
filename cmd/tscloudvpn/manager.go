@@ -42,7 +42,7 @@ func (l *ConcurrentMap[K, V]) Set(k K, v V) {
 type Manager struct {
 	cloudProviders     map[string]providers.Provider
 	lazyListRegionsMap map[string]func() []providers.Region
-	pingMap            *ConcurrentMap[string, time.Time]
+	pingMap            *ConcurrentMap[providers.HostName, time.Time]
 	tsLocalClient      *tailscale.LocalClient
 }
 
@@ -66,7 +66,7 @@ func NewManager(
 	m := &Manager{
 		cloudProviders:     cloudProviders,
 		tsLocalClient:      tsLocalClient,
-		pingMap:            NewConcurrentMap[string, time.Time](),
+		pingMap:            NewConcurrentMap[providers.HostName, time.Time](),
 		lazyListRegionsMap: lazyListRegionsMap,
 	}
 
@@ -76,7 +76,7 @@ func NewManager(
 }
 
 func (m *Manager) initOnce(ctx context.Context) {
-	expectedHostnameMap := xmaps.Set[string]{}
+	expectedHostnameMap := xmaps.Set[providers.HostName]{}
 	for providerName, f := range m.lazyListRegionsMap {
 		for _, region := range f() {
 			expectedHostnameMap.Add(m.cloudProviders[providerName].Hostname(region.Code))
@@ -97,7 +97,8 @@ func (m *Manager) initOnce(ctx context.Context) {
 			}
 			for _, peer := range tsStatus.Peer {
 				peer := peer
-				if !expectedHostnameMap.Contains(peer.HostName) {
+				peerHostName := providers.HostName(peer.HostName)
+				if !expectedHostnameMap.Contains(peerHostName) {
 					continue
 				}
 				errG.Go(func() error {
@@ -105,7 +106,7 @@ func (m *Manager) initOnce(ctx context.Context) {
 					if err != nil {
 						log.Printf("Ping error from %s (%s): %s", peer.HostName, peer.TailscaleIPs[0], err)
 					} else {
-						m.pingMap.Set(peer.HostName, time.Now())
+						m.pingMap.Set(peerHostName, time.Now())
 					}
 					return nil
 				})
@@ -143,9 +144,9 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 
 		regions := lazyListRegions()
 
-		deviceMap := make(map[string]*ipnstate.PeerStatus)
+		deviceMap := make(map[providers.HostName]*ipnstate.PeerStatus)
 		for _, peer := range tsStatus.Peer {
-			deviceMap[peer.HostName] = peer
+			deviceMap[providers.HostName(peer.HostName)] = peer
 		}
 
 		mappedRegions = append(mappedRegions, xslices.Map(regions, func(region providers.Region) mappedRegion {

@@ -155,10 +155,10 @@ type statusInfo[T any] struct {
 
 func wrapWithStatusInfo[T any](t T, cloudProviders map[string]providers.Provider, lazyListRegionsMap map[string]func() []providers.Region, tsStatus *ipnstate.Status) statusInfo[T] {
 	regionCount := 0
-	deviceMap := xmaps.Set[string]{}
-	expectedHostnameMap := xmaps.Set[string]{}
+	deviceMap := xmaps.Set[providers.HostName]{}
+	expectedHostnameMap := xmaps.Set[providers.HostName]{}
 	for _, peer := range tsStatus.Peer {
-		deviceMap.Add(peer.HostName)
+		deviceMap.Add(providers.HostName(peer.HostName))
 	}
 	for providerName, f := range lazyListRegionsMap {
 		for _, region := range f() {
@@ -303,7 +303,7 @@ func Main() error {
 						}
 
 						filtered := xslices.Filter(devices, func(device tailscale.Device) bool {
-							return device.Hostname == provider.Hostname(region.Code)
+							return providers.HostName(device.Hostname) == provider.Hostname(region.Code)
 						})
 
 						if len(filtered) > 0 {

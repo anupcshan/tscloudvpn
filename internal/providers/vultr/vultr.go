@@ -144,8 +144,8 @@ func (v *vultrProvider) GetInstanceStatus(ctx context.Context, region string) (p
 	return providers.InstanceStatusMissing, nil
 }
 
-func (v *vultrProvider) Hostname(region string) string {
-	return vultrInstanceHostname(region)
+func (v *vultrProvider) Hostname(region string) providers.HostName {
+	return providers.HostName(vultrInstanceHostname(region))
 }
 
 func (v *vultrProvider) ListRegions(ctx context.Context) ([]providers.Region, error) {

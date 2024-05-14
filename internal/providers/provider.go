@@ -14,6 +14,8 @@ type Region struct {
 
 type InstanceStatus int
 
+type HostName string
+
 const (
 	// No running instance in this region
 	InstanceStatusMissing InstanceStatus = iota
@@ -25,7 +27,7 @@ type Provider interface {
 	CreateInstance(ctx context.Context, region string, key tailscale.Key) (string, error)
 	GetInstanceStatus(ctx context.Context, region string) (InstanceStatus, error)
 	ListRegions(ctx context.Context) ([]Region, error)
-	Hostname(region string) string
+	Hostname(region string) HostName
 }
 
 type ProviderFactory func(ctx context.Context, sshKey string) (Provider, error)
