@@ -6,7 +6,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.27.0
 	github.com/aws/aws-sdk-go-v2/config v1.27.15
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.161.3
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.49.5
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.50.3
 	github.com/bradenaw/juniper v0.15.3
 	github.com/felixge/httpsnoop v1.0.4
 	github.com/hako/durafmt v0.0.0-20210608085754-5c1018a4e16b
@@ -78,7 +78,6 @@ require (
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/safchain/ethtool v0.3.0 // indirect
-	github.com/stretchr/testify v1.9.0 // indirect
 	github.com/tailscale/certstore v0.1.1-0.20231202035212-d3fa0460f47e // indirect
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55 // indirect
 	github.com/tailscale/golang-x-crypto v0.0.0-20240108194725-7ce1f622c780 // indirect
