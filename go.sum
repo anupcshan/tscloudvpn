@@ -227,8 +227,8 @@ github.com/tailscale/netlink v1.1.1-0.20211101221916-cabfb018fe85 h1:zrsUcqrG2uQ
 github.com/tailscale/netlink v1.1.1-0.20211101221916-cabfb018fe85/go.mod h1:NzVQi3Mleb+qzq8VmcWpSkcSYxXIg0DkI6XDzpVkhJ0=
 github.com/tailscale/peercred v0.0.0-20240214030740-b535050b2aa4 h1:Gz0rz40FvFVLTBk/K8UNAenb36EbDSnh+q7Z9ldcC8w=
 github.com/tailscale/peercred v0.0.0-20240214030740-b535050b2aa4/go.mod h1:phI29ccmHQBc+wvroosENp1IF9195449VDnFDhJ4rJU=
-github.com/tailscale/tailscale-client-go v1.16.0 h1:mipLVbha5SAVGZT/h3I5qZMrrGXz0iAw4QWXKDfe0l0=
-github.com/tailscale/tailscale-client-go v1.16.0/go.mod h1:v7ssNztaIngJixKoWAgnfhEbzOyRVPI5qT/niBcoI4k=
+github.com/tailscale/tailscale-client-go v1.17.0 h1:4ZTsfB2hiiiIcx7prcXapZHO5K+TXB5fTdhGxdKGR88=
+github.com/tailscale/tailscale-client-go v1.17.0/go.mod h1:Zxz9AWl4cNX8F+jE7iIeo6Me7dGPXNdCFIoVeovH6eI=
 github.com/tailscale/web-client-prebuilt v0.0.0-20240226180453-5db17b287bf1 h1:tdUdyPqJ0C97SJfjB9tW6EylTtreyee9C44de+UBG0g=
 github.com/tailscale/web-client-prebuilt v0.0.0-20240226180453-5db17b287bf1/go.mod h1:agQPE6y6ldqCOui2gkIh7ZMztTkIQKH049tv8siLuNQ=
 github.com/tailscale/wf v0.0.0-20240214030419-6fbb0a674ee6 h1:l10Gi6w9jxvinoiq15g8OToDdASBni4CyJOdHY1Hr8M=
