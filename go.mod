@@ -6,7 +6,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.27.0
 	github.com/aws/aws-sdk-go-v2/config v1.27.15
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.161.3
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.50.3
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.50.4
 	github.com/bradenaw/juniper v0.15.3
 	github.com/felixge/httpsnoop v1.0.4
 	github.com/hako/durafmt v0.0.0-20210608085754-5c1018a4e16b
