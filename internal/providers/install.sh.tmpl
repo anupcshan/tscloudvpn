@@ -29,5 +29,21 @@ if [[ -n "{{.SSHKey}}" ]]; then
 fi
 
 set +x
-# If instance is removed from Tailscale, shut it down
-while [[ $(tailscale status --json | jq .Self.Online) == "true" ]]; do sleep 1; done
+
+# If instance is able to check presence in Tailscale for 2m, shut it down
+lastGood=$(date "+%s")
+
+while sleep 1; do
+  now=$(date "+%s")
+  sinceLastGood=$(expr $now - $lastGood)
+  if [ $sinceLastGood -gt 120 ]; then
+    echo "No good result in 120 seconds, exiting"
+    exit 1
+  fi
+
+  if [ $sinceLastGood -gt 100 ]; then
+    echo "No good result in $sinceLastGood seconds ..."
+  fi
+
+  [[ $(tailscale status --json | jq .Self.Online) == "true" ]] && lastGood=$now
+done
