@@ -1,6 +1,7 @@
 module github.com/anupcshan/tscloudvpn
 
 go 1.22.0
+toolchain go1.23.2
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.32.3
@@ -11,7 +12,7 @@ require (
 	github.com/felixge/httpsnoop v1.0.4
 	github.com/hako/durafmt v0.0.0-20210608085754-5c1018a4e16b
 	github.com/tailscale/tailscale-client-go v1.17.0
-	github.com/vultr/govultr/v3 v3.9.1
+	github.com/vultr/govultr/v3 v3.11.1
 	golang.org/x/exp v0.0.0-20240119083558-1b970713d09a
 	golang.org/x/oauth2 v0.23.0
 	golang.org/x/sync v0.7.0
