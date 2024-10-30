@@ -13,7 +13,7 @@ require (
 	github.com/tailscale/tailscale-client-go v1.17.0
 	github.com/vultr/govultr/v3 v3.9.1
 	golang.org/x/exp v0.0.0-20240119083558-1b970713d09a
-	golang.org/x/oauth2 v0.20.0
+	golang.org/x/oauth2 v0.23.0
 	golang.org/x/sync v0.7.0
 	google.golang.org/api v0.181.0
 	tailscale.com v1.66.4
