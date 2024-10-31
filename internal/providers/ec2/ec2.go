@@ -90,15 +90,6 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key tai
 	client := ec2.NewFromConfig(e.cfg)
 	ssmClient := ssm.NewFromConfig(e.cfg)
 
-	imageParam, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
-		Name: aws.String(debianLatestImageSSMPath),
-	})
-	if err != nil {
-		return "", err
-	}
-
-	log.Printf("Found image id %s in region %s", aws.ToString(imageParam.Parameter.Value), e.cfg.Region)
-
 	tmplOut := new(bytes.Buffer)
 	hostname := ec2InstanceHostname(e.cfg.Region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
@@ -118,12 +109,58 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key tai
 		return "", err
 	}
 
+	instances, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []types.Filter{
+			{Name: aws.String("tag-key"), Values: []string{"tscloudvpn"}},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	if len(instances.Reservations) > 0 {
+		log.Printf("Found existing instances: %+v", instances)
+		for _, reservation := range instances.Reservations {
+			for _, instance := range reservation.Instances {
+				if instance.State.Name != "terminated" {
+					if _, err := client.ModifyInstanceAttribute(ctx, &ec2.ModifyInstanceAttributeInput{
+						InstanceId: instance.InstanceId,
+						UserData: &types.BlobAttributeValue{
+							Value: tmplOut.Bytes(),
+						},
+					}); err != nil {
+						return "", err
+					}
+
+					out, err := client.StartInstances(ctx, &ec2.StartInstancesInput{
+						InstanceIds: []string{*instance.InstanceId},
+					})
+
+					log.Printf("Started instance %+v", out)
+					if err != nil {
+						return "", err
+					}
+					return hostname, nil
+				}
+			}
+		}
+	}
+
+	imageParam, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
+		Name: aws.String(debianLatestImageSSMPath),
+	})
+	if err != nil {
+		return "", err
+	}
+
+	log.Printf("Found image id %s in region %s", aws.ToString(imageParam.Parameter.Value), e.cfg.Region)
+
 	input := &ec2.RunInstancesInput{
 		ImageId:                           imageParam.Parameter.Value,
 		InstanceType:                      types.InstanceTypeT4gNano,
 		MinCount:                          aws.Int32(1),
 		MaxCount:                          aws.Int32(1),
-		InstanceInitiatedShutdownBehavior: types.ShutdownBehaviorTerminate,
+		InstanceInitiatedShutdownBehavior: types.ShutdownBehaviorStop,
 		// To debug:
 		// KeyName:                           aws.String("ssh-key-name"),
 		// SecurityGroupIds:                  []string{"sg-..."},
