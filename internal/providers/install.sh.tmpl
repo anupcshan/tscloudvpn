@@ -8,6 +8,11 @@ chmod +x /tmp/onexit.sh
 
 trap /tmp/onexit.sh ERR EXIT
 
+if [[ -n "{{.SSHKey}}" ]]; then
+  mkdir -p /root/.ssh
+  echo "{{.SSHKey}}" | tee -a /root/.ssh/authorized_keys
+fi
+
 curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
 curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
 
@@ -22,11 +27,6 @@ sudo sed -i 's/FLAGS=""/FLAGS="--state=mem:"/' /etc/default/tailscaled
 sudo systemctl restart tailscaled.service
 
 timeout 5m sudo tailscale up --accept-routes --advertise-exit-node {{.Args}}
-
-if [[ -n "{{.SSHKey}}" ]]; then
-  mkdir -p /root/.ssh
-  echo "{{.SSHKey}}" | tee -a /root/.ssh/authorized_keys
-fi
 
 set +x
 

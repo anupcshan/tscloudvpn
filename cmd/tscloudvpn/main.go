@@ -18,6 +18,7 @@ import (
 
 	"github.com/anupcshan/tscloudvpn/cmd/tscloudvpn/assets"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	_ "github.com/anupcshan/tscloudvpn/internal/providers/digitalocean"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/ec2"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/gcp"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/vultr"
