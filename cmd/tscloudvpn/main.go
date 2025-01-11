@@ -56,6 +56,7 @@ func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale
 
 	hostname, err := provider.CreateInstance(ctx, region, key)
 	if err != nil {
+		logger.Printf("Failed to launch instance %s: %s", hostname, err)
 		return err
 	}
 
