@@ -11,9 +11,9 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/bradenaw/juniper/xslices"
-	"github.com/tailscale/tailscale-client-go/tailscale"
 	"github.com/vultr/govultr/v3"
 	"golang.org/x/oauth2"
 )
@@ -49,7 +49,7 @@ func vultrInstanceHostname(region string) string {
 	return fmt.Sprintf("vultr-%s", region)
 }
 
-func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key tailscale.Key) (string, error) {
+func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (string, error) {
 	tmplOut := new(bytes.Buffer)
 	hostname := vultrInstanceHostname(region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
@@ -59,7 +59,7 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key t
 	}{
 		Args: fmt.Sprintf(
 			`--advertise-tags="%s" --authkey="%s" --hostname=%s`,
-			strings.Join(key.Capabilities.Devices.Create.Tags, ","),
+			strings.Join(key.Tags, ","),
 			key.Key,
 			hostname,
 		),

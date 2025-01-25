@@ -4,7 +4,7 @@ import (
 	"context"
 	_ "embed"
 
-	"github.com/tailscale/tailscale-client-go/tailscale"
+	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 )
 
 type Region struct {
@@ -24,7 +24,7 @@ const (
 )
 
 type Provider interface {
-	CreateInstance(ctx context.Context, region string, key tailscale.Key) (string, error)
+	CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (string, error)
 	GetInstanceStatus(ctx context.Context, region string) (InstanceStatus, error)
 	ListRegions(ctx context.Context) ([]Region, error)
 	Hostname(region string) HostName

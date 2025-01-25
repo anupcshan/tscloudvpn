@@ -9,10 +9,10 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 
 	"github.com/digitalocean/godo"
-	"github.com/tailscale/tailscale-client-go/tailscale"
 )
 
 type digitaloceanProvider struct {
@@ -41,7 +41,7 @@ func doInstanceHostname(region string) string {
 	return fmt.Sprintf("do-%s", region)
 }
 
-func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string, key tailscale.Key) (string, error) {
+func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (string, error) {
 	tmplOut := new(bytes.Buffer)
 	hostname := doInstanceHostname(region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
@@ -51,7 +51,7 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 	}{
 		Args: fmt.Sprintf(
 			`--advertise-tags="%s" --authkey="%s" --hostname=%s`,
-			strings.Join(key.Capabilities.Devices.Create.Tags, ","),
+			strings.Join(key.Tags, ","),
 			key.Key,
 			hostname,
 		),

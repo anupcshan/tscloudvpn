@@ -17,6 +17,7 @@ import (
 	_ "embed"
 
 	"github.com/anupcshan/tscloudvpn/cmd/tscloudvpn/assets"
+	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/digitalocean"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/ec2"
@@ -25,8 +26,6 @@ import (
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/vultr"
 	"github.com/bradenaw/juniper/xmaps"
 	"github.com/felixge/httpsnoop"
-
-	"github.com/tailscale/tailscale-client-go/tailscale"
 
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
@@ -42,20 +41,15 @@ const (
 	instanceLaunchDetectTimeout = time.Minute
 )
 
-func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale.Client, provider providers.Provider, region string) error {
-	capabilities := tailscale.KeyCapabilities{}
-	capabilities.Devices.Create.Tags = []string{"tag:untrusted"}
-	capabilities.Devices.Create.Ephemeral = true
-	capabilities.Devices.Create.Reusable = false
-	capabilities.Devices.Create.Preauthorized = true
-	key, err := tsClient.CreateKey(ctx, capabilities)
+func createInstance(ctx context.Context, logger *log.Logger, controller controlapi.ControlApi, provider providers.Provider, region string) error {
+	authKey, err := controller.CreateKey(ctx)
 	if err != nil {
 		return err
 	}
 
 	launchTime := time.Now()
 
-	hostname, err := provider.CreateInstance(ctx, region, key)
+	hostname, err := provider.CreateInstance(ctx, region, authKey)
 	if err != nil {
 		logger.Printf("Failed to launch instance %s: %s", hostname, err)
 		return err
@@ -99,7 +93,7 @@ func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale
 			return fmt.Errorf("Instance no longer running")
 		}
 
-		devices, err := tsClient.Devices(ctx)
+		devices, err := controller.ListDevices(ctx)
 		if err != nil {
 			return err
 		}
@@ -107,7 +101,7 @@ func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale
 		var deviceId string
 		var nodeName string
 		for _, device := range devices {
-			if device.Hostname == hostname && launchTime.Before(device.Created.Time) {
+			if device.Hostname == hostname && launchTime.Before(device.Created) {
 				deviceId = device.ID
 				nodeName = strings.SplitN(device.Name, ".", 2)[0]
 				logger.Printf("Instance registered on Tailscale with ID %s, name %s", deviceId, nodeName)
@@ -119,13 +113,8 @@ func createInstance(ctx context.Context, logger *log.Logger, tsClient *tailscale
 			continue
 		}
 
-		routes, err := tsClient.DeviceSubnetRoutes(ctx, deviceId)
-		if err != nil {
-			return err
-		}
-
 		logger.Printf("Approving exit node %s", nodeName)
-		if err := tsClient.SetDeviceSubnetRoutes(ctx, deviceId, routes.Advertised); err != nil {
+		if err := controller.ApproveExitNode(ctx, deviceId); err != nil {
 			return err
 		}
 
@@ -211,25 +200,17 @@ func Main() error {
 		return err
 	}
 
-	tsClient, err := tailscale.NewClient(
-		"",
+	controller, err := controlapi.NewTailscaleClient(
 		tailnet,
-		tailscale.WithOAuthClientCredentials(
-			oauthClientId,
-			oauthSecret,
-			[]string{"devices", "routes"},
-		),
+		oauthClientId,
+		oauthSecret,
 	)
 	if err != nil {
 		return err
 	}
 
-	capabilities := tailscale.KeyCapabilities{}
-	capabilities.Devices.Create.Tags = []string{"tag:untrusted"}
-	capabilities.Devices.Create.Ephemeral = true
-	capabilities.Devices.Create.Reusable = true
-	capabilities.Devices.Create.Preauthorized = true
-	key, err := tsClient.CreateKey(ctx, capabilities)
+	// Create auth key for tsnet server
+	authKey, err := controller.CreateKey(ctx)
 	if err != nil {
 		return err
 	}
@@ -237,7 +218,7 @@ func Main() error {
 	tsnetSrv := &tsnet.Server{
 		Hostname:  "tscloudvpn",
 		Ephemeral: true,
-		AuthKey:   key.Key,
+		AuthKey:   authKey.Key,
 		Logf:      func(string, ...any) {}, // Silence logspam from tsnet
 	}
 
@@ -268,7 +249,7 @@ func Main() error {
 	}
 
 	mgr := NewManager(ctx, cloudProviders, tsLocalClient)
-	return mgr.Serve(ctx, ln, tsClient)
+	return mgr.Serve(ctx, ln, controller)
 }
 
 func logRequest(handler http.Handler) http.Handler {

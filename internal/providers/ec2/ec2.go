@@ -11,13 +11,13 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
-	"github.com/tailscale/tailscale-client-go/tailscale"
 	"golang.org/x/exp/slices"
 )
 
@@ -84,7 +84,7 @@ func (e *ec2Provider) ListRegions(ctx context.Context) ([]providers.Region, erro
 	return regions, nil
 }
 
-func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key tailscale.Key) (string, error) {
+func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (string, error) {
 	e.cfg.Region = region
 
 	client := ec2.NewFromConfig(e.cfg)
@@ -108,7 +108,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key tai
 	}{
 		Args: fmt.Sprintf(
 			`--advertise-tags="%s" --authkey="%s" --hostname=%s`,
-			strings.Join(key.Capabilities.Devices.Create.Tags, ","),
+			strings.Join(key.Tags, ","),
 			key.Key,
 			hostname,
 		),

@@ -14,9 +14,9 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/tailscale/tailscale-client-go/tailscale"
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/api/option"
 )
@@ -135,7 +135,7 @@ func (g *gcpProvider) ListRegions(ctx context.Context) ([]providers.Region, erro
 	return regions, nil
 }
 
-func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key tailscale.Key) (string, error) {
+func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (string, error) {
 	prefix := "https://www.googleapis.com/compute/v1/projects/" + g.projectId
 	zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, region)).Do()
 	if err != nil {
@@ -156,7 +156,7 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key tai
 	}{
 		Args: fmt.Sprintf(
 			`--advertise-tags="%s" --authkey="%s" --hostname=%s`,
-			strings.Join(key.Capabilities.Devices.Create.Tags, ","),
+			strings.Join(key.Tags, ","),
 			key.Key,
 			hostname,
 		),

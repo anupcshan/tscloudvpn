@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"github.com/anupcshan/tscloudvpn/cmd/tscloudvpn/assets"
+	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
 	"github.com/bradenaw/juniper/xmaps"
 	"github.com/bradenaw/juniper/xslices"
 	"github.com/hako/durafmt"
-	tailscale_go "github.com/tailscale/tailscale-client-go/tailscale"
 	"golang.org/x/sync/errgroup"
 	"tailscale.com/client/tailscale"
 	"tailscale.com/ipn/ipnstate"
@@ -196,7 +196,7 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 	return wrapWithStatusInfo(mappedRegions, m.cloudProviders, m.lazyListRegionsMap, tsStatus), nil
 }
 
-func (m *Manager) Serve(ctx context.Context, listen net.Listener, tsClient *tailscale_go.Client) error {
+func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller controlapi.ControlApi) error {
 	mux := http.NewServeMux()
 	mux.Handle("/events", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -289,19 +289,19 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, tsClient *tail
 				switch r.Method {
 				case "DELETE":
 					ctx := r.Context()
-					devices, err := tsClient.Devices(ctx)
+					devices, err := controller.ListDevices(ctx)
 					if err != nil {
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write([]byte(err.Error()))
 						return
 					}
 
-					filtered := xslices.Filter(devices, func(device tailscale_go.Device) bool {
+					filtered := xslices.Filter(devices, func(device controlapi.Device) bool {
 						return providers.HostName(device.Hostname) == provider.Hostname(region.Code)
 					})
 
 					if len(filtered) > 0 {
-						err := tsClient.DeleteDevice(ctx, filtered[0].ID)
+						err := controller.DeleteDevice(ctx, filtered[0].ID)
 						if err != nil {
 							w.WriteHeader(http.StatusInternalServerError)
 							w.Write([]byte(err.Error()))
@@ -319,7 +319,7 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, tsClient *tail
 						m.launchTSMap.Set(provider.Hostname(region.Code), time.Time{})
 					}()
 					m.launchTSMap.Set(provider.Hostname(region.Code), time.Now())
-					err := createInstance(ctx, logger, tsClient, provider, region.Code)
+					err := createInstance(ctx, logger, controller, provider, region.Code)
 					if err != nil {
 						w.Write([]byte(err.Error()))
 					} else {
