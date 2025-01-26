@@ -107,9 +107,8 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 		SSHKey string
 	}{
 		Args: fmt.Sprintf(
-			`--advertise-tags="%s" --authkey="%s" --hostname=%s`,
-			strings.Join(key.Tags, ","),
-			key.Key,
+			`%s --hostname=%s`,
+			strings.Join(key.GetCLIArgs(), " "),
 			hostname,
 		),
 		OnExit: "sudo /sbin/poweroff",

@@ -2,6 +2,8 @@ package controlapi
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -19,8 +21,19 @@ type Device struct {
 }
 
 type PreauthKey struct {
-	Key  string
-	Tags []string
+	Key        string
+	ControlURL string
+	Tags       []string
+}
+
+func (k PreauthKey) GetCLIArgs() []string {
+	var args []string
+	args = append(args, fmt.Sprintf("--authkey=%s", k.Key))
+	args = append(args, fmt.Sprintf("--advertise-tags=%s", strings.Join(k.Tags, ",")))
+	if k.ControlURL != "" {
+		args = append(args, fmt.Sprintf("--login-server=%s", k.ControlURL))
+	}
+	return args
 }
 
 // ControlApi defines a generic interface for VPN control plane operations

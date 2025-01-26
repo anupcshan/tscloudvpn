@@ -58,9 +58,8 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 		SSHKey string
 	}{
 		Args: fmt.Sprintf(
-			`--advertise-tags="%s" --authkey="%s" --hostname=%s`,
-			strings.Join(key.Tags, ","),
-			key.Key,
+			`%s --hostname=%s`,
+			strings.Join(key.GetCLIArgs(), " "),
 			hostname,
 		),
 		OnExit: fmt.Sprintf("curl https://api.vultr.com/v2/instances/$(curl -s http://169.254.169.254/v1.json | jq -r '.\"instance-v2-id\"') -X DELETE -H 'Authorization: Bearer %s'", v.apiKey),

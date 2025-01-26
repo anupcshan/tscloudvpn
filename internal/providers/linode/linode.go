@@ -54,9 +54,8 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key 
 		SSHKey string
 	}{
 		Args: fmt.Sprintf(
-			`--advertise-tags="%s" --authkey="%s" --hostname=%s`,
-			strings.Join(key.Tags, ","),
-			key.Key,
+			`%s --hostname=%s`,
+			strings.Join(key.GetCLIArgs(), " "),
 			hostname,
 		),
 		OnExit: fmt.Sprintf(`

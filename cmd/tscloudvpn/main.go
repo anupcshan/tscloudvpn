@@ -195,17 +195,27 @@ func Main() error {
 	oauthSecret := os.Getenv("TAILSCALE_CLIENT_SECRET")
 	tailnet := os.Getenv("TAILSCALE_TAILNET")
 
+	headscaleAPI := os.Getenv("HEADSCALE_API")
+	headscaleUrl := os.Getenv("HEADSCALE_URL")
+	headscaleApiKey := os.Getenv("HEADSCALE_APIKEY")
+	headscaleUser := os.Getenv("HEADSCALE_USER")
+
 	cloudProviders, err := initCloudProviders(ctx, sshPubKey)
 	if err != nil {
 		return err
 	}
 
-	controller, err := controlapi.NewTailscaleClient(
+	var controller controlapi.ControlApi
+
+	if headscaleAPI != "" {
+		if controller, err = controlapi.NewHeadscaleClient(headscaleAPI, headscaleUrl, headscaleApiKey, headscaleUser); err != nil {
+			return err
+		}
+	} else if controller, err = controlapi.NewTailscaleClient(
 		tailnet,
 		oauthClientId,
 		oauthSecret,
-	)
-	if err != nil {
+	); err != nil {
 		return err
 	}
 
@@ -216,10 +226,11 @@ func Main() error {
 	}
 
 	tsnetSrv := &tsnet.Server{
-		Hostname:  "tscloudvpn",
-		Ephemeral: true,
-		AuthKey:   authKey.Key,
-		Logf:      func(string, ...any) {}, // Silence logspam from tsnet
+		Hostname:   "tscloudvpn",
+		Ephemeral:  true,
+		AuthKey:    authKey.Key,
+		ControlURL: headscaleUrl,
+		Logf:       func(string, ...any) {}, // Silence logspam from tsnet
 	}
 
 	ln, err := tsnetSrv.Listen("tcp", ":80")
