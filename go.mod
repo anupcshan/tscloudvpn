@@ -19,15 +19,15 @@ require (
 	golang.org/x/exp v0.0.0-20241215155358-4a5509556b9e
 	golang.org/x/oauth2 v0.25.0
 	golang.org/x/sync v0.10.0
-	google.golang.org/api v0.214.0
+	google.golang.org/api v0.218.0
 	tailscale.com v1.79.0-pre
 )
 
 require github.com/grpc-ecosystem/grpc-gateway/v2 v2.24.0 // indirect
 
 require (
-	cloud.google.com/go/auth v0.13.0 // indirect
-	cloud.google.com/go/auth/oauth2adapt v0.2.6 // indirect
+	cloud.google.com/go/auth v0.14.0 // indirect
+	cloud.google.com/go/auth/oauth2adapt v0.2.7 // indirect
 	cloud.google.com/go/compute/metadata v0.6.0 // indirect
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/akutz/memconn v0.1.0 // indirect
@@ -61,10 +61,10 @@ require (
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/nftables v0.2.1-0.20240414091927-5e242ec57806 // indirect
-	github.com/google/s2a-go v0.1.8 // indirect
+	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
-	github.com/googleapis/gax-go/v2 v2.14.0 // indirect
+	github.com/googleapis/gax-go/v2 v2.14.1 // indirect
 	github.com/gorilla/csrf v1.7.2 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
@@ -112,14 +112,14 @@ require (
 	golang.org/x/sys v0.29.0 // indirect
 	golang.org/x/term v0.28.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
-	golang.org/x/time v0.8.0 // indirect
+	golang.org/x/time v0.9.0 // indirect
 	golang.org/x/tools v0.28.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250102185135-69823020774d // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20250102185135-69823020774d // indirect
-	google.golang.org/grpc v1.69.0
-	google.golang.org/protobuf v1.36.1
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20250115164207-1a7da9e5054f // indirect
+	google.golang.org/grpc v1.69.4
+	google.golang.org/protobuf v1.36.3
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gvisor.dev/gvisor v0.0.0-20240722211153-64c016c92987 // indirect
 )
