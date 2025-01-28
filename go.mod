@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.198.1
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.56.3
 	github.com/bradenaw/juniper v0.15.3
-	github.com/digitalocean/godo v1.132.0
+	github.com/digitalocean/godo v1.135.0
 	github.com/felixge/httpsnoop v1.0.4
 	github.com/hako/durafmt v0.0.0-20210608085754-5c1018a4e16b
 	github.com/juanfont/headscale v0.24.1
