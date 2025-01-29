@@ -17,6 +17,7 @@ import (
 	_ "embed"
 
 	"github.com/anupcshan/tscloudvpn/cmd/tscloudvpn/assets"
+	"github.com/anupcshan/tscloudvpn/internal/config"
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/digitalocean"
@@ -165,12 +166,12 @@ func wrapWithStatusInfo[T any](t T, cloudProviders map[string]providers.Provider
 	}
 }
 
-func initCloudProviders(ctx context.Context, sshPubKey string) (map[string]providers.Provider, error) {
+func initCloudProviders(ctx context.Context, cfg *config.Config) (map[string]providers.Provider, error) {
 	cloudProviders := make(map[string]providers.Provider)
 
 	for key, providerFactory := range providers.ProviderFactoryRegistry {
 		log.Printf("Processing cloud provider %s", key)
-		cloudProvider, err := providerFactory(ctx, sshPubKey)
+		cloudProvider, err := providerFactory(ctx, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -185,37 +186,46 @@ func initCloudProviders(ctx context.Context, sshPubKey string) (map[string]provi
 	return cloudProviders, nil
 }
 
+var (
+	configFile string
+)
+
+func init() {
+	flag.StringVar(&configFile, "config", "", "Path to config file (default: search in standard locations)")
+}
+
 func Main() error {
 	log.SetFlags(log.Lshortfile | log.Lmicroseconds)
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
 
-	sshPubKey := os.Getenv("SSH_PUBKEY")
-	oauthClientId := os.Getenv("TAILSCALE_CLIENT_ID")
-	oauthSecret := os.Getenv("TAILSCALE_CLIENT_SECRET")
-	tailnet := os.Getenv("TAILSCALE_TAILNET")
+	var cfg *config.Config
+	var err error
 
-	headscaleAPI := os.Getenv("HEADSCALE_API")
-	headscaleUrl := os.Getenv("HEADSCALE_URL")
-	headscaleApiKey := os.Getenv("HEADSCALE_APIKEY")
-	headscaleUser := os.Getenv("HEADSCALE_USER")
+	if configFile != "" {
+		cfg, err = config.LoadConfig(configFile)
+		if err != nil {
+			return fmt.Errorf("failed to load config from %s: %v", configFile, err)
+		}
+	} else {
+		cfg, err = config.LoadDefaultConfig()
+		if err != nil && err != os.ErrNotExist {
+			return fmt.Errorf("failed to load config from default locations: %v", err)
+		}
 
-	cloudProviders, err := initCloudProviders(ctx, sshPubKey)
+		if err == os.ErrNotExist {
+			log.Println("No config file found, falling back to environment variables")
+			cfg = config.LoadFromEnv()
+		}
+	}
+
+	cloudProviders, err := initCloudProviders(ctx, cfg)
 	if err != nil {
 		return err
 	}
 
-	var controller controlapi.ControlApi
-
-	if headscaleAPI != "" {
-		if controller, err = controlapi.NewHeadscaleClient(headscaleAPI, headscaleUrl, headscaleApiKey, headscaleUser); err != nil {
-			return err
-		}
-	} else if controller, err = controlapi.NewTailscaleClient(
-		tailnet,
-		oauthClientId,
-		oauthSecret,
-	); err != nil {
+	controller, err := cfg.GetController()
+	if err != nil {
 		return err
 	}
 
@@ -229,7 +239,7 @@ func Main() error {
 		Hostname:   "tscloudvpn",
 		Ephemeral:  true,
 		AuthKey:    authKey.Key,
-		ControlURL: headscaleUrl,
+		ControlURL: cfg.Control.Headscale.URL,
 		Logf:       func(string, ...any) {}, // Silence logspam from tsnet
 	}
 

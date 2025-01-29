@@ -5,10 +5,10 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"text/template"
 
+	"github.com/anupcshan/tscloudvpn/internal/config"
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 
@@ -21,18 +21,18 @@ type digitaloceanProvider struct {
 	sshKey string
 }
 
-func New(ctx context.Context, sshKey string) (providers.Provider, error) {
-	token := os.Getenv("DIGITALOCEAN_TOKEN")
-	if token == "" {
+func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
+	if cfg.Providers.DigitalOcean.Token == "" {
 		// No token set. Nothing to do
 		return nil, nil
 	}
 
+	token := cfg.Providers.DigitalOcean.Token
 	client := godo.NewFromToken(token)
 
 	return &digitaloceanProvider{
 		client: client,
-		sshKey: sshKey,
+		sshKey: cfg.SSH.PublicKey,
 		token:  token,
 	}, nil
 }

@@ -6,11 +6,11 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
-	"os"
 	"sort"
 	"strings"
 	"text/template"
 
+	"github.com/anupcshan/tscloudvpn/internal/config"
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/bradenaw/juniper/xslices"
@@ -28,20 +28,19 @@ type vultrProvider struct {
 	sshKey      string
 }
 
-func NewProvider(ctx context.Context, sshKey string) (providers.Provider, error) {
-	apiKey := os.Getenv("VULTR_API_KEY")
-	if apiKey == "" {
+func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
+	if cfg.Providers.Vultr.APIKey == "" {
 		return nil, nil
 	}
 
 	config := &oauth2.Config{}
-	ts := config.TokenSource(ctx, &oauth2.Token{AccessToken: apiKey})
+	ts := config.TokenSource(ctx, &oauth2.Token{AccessToken: cfg.Providers.Vultr.APIKey})
 	vultrClient := govultr.NewClient(oauth2.NewClient(ctx, ts))
 
 	return &vultrProvider{
 		vultrClient: vultrClient,
-		apiKey:      apiKey,
-		sshKey:      sshKey,
+		apiKey:      cfg.Providers.Vultr.APIKey,
+		sshKey:      cfg.SSH.PublicKey,
 	}, nil
 }
 

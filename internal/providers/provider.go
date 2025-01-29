@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 
+	"github.com/anupcshan/tscloudvpn/internal/config"
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 )
 
@@ -30,7 +31,7 @@ type Provider interface {
 	Hostname(region string) HostName
 }
 
-type ProviderFactory func(ctx context.Context, sshKey string) (Provider, error)
+type ProviderFactory func(ctx context.Context, cfg *config.Config) (Provider, error)
 
 func Register(name string, providerFactory ProviderFactory) {
 	ProviderFactoryRegistry[name] = providerFactory

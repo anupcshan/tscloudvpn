@@ -38,35 +38,86 @@ go install github.com/anupcshan/tscloudvpn/cmd/tscloudvpn@latest
 
 ## Configuration
 
-The following environment variables are required depending on your setup:
+tscloudvpn supports both YAML configuration files and environment variables. The configuration file is searched for in the following locations:
 
-### Common Configuration
+1. $XDG_CONFIG_HOME/tscloudvpn/config.yaml
+2. ~/.config/tscloudvpn/config.yaml
+3. ~/.tscloudvpn.yaml
+
+### Configuration File (Recommended)
+
+Example config.yaml:
+```yaml
+ssh:
+  public_key: "ssh-rsa AAAA..."
+
+control:
+  type: "tailscale"  # or "headscale"
+  tailscale:
+    client_id: "..."
+    client_secret: "..."
+    tailnet: "..."
+  headscale:
+    api: "..."
+    url: "..."
+    api_key: "..."
+    user: "..."
+
+providers:
+  digitalocean:
+    token: "..."
+  gcp:
+    credentials_json: "..."
+    project_id: "..."
+    service_account: "..."
+  vultr:
+    api_key: "..."
+  linode:
+    token: "..."
+  aws:
+    # Either specify the credentials directly
+    access_key: "..."
+    secret_key: "..."
+    session_token: "..."
+    # ... or use the shared config dir
+    shared_config_dir: "~/.aws"  # optional
+    # ... or use the AWS_ environment variables
+```
+
+### Environment Variables (Legacy Support)
+
+The following environment variables are still supported for backward compatibility:
+
+#### Common Configuration
 - `SSH_PUBKEY`: Your SSH public key for instance access
 
-### Tailscale Configuration
+#### Tailscale Configuration
 - `TAILSCALE_CLIENT_ID`: OAuth client ID
 - `TAILSCALE_CLIENT_SECRET`: OAuth client secret
 - `TAILSCALE_TAILNET`: Your tailnet name
 
-### Headscale Configuration (Alternative to Tailscale)
+#### Headscale Configuration (Alternative to Tailscale)
 - `HEADSCALE_API`: Headscale API endpoint
 - `HEADSCALE_URL`: Headscale URL
 - `HEADSCALE_APIKEY`: Headscale API key
 - `HEADSCALE_USER`: Headscale username
 
-### Cloud Provider Configuration
+#### Cloud Provider Configuration
 
-Configure your chosen cloud provider(s) by setting their respective environment variables. Refer to each provider's documentation for specific API credential requirements:
+Configure your chosen cloud provider(s) by setting their respective environment variables:
 
-- DigitalOcean: Digital Ocean API token
-- AWS EC2: AWS credentials and region
-- GCP: Google Cloud credentials
-- Linode: Linode API token
-- Vultr: Vultr API key
+- DigitalOcean: `DIGITALOCEAN_TOKEN`
+- GCP:
+  - `GCP_CREDENTIALS_JSON_FILE`
+  - `GCP_PROJECT_ID`
+  - `GCP_SERVICE_ACCOUNT`
+- Vultr: `VULTR_API_KEY`
+- Linode: `LINODE_TOKEN`
+- AWS: Uses standard AWS environment variables and ~/.aws/credentials
 
 ## Usage
 
-1. Set up the required environment variables for your chosen configuration
+1. Create a configuration file or set up the required environment variables
 2. Run the tscloudvpn server:
    ```bash
    tscloudvpn

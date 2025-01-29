@@ -11,10 +11,11 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/anupcshan/tscloudvpn/internal/config"
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
@@ -31,20 +32,46 @@ type ec2Provider struct {
 	sshKey string
 }
 
-func NewProvider(ctx context.Context, sshKey string) (providers.Provider, error) {
-	awsConfig, err := config.LoadDefaultConfig(ctx)
+func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
+	// Build AWS config options from our config file settings
+	var opts []func(*awsconfig.LoadOptions) error
+
+	// Pick any region - we set the region when we need to use it
+	opts = append(opts, awsconfig.WithDefaultRegion("us-west-2"))
+
+	if cfg.Providers.AWS.SharedConfigDir != "" {
+		opts = append(opts, awsconfig.WithSharedConfigFiles([]string{
+			fmt.Sprintf("%s/credentials", cfg.Providers.AWS.SharedConfigDir),
+			fmt.Sprintf("%s/config", cfg.Providers.AWS.SharedConfigDir),
+		}))
+	}
+
+	if cfg.Providers.AWS.AccessKey != "" && cfg.Providers.AWS.SecretKey != "" {
+		// Use static credentials from config
+		opts = append(opts, awsconfig.WithCredentialsProvider(aws.CredentialsProviderFunc(
+			func(ctx context.Context) (aws.Credentials, error) {
+				return aws.Credentials{
+					AccessKeyID:     cfg.Providers.AWS.AccessKey,
+					SecretAccessKey: cfg.Providers.AWS.SecretKey,
+					SessionToken:    cfg.Providers.AWS.SessionToken,
+				}, nil
+			},
+		)))
+	}
+
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err := awsConfig.Credentials.Retrieve(ctx); err != nil {
+	if _, err := awsCfg.Credentials.Retrieve(ctx); err != nil {
 		// No credentials set. Nothing to do
 		return nil, nil
 	}
 
 	return &ec2Provider{
-		cfg:    awsConfig,
-		sshKey: sshKey,
+		cfg:    awsCfg,
+		sshKey: cfg.SSH.PublicKey,
 	}, nil
 }
 

@@ -6,10 +6,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"text/template"
 
+	"github.com/anupcshan/tscloudvpn/internal/config"
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/linode/linodego"
@@ -23,21 +23,20 @@ type linodeProvider struct {
 	sshKey string
 }
 
-func New(ctx context.Context, sshKey string) (providers.Provider, error) {
-	token := os.Getenv("LINODE_TOKEN")
-	if token == "" {
+func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
+	if cfg.Providers.Linode.Token == "" {
 		// No token set. Nothing to do
 		return nil, nil
 	}
 
-	tokenSource := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+	tokenSource := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: cfg.Providers.Linode.Token})
 	oauth2Client := oauth2.NewClient(ctx, tokenSource)
 	client := linodego.NewClient(oauth2Client)
 
 	return &linodeProvider{
 		client: &client,
-		sshKey: sshKey,
-		token:  token,
+		sshKey: cfg.SSH.PublicKey,
+		token:  cfg.Providers.Linode.Token,
 	}, nil
 }
 

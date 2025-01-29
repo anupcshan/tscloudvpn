@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
-	"os"
 	"slices"
 	"sort"
 	"strings"
 	"text/template"
 	"time"
 
+	"github.com/anupcshan/tscloudvpn/internal/config"
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -79,30 +79,21 @@ type gcpProvider struct {
 	sshKey         string
 }
 
-func NewProvider(ctx context.Context, sshKey string) (providers.Provider, error) {
-	gcpCredentialsJsonFile := os.Getenv("GCP_CREDENTIALS_JSON_FILE")
-	gcpProjectId := os.Getenv("GCP_PROJECT_ID")
-	gcpServiceAccount := os.Getenv("GCP_SERVICE_ACCOUNT")
-
-	if gcpCredentialsJsonFile == "" || gcpProjectId == "" || gcpServiceAccount == "" {
+func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
+	if cfg.Providers.GCP.CredentialsJSON == "" || cfg.Providers.GCP.ProjectID == "" || cfg.Providers.GCP.ServiceAccount == "" {
 		return nil, nil
 	}
 
-	gcpCredentialsJson, err := os.ReadFile(gcpCredentialsJsonFile)
-	if err != nil {
-		return nil, err
-	}
-
-	service, err := compute.NewService(ctx, option.WithCredentialsJSON([]byte(gcpCredentialsJson)))
+	service, err := compute.NewService(ctx, option.WithCredentialsJSON([]byte(cfg.Providers.GCP.CredentialsJSON)))
 	if err != nil {
 		return nil, err
 	}
 
 	return &gcpProvider{
-		projectId:      gcpProjectId,
-		serviceAccount: gcpServiceAccount,
+		projectId:      cfg.Providers.GCP.ProjectID,
+		serviceAccount: cfg.Providers.GCP.ServiceAccount,
 		service:        service,
-		sshKey:         sshKey,
+		sshKey:         cfg.SSH.PublicKey,
 	}, nil
 }
 
