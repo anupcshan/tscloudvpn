@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -24,6 +25,95 @@ import (
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
 )
+
+type PingResult struct {
+	Timestamp time.Time
+	Success   bool
+	Latency   time.Duration
+}
+
+type PingHistory struct {
+	mu           sync.RWMutex
+	history      []PingResult // Ring buffer of last 100 results
+	successCount int
+	totalLatency time.Duration
+	lastFailure  time.Time
+	position     int // Current position in ring buffer
+}
+
+func NewPingHistory() *PingHistory {
+	return &PingHistory{
+		history: make([]PingResult, 100), // Fixed size of 100
+	}
+}
+
+func (ph *PingHistory) AddResult(success bool, latency time.Duration) {
+	ph.mu.Lock()
+	defer ph.mu.Unlock()
+
+	// If the entry at current position was successful, decrease success count
+	if ph.history[ph.position].Success {
+		ph.successCount--
+		ph.totalLatency -= ph.history[ph.position].Latency
+	}
+
+	// Add new result
+	ph.history[ph.position] = PingResult{
+		Timestamp: time.Now(),
+		Success:   success,
+		Latency:   latency,
+	}
+
+	if success {
+		ph.successCount++
+		ph.totalLatency += latency
+	} else {
+		ph.lastFailure = time.Now()
+	}
+
+	// Move position forward
+	ph.position = (ph.position + 1) % 100
+}
+
+func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration, stdDevLatency time.Duration, timeSinceFailure time.Duration) {
+	ph.mu.RLock()
+	defer ph.mu.RUnlock()
+
+	// Count non-zero entries to handle startup period
+	total := 0
+	for _, result := range ph.history {
+		if !result.Timestamp.IsZero() {
+			total++
+		}
+	}
+
+	if total == 0 {
+		return 0, 0, 0, 0
+	}
+
+	successRate = float64(ph.successCount) / float64(total)
+	if ph.successCount > 0 {
+		avgLatency = ph.totalLatency / time.Duration(ph.successCount)
+
+		// Calculate standard deviation
+		var sumSquaredDiffSeconds float64
+		for _, result := range ph.history {
+			if !result.Timestamp.IsZero() && result.Success {
+				diff := (result.Latency - avgLatency).Seconds()
+				sumSquaredDiffSeconds += diff * diff
+			}
+		}
+		if ph.successCount > 1 {
+			stdDevLatency = time.Duration(1000*1000*math.Sqrt(sumSquaredDiffSeconds)/float64(ph.successCount-1)) * time.Microsecond
+		}
+	}
+
+	if !ph.lastFailure.IsZero() {
+		timeSinceFailure = time.Since(ph.lastFailure)
+	}
+
+	return successRate, avgLatency, stdDevLatency, timeSinceFailure
+}
 
 type ConcurrentMap[K comparable, V any] struct {
 	mu sync.RWMutex
@@ -49,7 +139,7 @@ func (l *ConcurrentMap[K, V]) Set(k K, v V) {
 type Manager struct {
 	cloudProviders     map[string]providers.Provider
 	lazyListRegionsMap map[string]func() []providers.Region
-	pingMap            *ConcurrentMap[providers.HostName, time.Time]
+	pingHistories      *ConcurrentMap[providers.HostName, *PingHistory]
 	launchTSMap        *ConcurrentMap[providers.HostName, time.Time]
 	tsLocalClient      *tailscale.LocalClient
 }
@@ -74,7 +164,7 @@ func NewManager(
 	m := &Manager{
 		cloudProviders:     cloudProviders,
 		tsLocalClient:      tsLocalClient,
-		pingMap:            NewConcurrentMap[providers.HostName, time.Time](),
+		pingHistories:      NewConcurrentMap[providers.HostName, *PingHistory](),
 		launchTSMap:        NewConcurrentMap[providers.HostName, time.Time](),
 		lazyListRegionsMap: lazyListRegionsMap,
 	}
@@ -111,11 +201,21 @@ func (m *Manager) initOnce(ctx context.Context) {
 					continue
 				}
 				errG.Go(func() error {
+					start := time.Now()
 					_, err := m.tsLocalClient.Ping(subctx, peer.TailscaleIPs[0], tailcfg.PingDisco)
+					latency := time.Since(start)
+
+					history := m.pingHistories.Get(peerHostName)
+					if history == nil {
+						history = NewPingHistory()
+						m.pingHistories.Set(peerHostName, history)
+					}
+
 					if err != nil {
 						log.Printf("Ping error from %s (%s): %s", peer.HostName, peer.TailscaleIPs[0], err)
+						history.AddResult(false, 0)
 					} else {
-						m.pingMap.Set(peerHostName, time.Now())
+						history.AddResult(true, latency)
 					}
 					return nil
 				})
@@ -127,13 +227,18 @@ func (m *Manager) initOnce(ctx context.Context) {
 }
 
 type mappedRegion struct {
-	Provider          string
-	Region            string
-	LongName          string
-	HasNode           bool
-	SinceCreated      string
-	RecentPingSuccess bool
-	CreatedTS         time.Time
+	Provider     string
+	Region       string
+	LongName     string
+	HasNode      bool
+	SinceCreated string
+	PingStats    struct {
+		SuccessRate      float64
+		AvgLatency       time.Duration
+		StdDevLatency    time.Duration
+		TimeSinceFailure time.Duration
+	}
+	CreatedTS time.Time
 }
 
 func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], error) {
@@ -162,26 +267,29 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 			node, hasNode := deviceMap[provider.Hostname(region.Code)]
 			var sinceCreated string
 			var createdTS time.Time
-			var recentPingSuccess bool
+			var pingStats struct {
+				SuccessRate      float64
+				AvgLatency       time.Duration
+				StdDevLatency    time.Duration
+				TimeSinceFailure time.Duration
+			}
 			if hasNode {
 				createdTS = node.Created
 				sinceCreated = durafmt.ParseShort(time.Since(node.Created)).InternationalString()
-				lastPingTimestamp := m.pingMap.Get(provider.Hostname(region.Code))
-				if !lastPingTimestamp.IsZero() {
-					timeSinceLastPing := time.Since(lastPingTimestamp)
-					if timeSinceLastPing < 30*time.Second {
-						recentPingSuccess = true
-					}
+
+				history := m.pingHistories.Get(provider.Hostname(region.Code))
+				if history != nil {
+					pingStats.SuccessRate, pingStats.AvgLatency, pingStats.StdDevLatency, pingStats.TimeSinceFailure = history.GetStats()
 				}
 			}
 			return mappedRegion{
-				Provider:          providerName,
-				Region:            region.Code,
-				LongName:          region.LongName,
-				HasNode:           hasNode,
-				CreatedTS:         createdTS,
-				SinceCreated:      sinceCreated,
-				RecentPingSuccess: recentPingSuccess,
+				Provider:     providerName,
+				Region:       region.Code,
+				LongName:     region.LongName,
+				HasNode:      hasNode,
+				CreatedTS:    createdTS,
+				SinceCreated: sinceCreated,
+				PingStats:    pingStats,
 			}
 		})...)
 	}
@@ -224,11 +332,26 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller con
 				buttonKey := fmt.Sprintf("%s-%s-button", region.Provider, region.Region)
 				opURL := fmt.Sprintf("/providers/%s/regions/%s", region.Provider, region.Region)
 				if region.HasNode {
-					labelClass := "label-warning"
-					if region.RecentPingSuccess {
+					labelClass := "label-danger"
+					if region.PingStats.SuccessRate >= 0.95 {
 						labelClass = "label-success"
+					} else if region.PingStats.SuccessRate >= 0.80 {
+						labelClass = "label-warning"
 					}
-					data[hasNodeKey] = fmt.Sprintf(`<span class="label %s" title="%s" style="margin-right: 0.25em">running for %s</span>`, labelClass, region.CreatedTS, region.SinceCreated)
+
+					lastFailureStr := "never"
+					if region.PingStats.TimeSinceFailure > 0 {
+						lastFailureStr = durafmt.ParseShort(region.PingStats.TimeSinceFailure).String() + " ago"
+					}
+
+					tooltip := fmt.Sprintf("Success Rate: %.1f%% Avg Latency: %s (±%s) Last Failure: %s Created: %s",
+						region.PingStats.SuccessRate*100,
+						region.PingStats.AvgLatency.Round(time.Millisecond),
+						region.PingStats.StdDevLatency.Round(time.Millisecond),
+						lastFailureStr,
+						region.CreatedTS.Round(time.Second))
+
+					data[hasNodeKey] = fmt.Sprintf(`<span class="label %s" title="%s" style="margin-right: 0.25em">running for %s</span>`, labelClass, tooltip, region.SinceCreated)
 					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, opURL)
 				} else {
 					launchTS := m.launchTSMap.Get(providers.HostName(fmt.Sprintf("%s-%s", region.Provider, region.Region)))
