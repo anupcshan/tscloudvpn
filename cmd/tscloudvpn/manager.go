@@ -27,18 +27,20 @@ import (
 )
 
 type PingResult struct {
-	Timestamp time.Time
-	Success   bool
-	Latency   time.Duration
+	Timestamp        time.Time
+	Success          bool
+	Latency          time.Duration
+	DirectConnection bool
 }
 
 type PingHistory struct {
-	mu           sync.RWMutex
-	history      []PingResult // Ring buffer of last 100 results
-	successCount int
-	totalLatency time.Duration
-	lastFailure  time.Time
-	position     int // Current position in ring buffer
+	mu               sync.RWMutex
+	history          []PingResult // Ring buffer of last 100 results
+	successCount     int
+	totalLatency     time.Duration
+	lastFailure      time.Time
+	position         int  // Current position in ring buffer
+	DirectConnection bool // Most recent direct connection state
 }
 
 func NewPingHistory() *PingHistory {
@@ -47,7 +49,7 @@ func NewPingHistory() *PingHistory {
 	}
 }
 
-func (ph *PingHistory) AddResult(success bool, latency time.Duration) {
+func (ph *PingHistory) AddResult(success bool, latency time.Duration, directConnection bool) {
 	ph.mu.Lock()
 	defer ph.mu.Unlock()
 
@@ -59,9 +61,10 @@ func (ph *PingHistory) AddResult(success bool, latency time.Duration) {
 
 	// Add new result
 	ph.history[ph.position] = PingResult{
-		Timestamp: time.Now(),
-		Success:   success,
-		Latency:   latency,
+		Timestamp:        time.Now(),
+		Success:          success,
+		Latency:          latency,
+		DirectConnection: directConnection,
 	}
 
 	if success {
@@ -75,7 +78,7 @@ func (ph *PingHistory) AddResult(success bool, latency time.Duration) {
 	ph.position = (ph.position + 1) % 100
 }
 
-func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration, stdDevLatency time.Duration, timeSinceFailure time.Duration) {
+func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration, stdDevLatency time.Duration, timeSinceFailure time.Duration, directConnection bool) {
 	ph.mu.RLock()
 	defer ph.mu.RUnlock()
 
@@ -88,7 +91,7 @@ func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration
 	}
 
 	if total == 0 {
-		return 0, 0, 0, 0
+		return 0, 0, 0, 0, false
 	}
 
 	successRate = float64(ph.successCount) / float64(total)
@@ -112,7 +115,17 @@ func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration
 		timeSinceFailure = time.Since(ph.lastFailure)
 	}
 
-	return successRate, avgLatency, stdDevLatency, timeSinceFailure
+	// Return most recent direct connection state
+	for i := len(ph.history) - 1; i >= 0; i-- {
+		idx := (ph.position - 1 - i + len(ph.history)) % len(ph.history)
+		result := ph.history[idx]
+		if !result.Timestamp.IsZero() && result.Success {
+			directConnection = result.DirectConnection
+			break
+		}
+	}
+
+	return successRate, avgLatency, stdDevLatency, timeSinceFailure, directConnection
 }
 
 type ConcurrentMap[K comparable, V any] struct {
@@ -182,7 +195,7 @@ func (m *Manager) initOnce(ctx context.Context) {
 		}
 	}
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(time.Second)
 	for {
 		<-ticker.C
 		func() {
@@ -201,21 +214,20 @@ func (m *Manager) initOnce(ctx context.Context) {
 					continue
 				}
 				errG.Go(func() error {
-					start := time.Now()
-					_, err := m.tsLocalClient.Ping(subctx, peer.TailscaleIPs[0], tailcfg.PingDisco)
-					latency := time.Since(start)
-
 					history := m.pingHistories.Get(peerHostName)
-					if history == nil {
-						history = NewPingHistory()
-						m.pingHistories.Set(peerHostName, history)
-					}
-
+					result, err := m.tsLocalClient.Ping(subctx, peer.TailscaleIPs[0], tailcfg.PingDisco)
 					if err != nil {
 						log.Printf("Ping error from %s (%s): %s", peer.HostName, peer.TailscaleIPs[0], err)
-						history.AddResult(false, 0)
+						history.AddResult(false, 0, false)
 					} else {
-						history.AddResult(true, latency)
+						latency := time.Duration(result.LatencySeconds*1000000) * time.Microsecond
+						isDirectConnection := result.Endpoint != ""
+
+						if history == nil {
+							history = NewPingHistory()
+							m.pingHistories.Set(peerHostName, history)
+						}
+						history.AddResult(true, latency, isDirectConnection)
 					}
 					return nil
 				})
@@ -237,6 +249,7 @@ type mappedRegion struct {
 		AvgLatency       time.Duration
 		StdDevLatency    time.Duration
 		TimeSinceFailure time.Duration
+		DirectConnection bool
 	}
 	CreatedTS time.Time
 }
@@ -272,6 +285,7 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 				AvgLatency       time.Duration
 				StdDevLatency    time.Duration
 				TimeSinceFailure time.Duration
+				DirectConnection bool
 			}
 			if hasNode {
 				createdTS = node.Created
@@ -279,7 +293,7 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 
 				history := m.pingHistories.Get(provider.Hostname(region.Code))
 				if history != nil {
-					pingStats.SuccessRate, pingStats.AvgLatency, pingStats.StdDevLatency, pingStats.TimeSinceFailure = history.GetStats()
+					pingStats.SuccessRate, pingStats.AvgLatency, pingStats.StdDevLatency, pingStats.TimeSinceFailure, pingStats.DirectConnection = history.GetStats()
 				}
 			}
 			return mappedRegion{
@@ -344,12 +358,20 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller con
 						lastFailureStr = durafmt.ParseShort(region.PingStats.TimeSinceFailure).String() + " ago"
 					}
 
-					tooltip := fmt.Sprintf("Success Rate: %.1f%% Avg Latency: %s (±%s) Last Failure: %s Created: %s",
+					connectionType := "Relay"
+					if region.PingStats.DirectConnection {
+						connectionType = "Direct"
+					}
+
+					tooltip := fmt.Sprintf(
+						"Success Rate: %.1f%% Avg Latency: %s (±%s) Last Failure: %s Created: %s Connection: %s",
 						region.PingStats.SuccessRate*100,
 						region.PingStats.AvgLatency.Round(time.Millisecond),
 						region.PingStats.StdDevLatency.Round(time.Millisecond),
 						lastFailureStr,
-						region.CreatedTS.Round(time.Second))
+						region.CreatedTS.Round(time.Second),
+						connectionType,
+					)
 
 					data[hasNodeKey] = fmt.Sprintf(`<span class="label %s" title="%s" style="margin-right: 0.25em">running for %s</span>`, labelClass, tooltip, region.SinceCreated)
 					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, opURL)
