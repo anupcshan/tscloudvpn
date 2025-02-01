@@ -25,6 +25,9 @@ import (
 const (
 	debianLatestImageSSMPath = "/aws/service/debian/release/12/latest/arm64"
 	providerName             = "ec2"
+	securityGroupName        = "tscloudvpn-sg"
+	// Tailscale uses this port for inbound connections to the Tailscaled - see https://tailscale.com/kb/1257/connection-types#hard-nat
+	tailscaledInboundPort = 41641
 )
 
 type ec2Provider struct {
@@ -111,6 +114,85 @@ func (e *ec2Provider) ListRegions(ctx context.Context) ([]providers.Region, erro
 	return regions, nil
 }
 
+func hasVPNPortRule(group types.SecurityGroup) bool {
+	for _, permission := range group.IpPermissions {
+		if aws.ToString(permission.IpProtocol) == "udp" &&
+			aws.ToInt32(permission.FromPort) == tailscaledInboundPort &&
+			aws.ToInt32(permission.ToPort) == tailscaledInboundPort {
+			for _, ipRange := range permission.IpRanges {
+				if aws.ToString(ipRange.CidrIp) == "0.0.0.0/0" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (e *ec2Provider) getOrCreateSecurityGroup(ctx context.Context, client *ec2.Client) (string, error) {
+	// First try to find existing security group
+	if describeResult, err := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		Filters: []types.Filter{
+			{
+				Name:   aws.String("group-name"),
+				Values: []string{securityGroupName},
+			},
+		},
+	}); err != nil {
+		return "", fmt.Errorf("failed to describe security groups: %v", err)
+	} else if len(describeResult.SecurityGroups) > 0 {
+		sg := describeResult.SecurityGroups[0]
+		if !hasVPNPortRule(sg) {
+			if err := e.addVPNPortRule(ctx, client, sg.GroupId); err != nil {
+				return "", fmt.Errorf("failed to authorize security group ingress for existing group: %v", err)
+			}
+		}
+		return *sg.GroupId, nil
+	}
+
+	// Create new security group
+	if createResult, err := client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String(securityGroupName),
+		Description: aws.String("Security group for tscloudvpn instances"),
+		TagSpecifications: []types.TagSpecification{
+			{
+				ResourceType: types.ResourceTypeSecurityGroup,
+				Tags: []types.Tag{
+					{Key: aws.String("tscloudvpn"), Value: aws.String("true")},
+				},
+			},
+		},
+	}); err != nil {
+		return "", fmt.Errorf("failed to create security group: %v", err)
+	} else {
+		if err := e.addVPNPortRule(ctx, client, createResult.GroupId); err != nil {
+			return "", fmt.Errorf("failed to authorize security group ingress: %v", err)
+		}
+
+		return *createResult.GroupId, nil
+	}
+}
+
+func (e *ec2Provider) addVPNPortRule(ctx context.Context, client *ec2.Client, groupId *string) error {
+	_, err := client.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: groupId,
+		IpPermissions: []types.IpPermission{
+			{
+				IpProtocol: aws.String("udp"),
+				FromPort:   aws.Int32(tailscaledInboundPort),
+				ToPort:     aws.Int32(tailscaledInboundPort),
+				IpRanges: []types.IpRange{
+					{
+						CidrIp:      aws.String("0.0.0.0/0"),
+						Description: aws.String("VPN port access"),
+					},
+				},
+			},
+		},
+	})
+	return err
+}
+
 func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (string, error) {
 	e.cfg.Region = region
 
@@ -144,15 +226,19 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 		return "", err
 	}
 
+	// Get or create security group
+	sgID, err := e.getOrCreateSecurityGroup(ctx, client)
+	if err != nil {
+		return "", fmt.Errorf("failed to setup security group: %v", err)
+	}
+
 	input := &ec2.RunInstancesInput{
 		ImageId:                           imageParam.Parameter.Value,
 		InstanceType:                      types.InstanceTypeT4gNano,
 		MinCount:                          aws.Int32(1),
 		MaxCount:                          aws.Int32(1),
 		InstanceInitiatedShutdownBehavior: types.ShutdownBehaviorTerminate,
-		// To debug:
-		// KeyName:                           aws.String("ssh-key-name"),
-		// SecurityGroupIds:                  []string{"sg-..."},
+		SecurityGroupIds:                  []string{sgID},
 		TagSpecifications: []types.TagSpecification{
 			{
 				ResourceType: "instance",
