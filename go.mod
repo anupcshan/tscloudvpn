@@ -7,7 +7,7 @@ toolchain go1.23.2
 require (
 	github.com/aws/aws-sdk-go-v2 v1.36.0
 	github.com/aws/aws-sdk-go-v2/config v1.29.4
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.201.1
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.202.2
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.56.8
 	github.com/bradenaw/juniper v0.15.3
 	github.com/digitalocean/godo v1.136.0
