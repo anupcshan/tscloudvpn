@@ -214,8 +214,12 @@ func (m *Manager) initOnce(ctx context.Context) {
 					continue
 				}
 				errG.Go(func() error {
-					history := m.pingHistories.Get(peerHostName)
 					result, err := m.tsLocalClient.Ping(subctx, peer.TailscaleIPs[0], tailcfg.PingDisco)
+					history := m.pingHistories.Get(peerHostName)
+					if history == nil {
+						history = NewPingHistory()
+						m.pingHistories.Set(peerHostName, history)
+					}
 					if err != nil {
 						log.Printf("Ping error from %s (%s): %s", peer.HostName, peer.TailscaleIPs[0], err)
 						history.AddResult(false, 0, false)
@@ -223,10 +227,6 @@ func (m *Manager) initOnce(ctx context.Context) {
 						latency := time.Duration(result.LatencySeconds*1000000) * time.Microsecond
 						isDirectConnection := result.Endpoint != ""
 
-						if history == nil {
-							history = NewPingHistory()
-							m.pingHistories.Set(peerHostName, history)
-						}
 						history.AddResult(true, latency, isDirectConnection)
 					}
 					return nil
