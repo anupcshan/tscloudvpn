@@ -215,7 +215,7 @@ func (m *Manager) initOnce(ctx context.Context) {
 					continue
 				}
 				errG.Go(func() error {
-					result, err := m.tsLocalClient.Ping(subctx, peer.TailscaleIPs[0], tailcfg.PingDisco)
+					result, err := m.tsLocalClient.Ping(subctx, peer.TailscaleIPs[0], tailcfg.PingICMP)
 					history := m.pingHistories.Get(peerHostName)
 					if history == nil {
 						history = NewPingHistory()
