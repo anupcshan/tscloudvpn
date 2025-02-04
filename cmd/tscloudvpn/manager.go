@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -328,11 +329,60 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller con
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 
+		buildRunningNodesTableHTML := func(detail []mappedRegion) string {
+			var runningNodes []mappedRegion
+			for _, r := range detail {
+				if r.HasNode {
+					runningNodes = append(runningNodes, r)
+				}
+			}
+
+			var html strings.Builder
+			for _, node := range runningNodes {
+				connectionType := "Relay"
+				if node.PingStats.DirectConnection {
+					connectionType = "Direct"
+				}
+
+				successRateClass := "label-danger"
+				if node.PingStats.SuccessRate >= 0.95 {
+					successRateClass = "label-success"
+				} else if node.PingStats.SuccessRate >= 0.80 {
+					successRateClass = "label-warning"
+				}
+
+				html.WriteString("<tr>")
+				html.WriteString(fmt.Sprintf("<td>%s</td>", node.Provider))
+				html.WriteString(fmt.Sprintf("<td>%s</td>", node.Region))
+				html.WriteString(fmt.Sprintf("<td>%s</td>", node.SinceCreated))
+				html.WriteString(fmt.Sprintf("<td>%s</td>", connectionType))
+				html.WriteString(fmt.Sprintf(`<td><span class="label %s">%.1f%%</span></td>`,
+					successRateClass, node.PingStats.SuccessRate*100))
+				html.WriteString(fmt.Sprintf("<td>%s (±%s)</td>",
+					node.PingStats.AvgLatency.Round(time.Millisecond), node.PingStats.StdDevLatency.Round(time.Millisecond)))
+				html.WriteString(fmt.Sprintf(`<td><button class="btn btn-danger" hx-ext="disable-element" `+
+					`hx-disable-element="self" hx-delete="/providers/%s/regions/%s">Delete</button></td>`,
+					node.Provider, node.Region))
+				html.WriteString("</tr>")
+			}
+			return html.String()
+		}
+
 		for {
 			status, err := m.GetStatus(ctx)
 			if err != nil {
 				log.Printf("Error getting status: %s", err)
 				continue
+			}
+
+			// Generate running nodes table HTML
+			runningNodesHTML := buildRunningNodesTableHTML(status.Detail)
+			runningNodesKey := "running-nodes-table"
+			if dataCache[runningNodesKey] != runningNodesHTML {
+				fmt.Fprintf(w, "event: %s\n", runningNodesKey)
+				fmt.Fprintf(w, "data: %s\n", runningNodesHTML)
+				fmt.Fprint(w, "\n\n")
+				dataCache[runningNodesKey] = runningNodesHTML
 			}
 
 			data := map[string]string{
