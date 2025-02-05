@@ -28,20 +28,19 @@ import (
 )
 
 type PingResult struct {
-	Timestamp        time.Time
-	Success          bool
-	Latency          time.Duration
-	DirectConnection bool
+	Timestamp      time.Time
+	Success        bool
+	Latency        time.Duration
+	ConnectionType string
 }
 
 type PingHistory struct {
-	mu               sync.RWMutex
-	history          []PingResult // Ring buffer of last 100 results
-	successCount     int
-	totalLatency     time.Duration
-	lastFailure      time.Time
-	position         int  // Current position in ring buffer
-	DirectConnection bool // Most recent direct connection state
+	mu           sync.RWMutex
+	history      []PingResult // Ring buffer of last 100 results
+	successCount int
+	totalLatency time.Duration
+	lastFailure  time.Time
+	position     int // Current position in ring buffer
 }
 
 func NewPingHistory() *PingHistory {
@@ -50,7 +49,7 @@ func NewPingHistory() *PingHistory {
 	}
 }
 
-func (ph *PingHistory) AddResult(success bool, latency time.Duration, directConnection bool) {
+func (ph *PingHistory) AddResult(success bool, latency time.Duration, connectionType string) {
 	ph.mu.Lock()
 	defer ph.mu.Unlock()
 
@@ -62,10 +61,10 @@ func (ph *PingHistory) AddResult(success bool, latency time.Duration, directConn
 
 	// Add new result
 	ph.history[ph.position] = PingResult{
-		Timestamp:        time.Now(),
-		Success:          success,
-		Latency:          latency,
-		DirectConnection: directConnection,
+		Timestamp:      time.Now(),
+		Success:        success,
+		Latency:        latency,
+		ConnectionType: connectionType,
 	}
 
 	if success {
@@ -79,7 +78,7 @@ func (ph *PingHistory) AddResult(success bool, latency time.Duration, directConn
 	ph.position = (ph.position + 1) % 100
 }
 
-func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration, stdDevLatency time.Duration, timeSinceFailure time.Duration, directConnection bool) {
+func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration, stdDevLatency time.Duration, timeSinceFailure time.Duration, connectionType string) {
 	ph.mu.RLock()
 	defer ph.mu.RUnlock()
 
@@ -92,7 +91,7 @@ func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration
 	}
 
 	if total == 0 {
-		return 0, 0, 0, 0, false
+		return 0, 0, 0, 0, ""
 	}
 
 	successRate = float64(ph.successCount) / float64(total)
@@ -116,17 +115,17 @@ func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration
 		timeSinceFailure = time.Since(ph.lastFailure)
 	}
 
-	// Return most recent direct connection state
+	// Return most recent connection type
 	for i := len(ph.history) - 1; i >= 0; i-- {
 		idx := (ph.position - 1 - i + len(ph.history)) % len(ph.history)
 		result := ph.history[idx]
 		if !result.Timestamp.IsZero() && result.Success {
-			directConnection = result.DirectConnection
+			connectionType = result.ConnectionType
 			break
 		}
 	}
 
-	return successRate, avgLatency, stdDevLatency, timeSinceFailure, directConnection
+	return successRate, avgLatency, stdDevLatency, timeSinceFailure, connectionType
 }
 
 type ConcurrentMap[K comparable, V any] struct {
@@ -223,12 +222,15 @@ func (m *Manager) initOnce(ctx context.Context) {
 					}
 					if err != nil {
 						log.Printf("Ping error from %s (%s): %s", peer.HostName, peer.TailscaleIPs[0], err)
-						history.AddResult(false, 0, false)
+						history.AddResult(false, 0, "")
 					} else {
 						latency := time.Duration(result.LatencySeconds*1000000) * time.Microsecond
-						isDirectConnection := result.Endpoint != ""
+						connectionType := "direct"
+						if result.Endpoint == "" && result.DERPRegionCode != "" {
+							connectionType = "relayed via " + result.DERPRegionCode
+						}
 
-						history.AddResult(true, latency, isDirectConnection)
+						history.AddResult(true, latency, connectionType)
 					}
 					return nil
 				})
@@ -250,7 +252,7 @@ type mappedRegion struct {
 		AvgLatency       time.Duration
 		StdDevLatency    time.Duration
 		TimeSinceFailure time.Duration
-		DirectConnection bool
+		ConnectionType   string
 	}
 	CreatedTS time.Time
 }
@@ -286,7 +288,7 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 				AvgLatency       time.Duration
 				StdDevLatency    time.Duration
 				TimeSinceFailure time.Duration
-				DirectConnection bool
+				ConnectionType   string
 			}
 			if hasNode {
 				createdTS = node.Created
@@ -294,7 +296,7 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 
 				history := m.pingHistories.Get(provider.Hostname(region.Code))
 				if history != nil {
-					pingStats.SuccessRate, pingStats.AvgLatency, pingStats.StdDevLatency, pingStats.TimeSinceFailure, pingStats.DirectConnection = history.GetStats()
+					pingStats.SuccessRate, pingStats.AvgLatency, pingStats.StdDevLatency, pingStats.TimeSinceFailure, pingStats.ConnectionType = history.GetStats()
 				}
 			}
 			return mappedRegion{
@@ -339,10 +341,7 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller con
 
 			var html strings.Builder
 			for _, node := range runningNodes {
-				connectionType := "Relay"
-				if node.PingStats.DirectConnection {
-					connectionType = "Direct"
-				}
+				connectionType := node.PingStats.ConnectionType
 
 				successRateClass := "label-danger"
 				if node.PingStats.SuccessRate >= 0.95 {
@@ -408,10 +407,7 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller con
 						lastFailureStr = durafmt.ParseShort(region.PingStats.TimeSinceFailure).String() + " ago"
 					}
 
-					connectionType := "Relay"
-					if region.PingStats.DirectConnection {
-						connectionType = "Direct"
-					}
+					connectionType := region.PingStats.ConnectionType
 
 					tooltip := fmt.Sprintf(
 						"Success Rate: %.1f%% Avg Latency: %s (±%s) Last Failure: %s Created: %s Connection: %s",
