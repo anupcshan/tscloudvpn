@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net"
 	"net/http"
 	"os"
@@ -27,25 +26,31 @@ import (
 	"tailscale.com/tailcfg"
 )
 
+const historySize = 250
+
 type PingResult struct {
-	Timestamp      time.Time
-	Success        bool
-	Latency        time.Duration
-	ConnectionType string
+	Timestamp            time.Time
+	Success              bool
+	Latency              time.Duration
+	ConnectionType       string
+	PreviousLatencyDelta time.Duration
 }
 
 type PingHistory struct {
-	mu           sync.RWMutex
-	history      []PingResult // Ring buffer of last 100 results
-	successCount int
-	totalLatency time.Duration
-	lastFailure  time.Time
-	position     int // Current position in ring buffer
+	mu                   sync.RWMutex
+	history              []PingResult // Ring buffer of last historySize results
+	successCount         int
+	totalLatency         time.Duration
+	lastFailure          time.Time
+	position             int // Current position in ring buffer
+	totalJitter          time.Duration
+	consecutiveJitterCnt int
+	lastSuccessLatency   time.Duration
 }
 
 func NewPingHistory() *PingHistory {
 	return &PingHistory{
-		history: make([]PingResult, 100), // Fixed size of 100
+		history: make([]PingResult, historySize),
 	}
 }
 
@@ -59,6 +64,11 @@ func (ph *PingHistory) AddResult(success bool, latency time.Duration, connection
 		ph.totalLatency -= ph.history[ph.position].Latency
 	}
 
+	if ph.history[ph.position].PreviousLatencyDelta > 0 {
+		ph.totalJitter -= ph.history[ph.position].PreviousLatencyDelta
+		ph.consecutiveJitterCnt--
+	}
+
 	// Add new result
 	ph.history[ph.position] = PingResult{
 		Timestamp:      time.Now(),
@@ -70,15 +80,28 @@ func (ph *PingHistory) AddResult(success bool, latency time.Duration, connection
 	if success {
 		ph.successCount++
 		ph.totalLatency += latency
+
+		// Calculate jitter only if we have a previous successful latency
+		if ph.lastSuccessLatency > 0 {
+			jitter := latency - ph.lastSuccessLatency
+			if jitter < 0 {
+				jitter = -jitter
+			}
+			ph.totalJitter += jitter
+			ph.consecutiveJitterCnt++
+			ph.history[ph.position].PreviousLatencyDelta = jitter
+		}
+		ph.lastSuccessLatency = latency
 	} else {
 		ph.lastFailure = time.Now()
+		ph.lastSuccessLatency = 0
 	}
 
 	// Move position forward
-	ph.position = (ph.position + 1) % 100
+	ph.position = (ph.position + 1) % historySize
 }
 
-func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration, stdDevLatency time.Duration, timeSinceFailure time.Duration, connectionType string) {
+func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration, jitter time.Duration, timeSinceFailure time.Duration, connectionType string) {
 	ph.mu.RLock()
 	defer ph.mu.RUnlock()
 
@@ -98,16 +121,9 @@ func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration
 	if ph.successCount > 0 {
 		avgLatency = ph.totalLatency / time.Duration(ph.successCount)
 
-		// Calculate standard deviation
-		var sumSquaredDiffSeconds float64
-		for _, result := range ph.history {
-			if !result.Timestamp.IsZero() && result.Success {
-				diff := (result.Latency - avgLatency).Seconds()
-				sumSquaredDiffSeconds += diff * diff
-			}
-		}
-		if ph.successCount > 1 {
-			stdDevLatency = time.Duration(1000*1000*math.Sqrt(sumSquaredDiffSeconds)/float64(ph.successCount-1)) * time.Microsecond
+		// Calculate average jitter
+		if ph.consecutiveJitterCnt > 0 {
+			jitter = ph.totalJitter / time.Duration(ph.consecutiveJitterCnt)
 		}
 	}
 
@@ -125,7 +141,7 @@ func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration
 		}
 	}
 
-	return successRate, avgLatency, stdDevLatency, timeSinceFailure, connectionType
+	return successRate, avgLatency, jitter, timeSinceFailure, connectionType
 }
 
 type ConcurrentMap[K comparable, V any] struct {
@@ -250,7 +266,7 @@ type mappedRegion struct {
 	PingStats    struct {
 		SuccessRate      float64
 		AvgLatency       time.Duration
-		StdDevLatency    time.Duration
+		Jitter           time.Duration
 		TimeSinceFailure time.Duration
 		ConnectionType   string
 	}
@@ -286,7 +302,7 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 			var pingStats struct {
 				SuccessRate      float64
 				AvgLatency       time.Duration
-				StdDevLatency    time.Duration
+				Jitter           time.Duration
 				TimeSinceFailure time.Duration
 				ConnectionType   string
 			}
@@ -296,7 +312,7 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 
 				history := m.pingHistories.Get(provider.Hostname(region.Code))
 				if history != nil {
-					pingStats.SuccessRate, pingStats.AvgLatency, pingStats.StdDevLatency, pingStats.TimeSinceFailure, pingStats.ConnectionType = history.GetStats()
+					pingStats.SuccessRate, pingStats.AvgLatency, pingStats.Jitter, pingStats.TimeSinceFailure, pingStats.ConnectionType = history.GetStats()
 				}
 			}
 			return mappedRegion{
@@ -358,7 +374,7 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller con
 				html.WriteString(fmt.Sprintf(`<td><span class="label %s">%.1f%%</span></td>`,
 					successRateClass, node.PingStats.SuccessRate*100))
 				html.WriteString(fmt.Sprintf("<td>%s (±%s)</td>",
-					node.PingStats.AvgLatency.Round(time.Millisecond), node.PingStats.StdDevLatency.Round(time.Millisecond)))
+					node.PingStats.AvgLatency.Round(time.Millisecond), node.PingStats.Jitter.Round(time.Millisecond)))
 				html.WriteString(fmt.Sprintf(`<td><button class="btn btn-danger" hx-ext="disable-element" `+
 					`hx-disable-element="self" hx-delete="/providers/%s/regions/%s">Delete</button></td>`,
 					node.Provider, node.Region))
@@ -410,10 +426,10 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller con
 					connectionType := region.PingStats.ConnectionType
 
 					tooltip := fmt.Sprintf(
-						"Success Rate: %.1f%% Avg Latency: %s (±%s) Last Failure: %s Created: %s Connection: %s",
+						"Success Rate: %.1f%% Avg Latency: %s (±%s jitter) Last Failure: %s Created: %s Connection: %s",
 						region.PingStats.SuccessRate*100,
 						region.PingStats.AvgLatency.Round(time.Millisecond),
-						region.PingStats.StdDevLatency.Round(time.Millisecond),
+						region.PingStats.Jitter.Round(time.Millisecond),
 						lastFailureStr,
 						region.CreatedTS.Round(time.Second),
 						connectionType,
