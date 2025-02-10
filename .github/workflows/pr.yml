@@ -15,3 +15,5 @@ jobs:
           go-version-file: go.mod
       - run: go build
         working-directory: cmd/tscloudvpn
+      - run: go test -race -v ./...
+        working-directory: cmd/tscloudvpn
