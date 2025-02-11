@@ -30,6 +30,7 @@ var (
 	regionLocationMap = map[string]string{
 		// From https://cloud.google.com/compute/docs/regions-zones#available
 		// There isn't a way to get this info programmatically
+		"africa-south1":           "Johannesburg, South Africa",
 		"asia-east1":              "Changhua County, Taiwan, APAC",
 		"asia-east2":              "Hong Kong, APAC",
 		"asia-northeast1":         "Tokyo, Japan, APAC",
@@ -58,6 +59,7 @@ var (
 		"me-west1":                "Tel Aviv, Israel, Middle East",
 		"northamerica-northeast1": "Montréal, Québec, North America",
 		"northamerica-northeast2": "Toronto, Ontario, North America",
+		"northamerica-south1":     "Queretaro, Mexico, North America",
 		"southamerica-east1":      "Osasco, São Paulo, Brazil, South America",
 		"southamerica-west1":      "Santiago, Chile, South America",
 		"us-central1":             "Council Bluffs, Iowa, North America",
