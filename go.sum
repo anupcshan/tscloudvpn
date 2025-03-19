@@ -149,8 +149,8 @@ github.com/jmespath/go-jmespath/internal/testify v1.5.1 h1:shLQSRRSCCPj3f2gpwzGw
 github.com/jmespath/go-jmespath/internal/testify v1.5.1/go.mod h1:L3OGu8Wl2/fWfCI6z80xFu9LTZmf1ZRjMHUOPmWr69U=
 github.com/jsimonetti/rtnetlink v1.4.1 h1:JfD4jthWBqZMEffc5RjgmlzpYttAVw1sdnmiNaPO3hE=
 github.com/jsimonetti/rtnetlink v1.4.1/go.mod h1:xJjT7t59UIZ62GLZbv6PLLo8VFrostJMPBAheR6OM8w=
-github.com/juanfont/headscale v0.24.3 h1:1ST5C8TO03RXNllXbuBoMUAZ6mQJtHRTfHm8pU9v/mg=
-github.com/juanfont/headscale v0.24.3/go.mod h1:UpA3P/vRsjHQ+n29u+Fk8Isec675+ZfCOlwKLO/pLTc=
+github.com/juanfont/headscale v0.25.1 h1:Xp/cbtrwDiCb1FKsyMr3UAiY6VY8De/o/QfB7TXf8sQ=
+github.com/juanfont/headscale v0.25.1/go.mod h1:TKPM830We6BCSW1BcCw0eoxyaiJFZ+jWmdKW72bL3ZI=
 github.com/klauspost/compress v1.17.11 h1:In6xLpyWOi1+C7tXUUWv2ot1QvBjxevKAaI6IXrJmUc=
 github.com/klauspost/compress v1.17.11/go.mod h1:pMDklpSncoRMuLFrf1W9Ss9KT+0rH90U12bZKk7uwG0=
 github.com/kortschak/wol v0.0.0-20200729010619-da482cc4850a h1:+RR6SqnTkDLWyICxS1xpjCi/3dhyV+TgZwA6Ww3KncQ=
