@@ -1,0 +1,36 @@
+{{ template "header.tmpl" . }}
+
+<div class="row">
+  <div class="col-md-12">
+    <h1>TSCloudVPN Statistics</h1>
+
+    <h2>Currently Running Nodes</h2>
+    <ul>
+      {{ $hasRunningNodes := false }}
+      {{ range .ActiveNodes }}
+        {{ $hasRunningNodes = true }}
+        <li><a href="/stats/{{ .Hostname }}">{{ .Hostname }} ({{ .Provider }} - {{ .Region }})</a>
+          <span class="badge badge-success">Active</span>
+        </li>
+      {{ end }}
+      {{ if not $hasRunningNodes }}
+        <li><em>No nodes are currently running</em></li>
+      {{ end }}
+    </ul>
+
+    <h2>Historical Nodes</h2>
+    <p>These nodes have statistics data but are not currently running.</p>
+    <ul>
+      {{ $hasHistoricalNodes := false }}
+      {{ range .HistoricalNodes }}
+        {{ $hasHistoricalNodes = true }}
+        <li><a href="/stats/{{ . }}">{{ . }}</a></li>
+      {{ end }}
+      {{ if not $hasHistoricalNodes }}
+        <li><em>No historical node data available</em></li>
+      {{ end }}
+    </ul>
+  </div>
+</div>
+
+{{ template "footer.tmpl" . }}
