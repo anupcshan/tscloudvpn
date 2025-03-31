@@ -250,6 +250,43 @@ func (g *gcpProvider) Hostname(region string) providers.HostName {
 	return providers.HostName(gcpInstanceHostname(region))
 }
 
+// GetRegionPrice returns the hourly price for the f1-micro instance in the specified region
+func (g *gcpProvider) GetRegionPrice(region string) float64 {
+	// GCP f1-micro instance prices vary by region
+	// In a production environment, consider using the GCP Cloud Billing API
+	// https://cloud.google.com/billing/v1/how-tos/catalog-api
+	prices := map[string]float64{
+		"us-central1":             0.0076, // Iowa
+		"us-east1":                0.0076, // South Carolina
+		"us-east4":                0.0085, // Northern Virginia
+		"us-west1":                0.0076, // Oregon
+		"us-west2":                0.0091, // Los Angeles
+		"us-west3":                0.0091, // Salt Lake City
+		"us-west4":                0.0076, // Las Vegas
+		"europe-west1":            0.0084, // Belgium
+		"europe-west2":            0.0096, // London
+		"europe-west3":            0.0096, // Frankfurt
+		"europe-west4":            0.0084, // Netherlands
+		"europe-west6":            0.0109, // Zurich
+		"asia-east1":              0.0090, // Taiwan
+		"asia-east2":              0.0103, // Hong Kong
+		"asia-northeast1":         0.0092, // Tokyo
+		"asia-northeast2":         0.0092, // Osaka
+		"asia-northeast3":         0.0092, // Seoul
+		"asia-south1":             0.0083, // Mumbai
+		"asia-southeast1":         0.0090, // Singapore
+		"asia-southeast2":         0.0097, // Jakarta
+		"australia-southeast1":    0.0103, // Sydney
+		"southamerica-east1":      0.0120, // Sao Paulo
+		"northamerica-northeast1": 0.0084, // Montreal
+	}
+
+	if price, ok := prices[region]; ok {
+		return price
+	}
+	return 0.0098 // Default price if region not found
+}
+
 func init() {
 	providers.Register(providerName, NewProvider)
 }

@@ -9,6 +9,7 @@
           <th>Provider</th>
           <th>Region</th>
           <th>Uptime</th>
+          <th>Price</th>
           <th>Connection</th>
           <th>Success Rate</th>
           <th>Latency</th>
@@ -38,12 +39,25 @@
       </script>
     </div>
     <table class="table">
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>Region</th>
+          <th>Location</th>
+          <th>Price</th>
+          <th>Status</th>
+          <th>Action</th>
+        </tr>
+      </thead>
       <tbody id="regionsTable">
         {{ range .Detail }}
         <tr>
           <td>{{.Provider}}</td>
           <td>{{.Region}}</td>
           <td>{{.LongName}}</td>
+          <td>
+            ${{ printf "%.4f" .PricePerHour }}/hr
+          </td>
           <td sse-swap="{{.Provider}}-{{.Region}}-hasnode"></td>
           <td sse-swap="{{.Provider}}-{{.Region}}-button"></td>
         </tr>

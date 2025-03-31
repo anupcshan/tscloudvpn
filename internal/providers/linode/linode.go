@@ -125,6 +125,15 @@ func (l *linodeProvider) Hostname(region string) providers.HostName {
 	return providers.HostName(linodeInstanceHostname(region))
 }
 
+// GetRegionPrice returns the hourly price for the g6-nanode-1 instance
+func (l *linodeProvider) GetRegionPrice(region string) float64 {
+	// Unlike other providers, Linode's pricing is uniform across all regions
+	// In a production environment, this could query the Linode API pricing info
+	// Price is $5/month which works out to approximately $0.00694/hour
+	// However, Linode bills hourly at $0.0075/hour
+	return 0.0075 // Standard hourly rate for Nanode 1GB
+}
+
 func generateRandomPassword() string {
 	// Generate a random password
 	charset := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?"

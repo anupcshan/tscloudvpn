@@ -347,6 +347,7 @@ type mappedRegion struct {
 	LongName     string
 	HasNode      bool
 	SinceCreated string
+	PricePerHour float64 // Hourly cost in USD
 	PingStats    struct {
 		SuccessRate      float64
 		AvgLatency       time.Duration
@@ -406,6 +407,7 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 				HasNode:      hasNode,
 				CreatedTS:    createdTS,
 				SinceCreated: sinceCreated,
+				PricePerHour: provider.GetRegionPrice(region.Code),
 				PingStats:    pingStats,
 			}
 		})...)
@@ -454,6 +456,7 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller con
 				html.WriteString(fmt.Sprintf("<td>%s</td>", node.Provider))
 				html.WriteString(fmt.Sprintf("<td>%s</td>", node.Region))
 				html.WriteString(fmt.Sprintf("<td>%s</td>", node.SinceCreated))
+				html.WriteString(fmt.Sprintf("<td>$%.4f/hr</td>", node.PricePerHour))
 				html.WriteString(fmt.Sprintf("<td>%s</td>", connectionType))
 				html.WriteString(fmt.Sprintf(`<td><span class="label %s">%.1f%%</span></td>`,
 					successRateClass, node.PingStats.SuccessRate*100))
@@ -780,31 +783,39 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller con
 			lastPingTime = recentPings[0].Timestamp
 		}
 
+		// Get provider-specific pricing
+		var pricePerHour float64
+		if nodeProvider != "" && nodeRegion != "" {
+			pricePerHour = m.cloudProviders[nodeProvider].GetRegionPrice(nodeRegion)
+		}
+
 		// Prepare template data
 		templateData := struct {
-			Hostname    string
-			StartTime   string
-			EndTime     string
-			Summary     stats.StatsSummary
-			SuccessRate float64
-			RecentPings []formattedPing
-			Days        []int
-			IsActive    bool
-			Provider    string
-			Region      string
-			LastSeen    time.Time
+			Hostname     string
+			StartTime    string
+			EndTime      string
+			Summary      stats.StatsSummary
+			SuccessRate  float64
+			RecentPings  []formattedPing
+			Days         []int
+			IsActive     bool
+			Provider     string
+			Region       string
+			LastSeen     time.Time
+			PricePerHour float64
 		}{
-			Hostname:    hostname,
-			StartTime:   startTime.Format(time.RFC1123),
-			EndTime:     endTime.Format(time.RFC1123),
-			Summary:     summary,
-			SuccessRate: successRate,
-			RecentPings: formattedPings,
-			Days:        []int{1, 7, 30},
-			IsActive:    isActive,
-			Provider:    nodeProvider,
-			Region:      nodeRegion,
-			LastSeen:    lastPingTime,
+			Hostname:     hostname,
+			StartTime:    startTime.Format(time.RFC1123),
+			EndTime:      endTime.Format(time.RFC1123),
+			Summary:      summary,
+			SuccessRate:  successRate,
+			RecentPings:  formattedPings,
+			Days:         []int{1, 7, 30},
+			IsActive:     isActive,
+			Provider:     nodeProvider,
+			Region:       nodeRegion,
+			LastSeen:     lastPingTime,
+			PricePerHour: pricePerHour,
 		}
 
 		w.Header().Set("Content-Type", "text/html")

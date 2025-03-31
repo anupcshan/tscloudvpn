@@ -14,6 +14,9 @@
     <div>
       {{ if and .Provider .Region }}
         <p>Provider: {{ .Provider }} | Region: {{ .Region }}</p>
+        {{ if gt .PricePerHour 0.0 }}
+          <p><strong>Price:</strong> ${{ printf "%.4f" .PricePerHour }}/hour</p>
+        {{ end }}
       {{ end }}
 
       {{ if not .IsActive }}

@@ -298,6 +298,37 @@ func (e *ec2Provider) Hostname(region string) providers.HostName {
 	return providers.HostName(ec2InstanceHostname(region))
 }
 
+// GetRegionPrice returns the hourly price for the t4g.nano instance in the specified region
+func (e *ec2Provider) GetRegionPrice(region string) float64 {
+	// EC2 t4g.nano instance prices vary by region
+	// These prices are subject to change; in a production environment,
+	// consider using the AWS Price List API to get up-to-date pricing
+	prices := map[string]float64{
+		"us-east-1":      0.0042, // N. Virginia
+		"us-east-2":      0.0042, // Ohio
+		"us-west-1":      0.0051, // N. California
+		"us-west-2":      0.0042, // Oregon
+		"ap-south-1":     0.0046, // Mumbai
+		"ap-northeast-1": 0.0055, // Tokyo
+		"ap-northeast-2": 0.0048, // Seoul
+		"ap-northeast-3": 0.0055, // Osaka
+		"ap-southeast-1": 0.0048, // Singapore
+		"ap-southeast-2": 0.0048, // Sydney
+		"ca-central-1":   0.0047, // Canada
+		"eu-central-1":   0.0048, // Frankfurt
+		"eu-west-1":      0.0042, // Ireland
+		"eu-west-2":      0.0045, // London
+		"eu-west-3":      0.0045, // Paris
+		"eu-north-1":     0.0039, // Stockholm
+		"sa-east-1":      0.0064, // São Paulo
+	}
+
+	if price, ok := prices[region]; ok {
+		return price
+	}
+	return 0.0042 // Default price if region not found
+}
+
 func init() {
 	providers.Register(providerName, NewProvider)
 }

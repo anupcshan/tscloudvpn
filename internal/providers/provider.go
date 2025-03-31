@@ -29,6 +29,7 @@ type Provider interface {
 	GetInstanceStatus(ctx context.Context, region string) (InstanceStatus, error)
 	ListRegions(ctx context.Context) ([]Region, error)
 	Hostname(region string) HostName
+	GetRegionPrice(region string) float64 // Get hourly price for a region
 }
 
 type ProviderFactory func(ctx context.Context, cfg *config.Config) (Provider, error)

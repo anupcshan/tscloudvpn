@@ -5,8 +5,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
+	"sync"
 	"text/template"
+	"time"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
@@ -15,10 +18,23 @@ import (
 	"github.com/digitalocean/godo"
 )
 
+const (
+	cacheDuration = 24 * time.Hour // Cache prices for 24 hours
+)
+
+type regionSize struct {
+	SizeSlug   string
+	HourlyCost float64
+}
+
 type digitaloceanProvider struct {
 	client *godo.Client
 	token  string
 	sshKey string
+
+	regionSizeCacheLock sync.RWMutex
+	regionSizeCache     map[string]regionSize
+	regionSizeCacheTime time.Time
 }
 
 func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
@@ -63,7 +79,7 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 	createRequest := &godo.DropletCreateRequest{
 		Name:   fmt.Sprintf("tscloudvpn-%s", region),
 		Region: region,
-		Size:   "s-1vcpu-1gb",
+		Size:   "s-1vcpu-1gb", // TODO: Change this to use the cheapest size from regionSizeCache
 		Image: godo.DropletCreateImage{
 			Slug: "debian-12-x64",
 		},
@@ -116,6 +132,59 @@ func (d *digitaloceanProvider) ListRegions(ctx context.Context) ([]providers.Reg
 
 func (d *digitaloceanProvider) Hostname(region string) providers.HostName {
 	return providers.HostName(doInstanceHostname(region))
+}
+
+func (d *digitaloceanProvider) loadRegionSizes() (map[string]regionSize, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sizes, _, err := d.client.Sizes.List(ctx, &godo.ListOptions{
+		PerPage: 200,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]regionSize)
+	sort.Slice(sizes, func(i, j int) bool {
+		return sizes[i].PriceHourly < sizes[j].PriceHourly
+	})
+
+	for _, size := range sizes {
+		for _, region := range size.Regions {
+			if _, ok := result[region]; ok {
+				continue
+			}
+
+			result[region] = regionSize{
+				SizeSlug:   size.Slug,
+				HourlyCost: size.PriceHourly,
+			}
+		}
+	}
+	return result, nil
+}
+
+// GetRegionPrice returns the hourly price for the cheapest instance
+func (d *digitaloceanProvider) GetRegionPrice(region string) float64 {
+	d.regionSizeCacheLock.Lock()
+	defer d.regionSizeCacheLock.Unlock()
+
+	// Check cache first
+	if time.Since(d.regionSizeCacheTime) < cacheDuration && d.regionSizeCache != nil {
+		return d.regionSizeCache[region].HourlyCost
+	}
+
+	var err error
+	d.regionSizeCache, err = d.loadRegionSizes()
+	if err != nil {
+		log.Printf("Failed to load region sizes: %v", err)
+		return 0
+	}
+
+	d.regionSizeCacheTime = time.Now()
+
+	return d.regionSizeCache[region].HourlyCost
 }
 
 func init() {
