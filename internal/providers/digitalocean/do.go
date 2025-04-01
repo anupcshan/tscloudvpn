@@ -58,6 +58,19 @@ func doInstanceHostname(region string) string {
 }
 
 func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (string, error) {
+	// Ensure region size cache is populated
+	d.regionSizeCacheLock.Lock()
+	if time.Since(d.regionSizeCacheTime) >= cacheDuration || d.regionSizeCache == nil {
+		var err error
+		d.regionSizeCache, err = d.loadRegionSizes()
+		if err != nil {
+			d.regionSizeCacheLock.Unlock()
+			return "", fmt.Errorf("failed to load region sizes: %w", err)
+		}
+		d.regionSizeCacheTime = time.Now()
+	}
+	d.regionSizeCacheLock.Unlock()
+
 	tmplOut := new(bytes.Buffer)
 	hostname := doInstanceHostname(region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
@@ -79,7 +92,7 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 	createRequest := &godo.DropletCreateRequest{
 		Name:   fmt.Sprintf("tscloudvpn-%s", region),
 		Region: region,
-		Size:   "s-1vcpu-1gb", // TODO: Change this to use the cheapest size from regionSizeCache
+		Size:   d.regionSizeCache[region].SizeSlug, // Using cheapest size for the region from cache
 		Image: godo.DropletCreateImage{
 			Slug: "debian-12-x64",
 		},
