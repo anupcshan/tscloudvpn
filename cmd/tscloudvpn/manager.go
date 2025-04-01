@@ -342,13 +342,13 @@ func (m *Manager) initOnce(ctx context.Context) {
 }
 
 type mappedRegion struct {
-	Provider     string
-	Region       string
-	LongName     string
-	HasNode      bool
-	SinceCreated string
-	PricePerHour float64 // Hourly cost in USD
-	PingStats    struct {
+	Provider          string
+	Region            string
+	LongName          string
+	HasNode           bool
+	SinceCreated      string
+	PriceCentsPerHour float64 // Hourly cost in USD cents
+	PingStats         struct {
 		SuccessRate      float64
 		AvgLatency       time.Duration
 		Jitter           time.Duration
@@ -401,14 +401,14 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 				}
 			}
 			return mappedRegion{
-				Provider:     providerName,
-				Region:       region.Code,
-				LongName:     region.LongName,
-				HasNode:      hasNode,
-				CreatedTS:    createdTS,
-				SinceCreated: sinceCreated,
-				PricePerHour: provider.GetRegionPrice(region.Code),
-				PingStats:    pingStats,
+				Provider:          providerName,
+				Region:            region.Code,
+				LongName:          region.LongName,
+				HasNode:           hasNode,
+				CreatedTS:         createdTS,
+				SinceCreated:      sinceCreated,
+				PriceCentsPerHour: provider.GetRegionPrice(region.Code) * 100,
+				PingStats:         pingStats,
 			}
 		})...)
 	}
@@ -456,7 +456,7 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller con
 				html.WriteString(fmt.Sprintf("<td>%s</td>", node.Provider))
 				html.WriteString(fmt.Sprintf("<td>%s</td>", node.Region))
 				html.WriteString(fmt.Sprintf("<td>%s</td>", node.SinceCreated))
-				html.WriteString(fmt.Sprintf("<td>$%.4f/hr</td>", node.PricePerHour))
+				html.WriteString(fmt.Sprintf("<td>%.2fc/hr</td>", node.PriceCentsPerHour))
 				html.WriteString(fmt.Sprintf("<td>%s</td>", connectionType))
 				html.WriteString(fmt.Sprintf(`<td><span class="label %s">%.1f%%</span></td>`,
 					successRateClass, node.PingStats.SuccessRate*100))

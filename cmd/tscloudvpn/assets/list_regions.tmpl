@@ -56,7 +56,7 @@
           <td>{{.Region}}</td>
           <td>{{.LongName}}</td>
           <td>
-            ${{ printf "%.4f" .PricePerHour }}/hr
+            {{ printf "%.2f" .PriceCentsPerHour }}c/hr
           </td>
           <td sse-swap="{{.Provider}}-{{.Region}}-hasnode"></td>
           <td sse-swap="{{.Provider}}-{{.Region}}-button"></td>

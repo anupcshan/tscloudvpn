@@ -15,6 +15,7 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/config"
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/bradenaw/juniper/xmaps"
 	"github.com/bradenaw/juniper/xslices"
 	"github.com/vultr/govultr/v3"
 	"golang.org/x/oauth2"
@@ -25,13 +26,18 @@ const (
 	cacheDuration = 24 * time.Hour // Cache prices for 24 hours
 )
 
+type vultrSize struct {
+	PlanID     string
+	HourlyCost float64
+}
+
 type vultrProvider struct {
-	vultrClient     *govultr.Client
-	apiKey          string
-	sshKey          string
-	priceCacheMutex sync.RWMutex
-	priceCache      map[string]float64
-	priceCacheTime  time.Time
+	vultrClient         *govultr.Client
+	apiKey              string
+	sshKey              string
+	regionSizeCacheLock sync.RWMutex
+	regionSizeCache     map[string]vultrSize
+	regionSizeCacheTime time.Time
 }
 
 func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
@@ -44,28 +50,28 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 	vultrClient := govultr.NewClient(oauth2.NewClient(ctx, ts))
 
 	return &vultrProvider{
-		vultrClient: vultrClient,
-		apiKey:      cfg.Providers.Vultr.APIKey,
-		sshKey:      cfg.SSH.PublicKey,
-		priceCache:  make(map[string]float64),
+		vultrClient:     vultrClient,
+		apiKey:          cfg.Providers.Vultr.APIKey,
+		sshKey:          cfg.SSH.PublicKey,
+		regionSizeCache: make(map[string]vultrSize),
 	}, nil
 }
 
-// prefetchPrices loads all region prices to warm up the cache
+// prefetchPrices loads all region sizes to warm up the cache
 func (v *vultrProvider) prefetchPrices() {
 	// Only prefetch if cache is empty or expired
-	v.priceCacheMutex.RLock()
-	shouldPrefetch := len(v.priceCache) == 0 || time.Since(v.priceCacheTime) >= cacheDuration
-	v.priceCacheMutex.RUnlock()
+	v.regionSizeCacheLock.RLock()
+	shouldPrefetch := len(v.regionSizeCache) == 0 || time.Since(v.regionSizeCacheTime) >= cacheDuration
+	v.regionSizeCacheLock.RUnlock()
 
 	if !shouldPrefetch {
 		return
 	}
 
-	v.priceCacheMutex.Lock()
-	defer v.priceCacheMutex.Unlock()
+	v.regionSizeCacheLock.Lock()
+	defer v.regionSizeCacheLock.Unlock()
 
-	shouldPrefetch = len(v.priceCache) == 0 || time.Since(v.priceCacheTime) >= cacheDuration
+	shouldPrefetch = len(v.regionSizeCache) == 0 || time.Since(v.regionSizeCacheTime) >= cacheDuration
 	if !shouldPrefetch {
 		return
 	}
@@ -73,15 +79,8 @@ func (v *vultrProvider) prefetchPrices() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// First get all regions
-	regions, err := v.ListRegions(ctx)
-	if err != nil {
-		log.Printf("Failed to prefetch Vultr regions: %v", err)
-		return
-	}
-
 	// Now fetch all plans once (efficient)
-	plans, _, _, err := v.vultrClient.Plan.List(ctx, "vc2", &govultr.ListOptions{
+	plans, _, _, err := v.vultrClient.Plan.List(ctx, "all", &govultr.ListOptions{
 		PerPage: 500,
 	})
 	if err != nil {
@@ -90,33 +89,41 @@ func (v *vultrProvider) prefetchPrices() {
 	}
 
 	// Clear existing cache
-	v.priceCache = make(map[string]float64)
-	v.priceCacheTime = time.Now()
+	v.regionSizeCache = make(map[string]vultrSize)
+	v.regionSizeCacheTime = time.Now()
 
-	// Process each region
-	for _, region := range regions {
-		regionCode := region.Code
+	regions := xmaps.Set[string]{}
+	plans = xslices.Filter(plans, func(plan govultr.Plan) bool {
+		// Skip free and IPv6 plans
+		return plan.MonthlyCost > 0 && !strings.HasSuffix(plan.ID, "-v6")
+	})
 
-		// Find valid plans for this region
-		validPlans := xslices.Filter(plans, func(plan govultr.Plan) bool {
-			return xslices.Index(plan.Locations, regionCode) != -1
-		})
-
-		if len(validPlans) > 0 {
-			// Sort to find cheapest plan
-			sort.Slice(validPlans, func(i, j int) bool {
-				return validPlans[i].MonthlyCost < validPlans[j].MonthlyCost
-			})
-
-			// Calculate hourly price
-			v.priceCache[regionCode] = float64(validPlans[0].MonthlyCost) / 30.0 / 24.0
-		} else {
-			// Use fallback price if no plans found
-			v.priceCache[regionCode] = 0.005
+	for _, plan := range plans {
+		for _, location := range plan.Locations {
+			regions.Add(location)
 		}
 	}
 
-	log.Printf("Vultr price cache populated with %d regions", len(v.priceCache))
+	// Process each region
+	for region := range regions {
+		validPlans := xslices.Filter(plans, func(plan govultr.Plan) bool {
+			return xslices.Index(plan.Locations, region) != -1
+		})
+
+		// Sort to find cheapest plan
+		sort.Slice(validPlans, func(i, j int) bool {
+			return validPlans[i].MonthlyCost < validPlans[j].MonthlyCost
+		})
+
+		cheapestPlan := validPlans[0]
+		// Store both plan ID and hourly cost
+		v.regionSizeCache[region] = vultrSize{
+			PlanID:     cheapestPlan.ID,
+			HourlyCost: float64(cheapestPlan.MonthlyCost) / 30.0 / 24.0,
+		}
+	}
+
+	log.Printf("Vultr region size cache populated with %d regions", len(v.regionSizeCache))
 }
 
 func vultrInstanceHostname(region string) string {
@@ -142,26 +149,24 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 		return "", err
 	}
 
-	plans, _, _, err := v.vultrClient.Plan.List(ctx, "vc2", &govultr.ListOptions{
-		PerPage: 500,
-	})
-	if err != nil {
-		return "", err
+	// Get cached plan ID for the region
+	v.regionSizeCacheLock.RLock()
+	regionSize, ok := v.regionSizeCache[region]
+	if !ok || time.Since(v.regionSizeCacheTime) >= cacheDuration {
+		v.regionSizeCacheLock.RUnlock()
+		// Cache miss or expired, trigger a refresh
+		v.prefetchPrices()
+		// Try again after refresh
+		v.regionSizeCacheLock.RLock()
+		regionSize, ok = v.regionSizeCache[region]
 	}
+	v.regionSizeCacheLock.RUnlock()
 
-	plans = xslices.Filter(plans, func(plan govultr.Plan) bool {
-		return xslices.Index(plan.Locations, region) != -1
-	})
-
-	if len(plans) == 0 {
+	if !ok || regionSize.PlanID == "" {
 		return "", fmt.Errorf("no plans available in region %s", region)
 	}
 
-	sort.Slice(plans, func(i, j int) bool {
-		return plans[i].MonthlyCost < plans[j].MonthlyCost
-	})
-
-	log.Printf("Lowest cost plan: %+v", plans[0])
+	log.Printf("Using cached plan ID %s for region %s", regionSize.PlanID, region)
 
 	oses, _, _, err := v.vultrClient.OS.List(ctx, nil)
 	if err != nil {
@@ -183,7 +188,7 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 		Label:      "tscloudvpn",
 		Hostname:   hostname,
 		Tags:       []string{"tscloudvpn"},
-		Plan:       plans[0].ID,
+		Plan:       regionSize.PlanID,
 		UserData:   base64.StdEncoding.EncodeToString(tmplOut.Bytes()),
 		OsID:       oses[0].ID,
 		EnableVPC2: govultr.BoolToBoolPtr(true),
@@ -223,84 +228,37 @@ func (v *vultrProvider) Hostname(region string) providers.HostName {
 
 // GetRegionPrice returns the hourly price for the cheapest plan in the region
 func (v *vultrProvider) GetRegionPrice(region string) float64 {
+	v.prefetchPrices()
+
 	// Check cache first
-	v.priceCacheMutex.RLock()
-	if price, ok := v.priceCache[region]; ok {
-		// If cache is still valid (not expired)
-		if time.Since(v.priceCacheTime) < cacheDuration {
-			v.priceCacheMutex.RUnlock()
-			return price
-		}
-	}
-	v.priceCacheMutex.RUnlock()
+	v.regionSizeCacheLock.RLock()
+	defer v.regionSizeCacheLock.RUnlock()
 
-	// Cache miss or expired, fetch prices from API
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	plans, _, _, err := v.vultrClient.Plan.List(ctx, "vc2", &govultr.ListOptions{
-		PerPage: 500,
-	})
-
-	// Lock for writing to cache
-	v.priceCacheMutex.Lock()
-	defer v.priceCacheMutex.Unlock()
-
-	// Check if we need to refresh the entire cache
-	if time.Since(v.priceCacheTime) >= cacheDuration {
-		// Clear the cache if it's expired
-		v.priceCache = make(map[string]float64)
-	}
-
-	if err == nil {
-		// Filter plans available in this region
-		validPlans := xslices.Filter(plans, func(plan govultr.Plan) bool {
-			return xslices.Index(plan.Locations, region) != -1
-		})
-
-		if len(validPlans) > 0 {
-			// Find the cheapest plan
-			sort.Slice(validPlans, func(i, j int) bool {
-				return validPlans[i].MonthlyCost < validPlans[j].MonthlyCost
-			})
-
-			// Convert monthly cost to hourly (MonthlyCost is in dollars as float32)
-			price := float64(validPlans[0].MonthlyCost) / 30.0 / 24.0 // Approximate hourly rate
-
-			// Update cache
-			v.priceCache[region] = price
-			v.priceCacheTime = time.Now()
-
-			return price
-		}
-	}
-
-	// If not in cache and API failed, use fallback price
-	fallbackPrice := 0.005 // Standard hourly rate for $3.50/month plan
-	v.priceCache[region] = fallbackPrice
-	if v.priceCacheTime.IsZero() {
-		v.priceCacheTime = time.Now()
-	}
-
-	return fallbackPrice
+	return v.regionSizeCache[region].HourlyCost
 }
 
 func (v *vultrProvider) ListRegions(ctx context.Context) ([]providers.Region, error) {
+	v.prefetchPrices()
+
 	regions, _, _, err := v.vultrClient.Region.List(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	var result []providers.Region
+	v.regionSizeCacheLock.RLock()
+	defer v.regionSizeCacheLock.RUnlock()
+
 	for _, region := range regions {
-		result = append(result, providers.Region{
-			LongName: fmt.Sprintf("%s, %s, %s", region.City, region.Country, region.Continent),
-			Code:     region.ID,
-		})
+		if _, ok := v.regionSizeCache[region.ID]; ok {
+			result = append(result, providers.Region{
+				LongName: fmt.Sprintf("%s, %s, %s", region.City, region.Country, region.Continent),
+				Code:     region.ID,
+			})
+		}
 	}
 
 	// Start prefetching prices in the background
-	go v.prefetchPrices()
 
 	return result, nil
 }
