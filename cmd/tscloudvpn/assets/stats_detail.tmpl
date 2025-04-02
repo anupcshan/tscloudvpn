@@ -49,8 +49,7 @@
         <td>{{ .Summary.SuccessfulPings }} ({{ printf "%.2f" .SuccessRate }}%)</td>
       </tr>
       <tr><td>Average Latency</td><td>{{ .Summary.AverageLatency }}</td></tr>
-      <tr><td>Min Latency</td><td>{{ .Summary.MinLatency }}</td></tr>
-      <tr><td>Max Latency</td><td>{{ .Summary.MaxLatency }}</td></tr>
+      <tr><td>P99 Latency</td><td>{{ .Summary.P99Latency }}</td></tr>
       <tr><td>Error Count</td><td>{{ .Summary.ErrorCount }}</td></tr>
     </table>
 

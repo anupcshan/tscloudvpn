@@ -45,8 +45,7 @@ type StatsSummary struct {
 	TotalPings      int
 	SuccessfulPings int
 	AverageLatency  time.Duration
-	MinLatency      time.Duration
-	MaxLatency      time.Duration
+	P99Latency      time.Duration
 	ErrorCount      int
 	ErrorsByType    map[string]int
 }
@@ -191,9 +190,7 @@ func (s *Stats) GetPingSummary(ctx context.Context, hostname string, from, to ti
 		SELECT
 			COUNT(*),
 			SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END),
-			AVG(CASE WHEN success = 1 THEN latency_ms ELSE 0 END),
-			MIN(CASE WHEN success = 1 THEN latency_ms ELSE NULL END),
-			MAX(CASE WHEN success = 1 THEN latency_ms ELSE NULL END)
+			AVG(CASE WHEN success = 1 THEN latency_ms ELSE 0 END)
 		FROM ping_records
 		WHERE
 			hostname = ? AND
@@ -202,32 +199,44 @@ func (s *Stats) GetPingSummary(ctx context.Context, hostname string, from, to ti
 
 	var successfulPings sql.NullInt64
 	var avgLatencyMs sql.NullFloat64
-	var minLatencyMs sql.NullInt64
-	var maxLatencyMs sql.NullInt64
 
 	err := row.Scan(
 		&summary.TotalPings,
 		&successfulPings,
 		&avgLatencyMs,
-		&minLatencyMs,
-		&maxLatencyMs,
 	)
 	if err != nil {
 		return summary, err
 	}
 
-	if successfulPings.Valid {
+	if successfulPings.Valid && successfulPings.Int64 > 0 {
 		summary.SuccessfulPings = int(successfulPings.Int64)
+		// Calculate p99 latency
+		p99Row := s.db.QueryRowContext(ctx, `
+			SELECT latency_ms
+			FROM ping_records
+			WHERE hostname = ? AND
+			      timestamp BETWEEN ? AND ? AND
+			      success = 1
+			ORDER BY latency_ms
+			LIMIT 1 OFFSET ?`,
+			hostname,
+			from.UTC().Unix(),
+			to.UTC().Unix(),
+			int64(float64(successfulPings.Int64-1)*0.99),
+		)
+
+		var p99LatencyMs sql.NullInt64
+		if err := p99Row.Scan(&p99LatencyMs); err != nil {
+			return summary, err
+		}
+		if p99LatencyMs.Valid {
+			summary.P99Latency = time.Duration(p99LatencyMs.Int64) * time.Millisecond
+		}
 	}
 
 	if avgLatencyMs.Valid {
 		summary.AverageLatency = time.Duration(avgLatencyMs.Float64) * time.Millisecond
-	}
-	if minLatencyMs.Valid {
-		summary.MinLatency = time.Duration(minLatencyMs.Int64) * time.Millisecond
-	}
-	if maxLatencyMs.Valid {
-		summary.MaxLatency = time.Duration(maxLatencyMs.Int64) * time.Millisecond
 	}
 
 	// Get error counts
