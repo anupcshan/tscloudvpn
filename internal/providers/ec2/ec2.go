@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sort"
@@ -19,6 +20,8 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/pricing"
+	pricingtypes "github.com/aws/aws-sdk-go-v2/service/pricing/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"golang.org/x/exp/slices"
 )
@@ -32,9 +35,11 @@ const (
 )
 
 type ec2Provider struct {
-	mu     sync.Mutex
-	cfg    aws.Config
-	sshKey string
+	mu             sync.Mutex
+	listPricesOnce sync.Once
+	regionPriceMap map[string]float64
+	cfg            aws.Config
+	sshKey         string
 }
 
 func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
@@ -74,10 +79,13 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 		return nil, nil
 	}
 
-	return &ec2Provider{
+	e := &ec2Provider{
 		cfg:    awsCfg,
 		sshKey: cfg.SSH.PublicKey,
-	}, nil
+	}
+
+	go e.populatePriceCache()
+	return e, nil
 }
 
 func ec2InstanceHostname(region string) string {
@@ -305,35 +313,87 @@ func (e *ec2Provider) Hostname(region string) providers.HostName {
 	return providers.HostName(ec2InstanceHostname(region))
 }
 
+func withRegion(region string) func(options *pricing.Options) {
+	return func(options *pricing.Options) {
+		options.Region = region
+	}
+}
+
+type productType struct {
+	Product struct {
+		Attributes map[string]string `json:"attributes"`
+	} `json:"product"`
+	Terms struct {
+		OnDemand map[string]struct {
+			PriceDimensions map[string]struct {
+				PricePerUnit struct {
+					USD float64 `json:"USD,string"`
+				} `json:"pricePerUnit"`
+			} `json:"priceDimensions"`
+		} `json:"OnDemand"`
+	} `json:"terms"`
+}
+
+func (e *ec2Provider) populatePriceCache() {
+	e.listPricesOnce.Do(func() {
+		ctx := context.Background()
+		e.mu.Lock()
+		client := pricing.NewFromConfig(e.cfg, withRegion("us-east-1"))
+		e.mu.Unlock()
+
+		e.regionPriceMap = make(map[string]float64)
+		paginator := pricing.NewGetProductsPaginator(client, &pricing.GetProductsInput{
+			ServiceCode: aws.String("AmazonEC2"),
+			Filters: []pricingtypes.Filter{
+				{
+					Type:  pricingtypes.FilterTypeTermMatch,
+					Field: aws.String("instanceType"),
+					Value: aws.String("t4g.nano"),
+				},
+				{
+					Type:  pricingtypes.FilterTypeTermMatch,
+					Field: aws.String("operatingSystem"),
+					Value: aws.String("Linux"),
+				},
+				{
+					Type:  pricingtypes.FilterTypeTermMatch,
+					Field: aws.String("capacitystatus"),
+					Value: aws.String("UnusedCapacityReservation"),
+				},
+			},
+		})
+
+		for paginator.HasMorePages() {
+			page, err := paginator.NextPage(ctx)
+			if err != nil {
+				log.Printf("Error getting product list: %v", err)
+				return
+			}
+
+			for _, product := range page.PriceList {
+				var p productType
+				if err := json.Unmarshal([]byte(product), &p); err != nil {
+					log.Printf("Error unmarshalling product: %v", err)
+					continue
+				}
+				for _, term := range p.Terms.OnDemand {
+					for _, price := range term.PriceDimensions {
+						e.regionPriceMap[p.Product.Attributes["regionCode"]] = price.PricePerUnit.USD
+					}
+				}
+
+			}
+		}
+
+		log.Printf("EC2 region price cache populated with %d regions", len(e.regionPriceMap))
+	})
+}
+
 // GetRegionPrice returns the hourly price for the t4g.nano instance in the specified region
 func (e *ec2Provider) GetRegionPrice(region string) float64 {
-	// EC2 t4g.nano instance prices vary by region
-	// These prices are subject to change; in a production environment,
-	// consider using the AWS Price List API to get up-to-date pricing
-	prices := map[string]float64{
-		"us-east-1":      0.0042, // N. Virginia
-		"us-east-2":      0.0042, // Ohio
-		"us-west-1":      0.0051, // N. California
-		"us-west-2":      0.0042, // Oregon
-		"ap-south-1":     0.0046, // Mumbai
-		"ap-northeast-1": 0.0055, // Tokyo
-		"ap-northeast-2": 0.0048, // Seoul
-		"ap-northeast-3": 0.0055, // Osaka
-		"ap-southeast-1": 0.0048, // Singapore
-		"ap-southeast-2": 0.0048, // Sydney
-		"ca-central-1":   0.0047, // Canada
-		"eu-central-1":   0.0048, // Frankfurt
-		"eu-west-1":      0.0042, // Ireland
-		"eu-west-2":      0.0045, // London
-		"eu-west-3":      0.0045, // Paris
-		"eu-north-1":     0.0039, // Stockholm
-		"sa-east-1":      0.0064, // São Paulo
-	}
+	e.populatePriceCache()
 
-	if price, ok := prices[region]; ok {
-		return price
-	}
-	return 0.0042 // Default price if region not found
+	return e.regionPriceMap[region]
 }
 
 func init() {
