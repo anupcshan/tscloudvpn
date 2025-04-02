@@ -9,6 +9,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync"
 	"text/template"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
@@ -31,6 +32,7 @@ const (
 )
 
 type ec2Provider struct {
+	mu     sync.Mutex
 	cfg    aws.Config
 	sshKey string
 }
@@ -84,9 +86,11 @@ func ec2InstanceHostname(region string) string {
 
 func (e *ec2Provider) ListRegions(ctx context.Context) ([]providers.Region, error) {
 	// Any region works. Pick something close to where this process is running to minimize latency.
+	e.mu.Lock()
 	e.cfg.Region = "us-west-2"
 	client := ec2.NewFromConfig(e.cfg)
 	ssmClient := ssm.NewFromConfig(e.cfg)
+	e.mu.Unlock()
 
 	regionsResp, err := client.DescribeRegions(ctx, &ec2.DescribeRegionsInput{})
 	if err != nil {
@@ -194,10 +198,11 @@ func (e *ec2Provider) addVPNPortRule(ctx context.Context, client *ec2.Client, gr
 }
 
 func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (string, error) {
+	e.mu.Lock()
 	e.cfg.Region = region
-
 	client := ec2.NewFromConfig(e.cfg)
 	ssmClient := ssm.NewFromConfig(e.cfg)
+	e.mu.Unlock()
 
 	imageParam, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
 		Name: aws.String(debianLatestImageSSMPath),
@@ -206,10 +211,10 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 		return "", err
 	}
 
-	log.Printf("Found image id %s in region %s", aws.ToString(imageParam.Parameter.Value), e.cfg.Region)
+	log.Printf("Found image id %s in region %s", aws.ToString(imageParam.Parameter.Value), region)
 
 	tmplOut := new(bytes.Buffer)
-	hostname := ec2InstanceHostname(e.cfg.Region)
+	hostname := ec2InstanceHostname(region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
 		Args   string
 		OnExit string
@@ -260,9 +265,11 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 }
 
 func (e *ec2Provider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {
+	e.mu.Lock()
 	e.cfg.Region = region
-
 	client := ec2.NewFromConfig(e.cfg)
+	e.mu.Unlock()
+
 	listInstances, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []types.Filter{
 			{
