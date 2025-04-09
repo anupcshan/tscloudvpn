@@ -8,11 +8,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/anupcshan/tscloudvpn/db"
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/sqlite"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "modernc.org/sqlite"
 )
 
 // Stats represents the SQLite-based statistics tracker
 type Stats struct {
+	queries  *db.Queries
 	db       *sql.DB
 	mu       sync.Mutex
 	dbPath   string
@@ -58,46 +63,35 @@ func NewStats(dataDir string) (*Stats, error) {
 	}
 
 	dbPath := filepath.Join(dataDir, "tscloudvpn_stats.db")
-	db, err := sql.Open("sqlite", dbPath)
+	sqlDB, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create tables if they don't exist
-	_, err = db.Exec(`
-	CREATE TABLE IF NOT EXISTS ping_records (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		hostname TEXT NOT NULL,
-		timestamp INTEGER NOT NULL, -- Unix timestamp in seconds
-		success BOOLEAN NOT NULL,
-		latency_ms INTEGER,
-		connection_type TEXT,
-		provider_name TEXT,
-		region_code TEXT
-	);
-
-	CREATE TABLE IF NOT EXISTS error_records (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		timestamp INTEGER NOT NULL, -- Unix timestamp in seconds
-		error_type TEXT NOT NULL,
-		error_message TEXT,
-		provider_name TEXT,
-		region_code TEXT,
-		hostname TEXT
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_ping_records_hostname ON ping_records(hostname);
-	CREATE INDEX IF NOT EXISTS idx_ping_records_timestamp ON ping_records(timestamp);
-	CREATE INDEX IF NOT EXISTS idx_error_records_error_type ON error_records(error_type);
-	CREATE INDEX IF NOT EXISTS idx_error_records_timestamp ON error_records(timestamp);
-	`)
+	migrationSource, err := iofs.New(db.FS, "schema")
 	if err != nil {
-		db.Close()
 		return nil, err
 	}
+
+	sqliteDB, err := sqlite.WithInstance(sqlDB, &sqlite.Config{})
+	if err != nil {
+		return nil, err
+	}
+
+	migrator, err := migrate.NewWithInstance("iofs", migrationSource, "sqlite", sqliteDB)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := migrator.Up(); err != nil && err != migrate.ErrNoChange {
+		return nil, err
+	}
+
+	queries := db.New(sqlDB)
 
 	return &Stats{
-		db:       db,
+		queries:  queries,
+		db:       sqlDB,
 		dbPath:   dbPath,
 		dbActive: true,
 	}, nil
@@ -130,21 +124,17 @@ func (s *Stats) RecordPing(ctx context.Context, record PingRecord) error {
 		latencyMs = int64(record.Latency.Milliseconds())
 	}
 
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO ping_records (
-			hostname, timestamp, success, latency_ms, connection_type, provider_name, region_code
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
-	`,
-		record.Hostname,
-		record.Timestamp.UTC().Unix(), // Store Unix timestamp in seconds
-		record.Success,
-		latencyMs,
-		record.ConnectionType,
-		record.ProviderName,
-		record.RegionCode,
-	)
+	params := db.InsertPingParams{
+		Hostname:       record.Hostname,
+		Timestamp:      record.Timestamp.UTC().Unix(), // Store Unix timestamp in seconds
+		Success:        record.Success,
+		LatencyMs:      sql.NullInt64{Int64: latencyMs, Valid: record.Success},
+		ConnectionType: sql.NullString{String: record.ConnectionType, Valid: record.ConnectionType != ""},
+		ProviderName:   sql.NullString{String: record.ProviderName, Valid: record.ProviderName != ""},
+		RegionCode:     sql.NullString{String: record.RegionCode, Valid: record.RegionCode != ""},
+	}
 
-	return err
+	return s.queries.InsertPing(ctx, params)
 }
 
 // RecordError records an error
@@ -156,20 +146,16 @@ func (s *Stats) RecordError(ctx context.Context, record ErrorRecord) error {
 		return nil
 	}
 
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO error_records (
-			timestamp, error_type, error_message, provider_name, region_code, hostname
-		) VALUES (?, ?, ?, ?, ?, ?)
-	`,
-		record.Timestamp.UTC().Unix(), // Store Unix timestamp in seconds
-		record.ErrorType,
-		record.ErrorMessage,
-		record.ProviderName,
-		record.RegionCode,
-		record.Hostname,
-	)
+	params := db.InsertErrorParams{
+		Timestamp:    record.Timestamp.Unix(), // Store Unix timestamp in seconds
+		ErrorType:    record.ErrorType,
+		ErrorMessage: sql.NullString{String: record.ErrorMessage, Valid: record.ErrorMessage != ""},
+		ProviderName: sql.NullString{String: record.ProviderName, Valid: record.ProviderName != ""},
+		RegionCode:   sql.NullString{String: record.RegionCode, Valid: record.RegionCode != ""},
+		Hostname:     sql.NullString{String: record.Hostname, Valid: record.Hostname != ""},
+	}
 
-	return err
+	return s.queries.InsertError(ctx, params)
 }
 
 // GetPingSummary returns a summary of ping statistics for a given time range
@@ -186,85 +172,60 @@ func (s *Stats) GetPingSummary(ctx context.Context, hostname string, from, to ti
 	}
 
 	// Get ping statistics
-	row := s.db.QueryRowContext(ctx, `
-		SELECT
-			COUNT(*),
-			SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END),
-			AVG(CASE WHEN success = 1 THEN latency_ms ELSE 0 END)
-		FROM ping_records
-		WHERE
-			hostname = ? AND
-			timestamp BETWEEN ? AND ?
-	`, hostname, from.UTC().Unix(), to.UTC().Unix())
+	params := db.GetPingSummaryParams{
+		Hostname:    hostname,
+		Timestamp:   from.Unix(),
+		Timestamp_2: to.Unix(),
+	}
 
-	var successfulPings sql.NullInt64
-	var avgLatencyMs sql.NullFloat64
-
-	err := row.Scan(
-		&summary.TotalPings,
-		&successfulPings,
-		&avgLatencyMs,
-	)
+	result, err := s.queries.GetPingSummary(ctx, params)
 	if err != nil {
 		return summary, err
 	}
 
-	if successfulPings.Valid && successfulPings.Int64 > 0 {
-		summary.SuccessfulPings = int(successfulPings.Int64)
-		// Calculate p99 latency
-		p99Row := s.db.QueryRowContext(ctx, `
-			SELECT latency_ms
-			FROM ping_records
-			WHERE hostname = ? AND
-			      timestamp BETWEEN ? AND ? AND
-			      success = 1
-			ORDER BY latency_ms
-			LIMIT 1 OFFSET ?`,
-			hostname,
-			from.UTC().Unix(),
-			to.UTC().Unix(),
-			int64(float64(successfulPings.Int64-1)*0.99),
-		)
+	summary.TotalPings = int(result.Count)
+	if result.Sum.Valid {
+		summary.SuccessfulPings = int(result.Count)
 
-		var p99LatencyMs sql.NullInt64
-		if err := p99Row.Scan(&p99LatencyMs); err != nil {
+		// Calculate p99 latency
+		p99Params := db.GetP99LatencyParams{
+			Hostname: hostname,
+			Offset:   int64(float64(result.Count-1) * 0.99),
+		}
+
+		p99Latency, err := s.queries.GetP99Latency(ctx, p99Params)
+		if err != nil {
 			return summary, err
 		}
-		if p99LatencyMs.Valid {
-			summary.P99Latency = time.Duration(p99LatencyMs.Int64) * time.Millisecond
+
+		if p99Latency.Valid {
+			summary.P99Latency = time.Duration(p99Latency.Int64) * time.Millisecond
 		}
 	}
 
-	if avgLatencyMs.Valid {
-		summary.AverageLatency = time.Duration(avgLatencyMs.Float64) * time.Millisecond
+	if result.Avg.Valid {
+		summary.AverageLatency = time.Duration(result.Avg.Float64) * time.Millisecond
 	}
 
-	// Get error counts
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT error_type, COUNT(*)
-		FROM error_records
-		WHERE
-			hostname = ? AND
-			timestamp BETWEEN ? AND ?
-		GROUP BY error_type
-	`, hostname, from.UTC().Unix(), to.UTC().Unix())
+	// Get ping statistics
+	errorCountParams := db.GetErrorCountsParams{
+		Hostname:    sql.NullString{String: hostname, Valid: true},
+		Timestamp:   from.Unix(),
+		Timestamp_2: to.Unix(),
+	}
+
+	errorCounts, err := s.queries.GetErrorCounts(ctx, errorCountParams)
 	if err != nil {
 		return summary, err
 	}
-	defer rows.Close()
 
 	summary.ErrorCount = 0
-	for rows.Next() {
-		var errorType string
-		var count int
-		if err := rows.Scan(&errorType, &count); err != nil {
-			return summary, err
-		}
-		summary.ErrorsByType[errorType] = count
-		summary.ErrorCount += count
+	for _, errorCount := range errorCounts {
+		summary.ErrorsByType[errorCount.ErrorType] = int(errorCount.Count)
+		summary.ErrorCount += int(errorCount.Count)
 	}
 
-	return summary, rows.Err()
+	return summary, nil
 }
 
 // GetRecentPings returns the most recent ping records for a given hostname
@@ -278,44 +239,28 @@ func (s *Stats) GetRecentPings(ctx context.Context, hostname string, limit int) 
 		return records, nil
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT
-			hostname, timestamp, success, latency_ms, connection_type, provider_name, region_code
-		FROM ping_records
-		WHERE hostname = ?
-		ORDER BY timestamp DESC
-		LIMIT ?
-	`, hostname, limit)
+	recentPings, err := s.queries.GetRecentPings(ctx, db.GetRecentPingsParams{
+		Hostname: hostname,
+		Limit:    int64(limit),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var record PingRecord
-		var latencyMs int64
-		var unixTimestamp int64
-
-		err := rows.Scan(
-			&record.Hostname,
-			&unixTimestamp,
-			&record.Success,
-			&latencyMs,
-			&record.ConnectionType,
-			&record.ProviderName,
-			&record.RegionCode,
-		)
-		if err != nil {
-			return records, err
+	records = make([]PingRecord, len(recentPings))
+	for i, record := range recentPings {
+		records[i] = PingRecord{
+			Hostname:       record.Hostname,
+			Timestamp:      time.Unix(record.Timestamp, 0).UTC(),
+			Success:        record.Success,
+			Latency:        time.Duration(record.LatencyMs.Int64) * time.Millisecond,
+			ConnectionType: record.ConnectionType.String,
+			ProviderName:   record.ProviderName.String,
+			RegionCode:     record.RegionCode.String,
 		}
-
-		// Convert Unix timestamp to time.Time
-		record.Timestamp = time.Unix(unixTimestamp, 0).UTC()
-		record.Latency = time.Duration(latencyMs) * time.Millisecond
-		records = append(records, record)
 	}
 
-	return records, rows.Err()
+	return records, nil
 }
 
 // PruneOldRecords removes records older than the specified duration
@@ -329,20 +274,19 @@ func (s *Stats) PruneOldRecords(ctx context.Context, olderThan time.Duration) er
 
 	cutoffTime := time.Now().UTC().Add(-olderThan).Unix()
 
-	// Delete old ping records
+	// No generated code for delete queries, so using raw sql
 	_, err := s.db.ExecContext(ctx, `
-		DELETE FROM ping_records
-		WHERE timestamp < ?
-	`, cutoffTime)
+DELETE FROM ping_records
+WHERE timestamp < ?
+`, cutoffTime)
 	if err != nil {
 		return err
 	}
 
-	// Delete old error records
 	_, err = s.db.ExecContext(ctx, `
-		DELETE FROM error_records
-		WHERE timestamp < ?
-	`, cutoffTime)
+DELETE FROM error_records
+WHERE timestamp < ?
+`, cutoffTime)
 	return err
 }
 
@@ -358,23 +302,15 @@ func (s *Stats) GetAllHostnames(ctx context.Context) ([]string, error) {
 	}
 
 	// Get unique hostnames from ping_records
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT DISTINCT hostname
-		FROM ping_records
-		ORDER BY hostname
-	`)
+	hostnamesResult, err := s.queries.GetAllHostnames(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var hostname string
-		if err := rows.Scan(&hostname); err != nil {
-			return hostnames, err
-		}
-		hostnames = append(hostnames, hostname)
+	hostnames = make([]string, len(hostnamesResult))
+	for i, hostname := range hostnamesResult {
+		hostnames[i] = hostname
 	}
 
-	return hostnames, rows.Err()
+	return hostnames, nil
 }
