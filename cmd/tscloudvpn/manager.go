@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +16,6 @@ import (
 	"github.com/anupcshan/tscloudvpn/cmd/tscloudvpn/assets"
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
-	"github.com/anupcshan/tscloudvpn/internal/stats"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
 	"github.com/bradenaw/juniper/xmaps"
 	"github.com/bradenaw/juniper/xslices"
@@ -173,7 +171,6 @@ type Manager struct {
 	pingHistories      *ConcurrentMap[providers.HostName, *PingHistory]
 	launchTSMap        *ConcurrentMap[providers.HostName, time.Time]
 	tsLocalClient      *tailscale.LocalClient
-	statsManager       *stats.StatsManager
 }
 
 func NewManager(
@@ -193,20 +190,12 @@ func NewManager(
 		)
 	}
 
-	// Initialize the stats manager
-	statsManager, err := stats.NewStatsManager("")
-	if err != nil {
-		log.Printf("Error initializing stats manager: %v", err)
-		// Continue without stats if there's an error
-	}
-
 	m := &Manager{
 		cloudProviders:     cloudProviders,
 		tsLocalClient:      tsLocalClient,
 		pingHistories:      NewConcurrentMap[providers.HostName, *PingHistory](),
 		launchTSMap:        NewConcurrentMap[providers.HostName, time.Time](),
 		lazyListRegionsMap: lazyListRegionsMap,
-		statsManager:       statsManager,
 	}
 
 	go m.initOnce(ctx)
@@ -248,89 +237,17 @@ func (m *Manager) initOnce(ctx context.Context) {
 						m.pingHistories.Set(peerHostName, history)
 					}
 
-					// Find provider and region from hostname
-					var providerName, regionCode string
-					for pName, provider := range m.cloudProviders {
-						for _, f := range m.lazyListRegionsMap {
-							for _, region := range f() {
-								if provider.Hostname(region.Code) == peerHostName {
-									providerName = pName
-									regionCode = region.Code
-									break
-								}
-							}
-							if providerName != "" {
-								break
-							}
-						}
-						if providerName != "" {
-							break
-						}
-					}
-
-					// Record stats
-					if m.statsManager != nil {
-						now := time.Now()
-
-						if err != nil {
-							// Record error in history
-							history.AddResult(false, 0, "")
-
-							// Record error in persistent stats
-							m.statsManager.RecordPing(stats.PingRecord{
-								Hostname:     string(peerHostName),
-								Timestamp:    now,
-								Success:      false,
-								ProviderName: providerName,
-								RegionCode:   regionCode,
-							})
-
-							// Record detailed error
-							m.statsManager.RecordError(stats.ErrorRecord{
-								Timestamp:    now,
-								ErrorType:    "ping_failure",
-								ErrorMessage: err.Error(),
-								ProviderName: providerName,
-								RegionCode:   regionCode,
-								Hostname:     string(peerHostName),
-							})
-
-							log.Printf("Ping error from %s (%s): %s", peer.HostName, peer.TailscaleIPs[0], err)
-						} else {
-							latency := time.Duration(result.LatencySeconds*1000000) * time.Microsecond
-							connectionType := "direct"
-							if result.Endpoint == "" && result.DERPRegionCode != "" {
-								connectionType = "relayed via " + result.DERPRegionCode
-							}
-
-							// Record success in history
-							history.AddResult(true, latency, connectionType)
-
-							// Record success in persistent stats
-							m.statsManager.RecordPing(stats.PingRecord{
-								Hostname:       string(peerHostName),
-								Timestamp:      now,
-								Success:        true,
-								Latency:        latency,
-								ConnectionType: connectionType,
-								ProviderName:   providerName,
-								RegionCode:     regionCode,
-							})
-						}
+					if err != nil {
+						log.Printf("Ping error from %s (%s): %s", peer.HostName, peer.TailscaleIPs[0], err)
+						history.AddResult(false, 0, "")
 					} else {
-						// Original code path when stats manager is not available
-						if err != nil {
-							log.Printf("Ping error from %s (%s): %s", peer.HostName, peer.TailscaleIPs[0], err)
-							history.AddResult(false, 0, "")
-						} else {
-							latency := time.Duration(result.LatencySeconds*1000000) * time.Microsecond
-							connectionType := "direct"
-							if result.Endpoint == "" && result.DERPRegionCode != "" {
-								connectionType = "relayed via " + result.DERPRegionCode
-							}
-
-							history.AddResult(true, latency, connectionType)
+						latency := time.Duration(result.LatencySeconds*1000000) * time.Microsecond
+						connectionType := "direct"
+						if result.Endpoint == "" && result.DERPRegionCode != "" {
+							connectionType = "relayed via " + result.DERPRegionCode
 						}
+
+						history.AddResult(true, latency, connectionType)
 					}
 					return nil
 				})
@@ -367,18 +284,16 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 		return zero, err
 	}
 
+	deviceMap := make(map[providers.HostName]*ipnstate.PeerStatus)
+	for _, peer := range tsStatus.Peer {
+		deviceMap[providers.HostName(peer.HostName)] = peer
+	}
+
 	for providerName, provider := range m.cloudProviders {
 		provider := provider
 		providerName := providerName
 
-		lazyListRegions := m.lazyListRegionsMap[providerName]
-
-		regions := lazyListRegions()
-
-		deviceMap := make(map[providers.HostName]*ipnstate.PeerStatus)
-		for _, peer := range tsStatus.Peer {
-			deviceMap[providers.HostName(peer.HostName)] = peer
-		}
+		regions := m.lazyListRegionsMap[providerName]()
 
 		mappedRegions = append(mappedRegions, xslices.Map(regions, func(region providers.Region) mappedRegion {
 			node, hasNode := deviceMap[provider.Hostname(region.Code)]
@@ -628,201 +543,6 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller con
 	}
 
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets.Assets))))
-
-	// Add stats endpoint for accessing statistics
-	mux.HandleFunc("/stats/", func(w http.ResponseWriter, r *http.Request) {
-		if m.statsManager == nil {
-			http.Error(w, "Statistics tracking is not enabled", http.StatusServiceUnavailable)
-			return
-		}
-
-		pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/stats/"), "/")
-		if len(pathParts) < 1 || pathParts[0] == "" {
-			// Root stats page - show all available nodes (both current and historical)
-			status, err := m.GetStatus(ctx)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Failed to get status: %v", err), http.StatusInternalServerError)
-				return
-			}
-
-			// Get all historical node hostnames from the database
-			allHostnames, err := m.statsManager.GetAllHostnames()
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Failed to get node history: %v", err), http.StatusInternalServerError)
-				return
-			}
-
-			// Prepare active nodes info
-			type ActiveNodeInfo struct {
-				Hostname string
-				Provider string
-				Region   string
-			}
-			activeNodes := []ActiveNodeInfo{}
-			activeHostnames := make(map[string]bool)
-
-			for _, region := range status.Detail {
-				if region.HasNode {
-					hostname := fmt.Sprintf("%s-%s", region.Provider, region.Region)
-					activeNodes = append(activeNodes, ActiveNodeInfo{
-						Hostname: hostname,
-						Provider: region.Provider,
-						Region:   region.Region,
-					})
-					activeHostnames[hostname] = true
-				}
-			}
-
-			// Filter out active hostnames from the historical list
-			historicalNodes := []string{}
-			for _, hostname := range allHostnames {
-				if !activeHostnames[hostname] {
-					historicalNodes = append(historicalNodes, hostname)
-				}
-			}
-
-			templateData := struct {
-				ActiveNodes     []ActiveNodeInfo
-				HistoricalNodes []string
-			}{
-				ActiveNodes:     activeNodes,
-				HistoricalNodes: historicalNodes,
-			}
-
-			w.Header().Set("Content-Type", "text/html")
-			if err := templates.ExecuteTemplate(w, "stats_index.tmpl", templateData); err != nil {
-				http.Error(w, fmt.Sprintf("Failed to render template: %v", err), http.StatusInternalServerError)
-			}
-			return
-		}
-
-		// Get statistics for a specific node
-		hostname := pathParts[0]
-
-		// Check if the node is currently active
-		status, err := m.GetStatus(ctx)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to get status: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		// Find if the node is currently active
-		isActive := false
-		nodeProvider := ""
-		nodeRegion := ""
-		for _, region := range status.Detail {
-			if region.HasNode && fmt.Sprintf("%s-%s", region.Provider, region.Region) == hostname {
-				isActive = true
-				nodeProvider = region.Provider
-				nodeRegion = region.Region
-				break
-			}
-		}
-
-		// If we don't have provider/region info, try to extract it from the hostname
-		if nodeProvider == "" || nodeRegion == "" {
-			parts := strings.Split(hostname, "-")
-			if len(parts) >= 2 {
-				nodeProvider = parts[0]
-				nodeRegion = strings.Join(parts[1:], "-") // In case the region name itself has hyphens
-			}
-		}
-
-		// Default to last 24 hours
-		endTime := time.Now()
-		startTime := endTime.Add(-24 * time.Hour)
-
-		// Parse time range parameters if provided
-		if r.URL.Query().Get("days") != "" {
-			days, err := strconv.Atoi(r.URL.Query().Get("days"))
-			if err == nil && days > 0 {
-				startTime = endTime.Add(-time.Duration(days) * 24 * time.Hour)
-			}
-		}
-
-		summary, err := m.statsManager.GetPingSummary(hostname, startTime, endTime)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to get statistics: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		// Get last 10 ping records for detail (reduced from 100 for better readability)
-		recentPings, err := m.statsManager.GetRecentPings(hostname, 10)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to get recent pings: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		// Calculate success rate
-		successRate := 0.0
-		if summary.TotalPings > 0 {
-			successRate = float64(summary.SuccessfulPings) / float64(summary.TotalPings) * 100
-		}
-
-		// Format recent pings for template
-		type formattedPing struct {
-			FormattedTime  string
-			Success        bool
-			Latency        time.Duration
-			ConnectionType string
-		}
-
-		formattedPings := make([]formattedPing, 0, len(recentPings))
-		for _, ping := range recentPings {
-			formattedPings = append(formattedPings, formattedPing{
-				FormattedTime:  ping.Timestamp.Format(time.RFC1123),
-				Success:        ping.Success,
-				Latency:        ping.Latency,
-				ConnectionType: ping.ConnectionType,
-			})
-		}
-
-		// For historical nodes, get the last ping timestamp
-		var lastPingTime time.Time
-		if !isActive && len(recentPings) > 0 {
-			lastPingTime = recentPings[0].Timestamp
-		}
-
-		// Get provider-specific pricing
-		var pricePerHour float64
-		if nodeProvider != "" && nodeRegion != "" {
-			pricePerHour = m.cloudProviders[nodeProvider].GetRegionPrice(nodeRegion)
-		}
-
-		// Prepare template data
-		templateData := struct {
-			Hostname     string
-			StartTime    string
-			EndTime      string
-			Summary      stats.StatsSummary
-			SuccessRate  float64
-			RecentPings  []formattedPing
-			Days         []int
-			IsActive     bool
-			Provider     string
-			Region       string
-			LastSeen     time.Time
-			PricePerHour float64
-		}{
-			Hostname:     hostname,
-			StartTime:    startTime.Format(time.RFC1123),
-			EndTime:      endTime.Format(time.RFC1123),
-			Summary:      summary,
-			SuccessRate:  successRate,
-			RecentPings:  formattedPings,
-			Days:         []int{1, 7, 30},
-			IsActive:     isActive,
-			Provider:     nodeProvider,
-			Region:       nodeRegion,
-			LastSeen:     lastPingTime,
-			PricePerHour: pricePerHour,
-		}
-
-		w.Header().Set("Content-Type", "text/html")
-		if err := templates.ExecuteTemplate(w, "stats_detail.tmpl", templateData); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to render template: %v", err), http.StatusInternalServerError)
-		}
-	})
 
 	log.Printf("Listening on %s", listen.Addr())
 	return http.Serve(listen, logRequest(mux))

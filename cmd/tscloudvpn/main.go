@@ -271,17 +271,6 @@ func Main() error {
 
 	mgr := NewManager(ctx, cloudProviders, tsLocalClient)
 
-	// Make sure to close the stats manager when the application exits
-	defer func() {
-		if mgr != nil && mgr.statsManager != nil {
-			if err := mgr.statsManager.Close(); err != nil {
-				log.Printf("Error closing stats manager: %v", err)
-			} else {
-				log.Printf("Stats manager closed successfully")
-			}
-		}
-	}()
-
 	return mgr.Serve(ctx, ln, controller)
 }
 
