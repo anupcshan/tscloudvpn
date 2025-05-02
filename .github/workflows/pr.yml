@@ -17,3 +17,5 @@ jobs:
         working-directory: cmd/tscloudvpn
       - run: go test -race -v ./...
         working-directory: cmd/tscloudvpn
+      - run: go mod tidy -diff
+        working-directory: cmd/tscloudvpn

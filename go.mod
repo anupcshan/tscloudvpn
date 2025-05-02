@@ -13,7 +13,6 @@ require (
 	github.com/bradenaw/juniper v0.15.3
 	github.com/digitalocean/godo v1.140.0
 	github.com/felixge/httpsnoop v1.0.4
-	github.com/golang-migrate/migrate/v4 v4.18.2
 	github.com/hako/durafmt v0.0.0-20210608085754-5c1018a4e16b
 	github.com/juanfont/headscale v0.25.1
 	github.com/tailscale/tailscale-client-go v1.17.0
@@ -23,23 +22,12 @@ require (
 	golang.org/x/sync v0.12.0
 	google.golang.org/api v0.226.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.36.2
 	tailscale.com v1.81.0-pre
 )
 
 require (
-	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.24.0 // indirect
-	github.com/hashicorp/errwrap v1.1.0 // indirect
-	github.com/hashicorp/go-multierror v1.1.1 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/ncruces/go-strftime v0.1.9 // indirect
-	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
-	go.uber.org/atomic v1.7.0 // indirect
-	modernc.org/libc v1.61.13 // indirect
-	modernc.org/mathutil v1.7.1 // indirect
-	modernc.org/memory v1.8.2 // indirect
 )
 
 require (
