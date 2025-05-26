@@ -9,7 +9,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/anupcshan/tscloudvpn/cmd/tscloudvpn/assets"
@@ -19,166 +18,24 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/anupcshan/tscloudvpn/internal/status"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
-	"github.com/bradenaw/juniper/xmaps"
 
 	"github.com/hako/durafmt"
-	"golang.org/x/sync/errgroup"
 	"tailscale.com/client/local"
-	"tailscale.com/ipn/ipnstate"
-	"tailscale.com/tailcfg"
 )
-
-const historySize = 250
-
-type PingResult struct {
-	Timestamp            time.Time
-	Success              bool
-	Latency              time.Duration
-	ConnectionType       string
-	PreviousLatencyDelta time.Duration
-}
-
-type PingHistory struct {
-	mu                   sync.RWMutex
-	history              []PingResult // Ring buffer of last historySize results
-	successCount         int
-	totalLatency         time.Duration
-	lastFailure          time.Time
-	position             int // Current position in ring buffer
-	totalJitter          time.Duration
-	consecutiveJitterCnt int
-	lastSuccessLatency   time.Duration
-}
-
-func NewPingHistory() *PingHistory {
-	return &PingHistory{
-		history: make([]PingResult, historySize),
-	}
-}
-
-func (ph *PingHistory) AddResult(success bool, latency time.Duration, connectionType string) {
-	ph.mu.Lock()
-	defer ph.mu.Unlock()
-
-	// If the entry at current position was successful, decrease success count
-	if ph.history[ph.position].Success {
-		ph.successCount--
-		ph.totalLatency -= ph.history[ph.position].Latency
-	}
-
-	if ph.history[ph.position].PreviousLatencyDelta > 0 {
-		ph.totalJitter -= ph.history[ph.position].PreviousLatencyDelta
-		ph.consecutiveJitterCnt--
-	}
-
-	// Add new result
-	ph.history[ph.position] = PingResult{
-		Timestamp:      time.Now(),
-		Success:        success,
-		Latency:        latency,
-		ConnectionType: connectionType,
-	}
-
-	if success {
-		ph.successCount++
-		ph.totalLatency += latency
-
-		// Calculate jitter only if we have a previous successful latency
-		if ph.lastSuccessLatency > 0 {
-			jitter := latency - ph.lastSuccessLatency
-			if jitter < 0 {
-				jitter = -jitter
-			}
-			ph.totalJitter += jitter
-			ph.consecutiveJitterCnt++
-			ph.history[ph.position].PreviousLatencyDelta = jitter
-		}
-		ph.lastSuccessLatency = latency
-	} else {
-		ph.lastFailure = time.Now()
-		ph.lastSuccessLatency = 0
-	}
-
-	// Move position forward
-	ph.position = (ph.position + 1) % historySize
-}
-
-func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration, jitter time.Duration, timeSinceFailure time.Duration, connectionType string) {
-	ph.mu.RLock()
-	defer ph.mu.RUnlock()
-
-	// Count non-zero entries to handle startup period
-	total := 0
-	for _, result := range ph.history {
-		if !result.Timestamp.IsZero() {
-			total++
-		}
-	}
-
-	if total == 0 {
-		return 0, 0, 0, 0, ""
-	}
-
-	successRate = float64(ph.successCount) / float64(total)
-	if ph.successCount > 0 {
-		avgLatency = ph.totalLatency / time.Duration(ph.successCount)
-
-		// Calculate average jitter
-		if ph.consecutiveJitterCnt > 0 {
-			jitter = ph.totalJitter / time.Duration(ph.consecutiveJitterCnt)
-		}
-	}
-
-	if !ph.lastFailure.IsZero() {
-		timeSinceFailure = time.Since(ph.lastFailure)
-	}
-
-	// Return most recent connection type
-	for i := len(ph.history) - 1; i >= 0; i-- {
-		idx := (ph.position - 1 - i + len(ph.history)) % len(ph.history)
-		result := ph.history[idx]
-		if !result.Timestamp.IsZero() && result.Success {
-			connectionType = result.ConnectionType
-			break
-		}
-	}
-
-	return successRate, avgLatency, jitter, timeSinceFailure, connectionType
-}
-
-type ConcurrentMap[K comparable, V any] struct {
-	mu sync.RWMutex
-	m  map[K]V
-}
-
-func NewConcurrentMap[K comparable, V any]() *ConcurrentMap[K, V] {
-	return &ConcurrentMap[K, V]{m: make(map[K]V)}
-}
-
-func (l *ConcurrentMap[K, V]) Get(k K) V {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return l.m[k]
-}
-
-func (l *ConcurrentMap[K, V]) Set(k K, v V) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.m[k] = v
-}
 
 type Manager struct {
 	cloudProviders     map[string]providers.Provider
 	lazyListRegionsMap map[string]func() []providers.Region
-	pingHistories      *ConcurrentMap[providers.HostName, *PingHistory]
-	launchTSMap        *ConcurrentMap[providers.HostName, time.Time]
+	instanceRegistry   *instances.Registry
 	tsLocalClient      *local.Client
 }
 
 func NewManager(
 	ctx context.Context,
+	logger *log.Logger,
 	cloudProviders map[string]providers.Provider,
 	tsLocalClient *local.Client,
+	controlApi controlapi.ControlApi,
 ) *Manager {
 	lazyListRegionsMap := make(map[string]func() []providers.Region)
 
@@ -192,72 +49,16 @@ func NewManager(
 		)
 	}
 
+	instanceRegistry := instances.NewRegistry(logger, controlApi, tsLocalClient, cloudProviders)
+
 	m := &Manager{
 		cloudProviders:     cloudProviders,
 		tsLocalClient:      tsLocalClient,
-		pingHistories:      NewConcurrentMap[providers.HostName, *PingHistory](),
-		launchTSMap:        NewConcurrentMap[providers.HostName, time.Time](),
+		instanceRegistry:   instanceRegistry,
 		lazyListRegionsMap: lazyListRegionsMap,
 	}
 
-	go m.initOnce(ctx)
-
 	return m
-}
-
-func (m *Manager) initOnce(ctx context.Context) {
-	expectedHostnameMap := xmaps.Set[providers.HostName]{}
-	for providerName, f := range m.lazyListRegionsMap {
-		for _, region := range f() {
-			expectedHostnameMap.Add(m.cloudProviders[providerName].Hostname(region.Code))
-		}
-	}
-
-	ticker := time.NewTicker(time.Second)
-	for {
-		<-ticker.C
-		func() {
-			subctx, cancelFunc := context.WithTimeout(ctx, 5*time.Second)
-			defer cancelFunc()
-			errG := errgroup.Group{}
-			tsStatus, err := m.tsLocalClient.Status(ctx)
-			if err != nil {
-				log.Printf("Error getting status: %s", err)
-				return
-			}
-			for _, peer := range tsStatus.Peer {
-				peer := peer
-				peerHostName := providers.HostName(peer.HostName)
-				if !expectedHostnameMap.Contains(peerHostName) {
-					continue
-				}
-				errG.Go(func() error {
-					result, err := m.tsLocalClient.Ping(subctx, peer.TailscaleIPs[0], tailcfg.PingDisco)
-					history := m.pingHistories.Get(peerHostName)
-					if history == nil {
-						history = NewPingHistory()
-						m.pingHistories.Set(peerHostName, history)
-					}
-
-					if err != nil {
-						log.Printf("Ping error from %s (%s): %s", peer.HostName, peer.TailscaleIPs[0], err)
-						history.AddResult(false, 0, "")
-					} else {
-						latency := time.Duration(result.LatencySeconds*1000000) * time.Microsecond
-						connectionType := "direct"
-						if result.Endpoint == "" && result.DERPRegionCode != "" {
-							connectionType = "relayed via " + result.DERPRegionCode
-						}
-
-						history.AddResult(true, latency, connectionType)
-					}
-					return nil
-				})
-			}
-
-			_ = errG.Wait()
-		}()
-	}
 }
 
 type mappedRegion struct {
@@ -266,6 +67,7 @@ type mappedRegion struct {
 	LongName          string
 	HasNode           bool
 	SinceCreated      string
+	SinceLaunched     string
 	PriceCentsPerHour float64 // Hourly cost in USD cents
 	PingStats         struct {
 		SuccessRate      float64
@@ -274,7 +76,8 @@ type mappedRegion struct {
 		TimeSinceFailure time.Duration
 		ConnectionType   string
 	}
-	CreatedTS time.Time
+	CreatedTS  time.Time
+	LaunchedTS time.Time
 }
 
 func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], error) {
@@ -286,10 +89,8 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 		return zero, err
 	}
 
-	deviceMap := make(map[providers.HostName]*ipnstate.PeerStatus)
-	for _, peer := range tsStatus.Peer {
-		deviceMap[providers.HostName(peer.HostName)] = peer
-	}
+	// Get all instance statuses from the registry
+	allInstanceStatuses := m.instanceRegistry.GetAllInstanceStatuses()
 
 	for providerName, provider := range m.cloudProviders {
 		provider := provider
@@ -298,9 +99,13 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 		regions := m.lazyListRegionsMap[providerName]()
 
 		for _, region := range regions {
-			node, hasNode := deviceMap[provider.Hostname(region.Code)]
+			key := fmt.Sprintf("%s-%s", providerName, region.Code)
+			instanceStatus, hasInstance := allInstanceStatuses[key]
+
 			var sinceCreated string
+			var sinceLaunched string
 			var createdTS time.Time
+			var launchedTS time.Time
 			var pingStats struct {
 				SuccessRate      float64
 				AvgLatency       time.Duration
@@ -308,22 +113,28 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 				TimeSinceFailure time.Duration
 				ConnectionType   string
 			}
-			if hasNode {
-				createdTS = node.Created
-				sinceCreated = durafmt.ParseShort(time.Since(node.Created)).InternationalString()
 
-				history := m.pingHistories.Get(provider.Hostname(region.Code))
-				if history != nil {
-					pingStats.SuccessRate, pingStats.AvgLatency, pingStats.Jitter, pingStats.TimeSinceFailure, pingStats.ConnectionType = history.GetStats()
+			if hasInstance && instanceStatus.IsRunning {
+				createdTS = instanceStatus.CreatedAt
+				launchedTS = instanceStatus.LaunchedAt
+				if !createdTS.IsZero() {
+					sinceCreated = durafmt.ParseShort(time.Since(createdTS)).InternationalString()
 				}
+				if !launchedTS.IsZero() {
+					sinceLaunched = durafmt.ParseShort(time.Since(launchedTS)).InternationalString()
+				}
+				pingStats = instanceStatus.PingStats
 			}
+
 			mappedRegions = append(mappedRegions, mappedRegion{
 				Provider:          providerName,
 				Region:            region.Code,
 				LongName:          region.LongName,
-				HasNode:           hasNode,
+				HasNode:           hasInstance && instanceStatus.IsRunning,
 				CreatedTS:         createdTS,
+				LaunchedTS:        launchedTS,
 				SinceCreated:      sinceCreated,
+				SinceLaunched:     sinceLaunched,
 				PriceCentsPerHour: provider.GetRegionPrice(region.Code) * 100,
 				PingStats:         pingStats,
 			})
@@ -441,10 +252,12 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 					data[hasNodeKey] = fmt.Sprintf(`<span class="label %s" title="%s" style="margin-right: 0.25em">running for %s</span>`, labelClass, tooltip, region.SinceCreated)
 					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, opURL)
 				} else {
-					launchTS := m.launchTSMap.Get(providers.HostName(fmt.Sprintf("%s-%s", region.Provider, region.Region)))
+					// Check if instance is being launched
+					instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Provider, region.Region)
 					disabledFragment := ""
-					if !launchTS.IsZero() {
-						data[hasNodeKey] = fmt.Sprintf(`<span class="badge badge-info">Launched instance %s ago ...</span>`, durafmt.ParseShort(time.Since(launchTS)).InternationalString())
+					if err == nil && !instanceStatus.LaunchedAt.IsZero() && !instanceStatus.IsRunning {
+						// Instance is launching but not yet running
+						data[hasNodeKey] = fmt.Sprintf(`<span class="badge badge-info">Launched instance %s ago ...</span>`, durafmt.ParseShort(time.Since(instanceStatus.LaunchedAt)).InternationalString())
 						disabledFragment = "disabled"
 					} else {
 						data[hasNodeKey] = ""
@@ -488,8 +301,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 		}
 	})
 
-	for providerName, provider := range m.cloudProviders {
-		provider := provider
+	for providerName := range m.cloudProviders {
 		providerName := providerName
 
 		lazyListRegions := m.lazyListRegionsMap[providerName]
@@ -498,45 +310,27 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 			mux.HandleFunc(fmt.Sprintf("/providers/%s/regions/%s", providerName, region.Code), func(w http.ResponseWriter, r *http.Request) {
 				switch r.Method {
 				case "DELETE":
-					ctx := r.Context()
-					devices, err := controller.ListDevices(ctx)
+					err := m.instanceRegistry.DeleteInstance(providerName, region.Code)
 					if err != nil {
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write([]byte(err.Error()))
 						return
 					}
-
-					var filtered []controlapi.Device
-					for _, device := range devices {
-						if providers.HostName(device.Hostname) == provider.Hostname(region.Code) {
-							filtered = append(filtered, device)
-						}
-					}
-
-					if len(filtered) > 0 {
-						err := controller.DeleteDevice(ctx, filtered[0].ID)
-						if err != nil {
-							w.WriteHeader(http.StatusInternalServerError)
-							w.Write([]byte(err.Error()))
-							return
-						} else {
-							fmt.Fprint(w, "ok")
-						}
-					}
+					fmt.Fprint(w, "ok")
 
 				case "PUT":
+					w.Header().Set("Content-Type", "text/plain")
+					w.Header().Set("Transfer-Encoding", "chunked")
 					logger := log.New(io.MultiWriter(httputils.NewFlushWriter(w), os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
 					ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
-					defer func() {
-						cancelFunc()
-						m.launchTSMap.Set(provider.Hostname(region.Code), time.Time{})
-					}()
-					m.launchTSMap.Set(provider.Hostname(region.Code), time.Now())
-					creator := instances.NewCreator()
-					err := creator.Create(ctx, logger, controller, provider, region.Code)
+					defer cancelFunc()
+
+					err := m.instanceRegistry.CreateInstance(ctx, providerName, region.Code)
 					if err != nil {
+						logger.Printf("Failed to create instance: %s", err)
 						w.Write([]byte(err.Error()))
 					} else {
+						logger.Printf("Instance creation initiated")
 						w.Write([]byte("ok"))
 					}
 
@@ -548,4 +342,9 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 	}
 
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets.Assets))))
+}
+
+// Shutdown stops all instance controllers and cleans up resources
+func (m *Manager) Shutdown() {
+	m.instanceRegistry.Shutdown()
 }

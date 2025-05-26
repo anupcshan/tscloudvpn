@@ -108,6 +108,7 @@ func (a *App) Run(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		ln.Close()
+		a.server.Shutdown()
 		a.tsnetServer.Close()
 	}()
 

@@ -28,9 +28,10 @@ type Server struct {
 
 // New creates a new server with the given configuration
 func New(config *Config) *Server {
+	logger := log.New(log.Writer(), "[server] ", log.Flags())
 	return &Server{
 		config:  config,
-		manager: NewManager(context.Background(), config.CloudProviders, config.TSLocalClient),
+		manager: NewManager(context.Background(), logger, config.CloudProviders, config.TSLocalClient, config.Controller),
 	}
 }
 
@@ -82,4 +83,9 @@ func (ts *TSNetServer) LocalClient() (*local.Client, error) {
 // Close closes the tsnet server
 func (ts *TSNetServer) Close() error {
 	return ts.server.Close()
+}
+
+// Shutdown gracefully shuts down the server
+func (s *Server) Shutdown() {
+	s.manager.Shutdown()
 }

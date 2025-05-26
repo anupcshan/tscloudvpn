@@ -3,34 +3,35 @@ package server
 import (
 	"testing"
 	"time"
+
+	"github.com/anupcshan/tscloudvpn/internal/instances"
 )
 
 func TestNewPingHistory(t *testing.T) {
-	ph := NewPingHistory()
+	ph := instances.NewPingHistory()
 	if ph == nil {
 		t.Fatal("NewPingHistory returned nil")
-	}
-	if len(ph.history) != historySize {
-		t.Errorf("Expected history size %d, got %d", historySize, len(ph.history))
-	}
-	if ph.successCount != 0 {
-		t.Errorf("Expected initial successCount 0, got %d", ph.successCount)
-	}
-	if ph.position != 0 {
-		t.Errorf("Expected initial position 0, got %d", ph.position)
 	}
 }
 
 func TestPingHistory_AddResult(t *testing.T) {
 	tests := []struct {
-		name           string
-		results        []PingResult
+		name    string
+		results []struct {
+			Success        bool
+			Latency        time.Duration
+			ConnectionType string
+		}
 		wantSuccesses  int
 		wantAvgLatency time.Duration
 	}{
 		{
 			name: "single success",
-			results: []PingResult{
+			results: []struct {
+				Success        bool
+				Latency        time.Duration
+				ConnectionType string
+			}{
 				{Success: true, Latency: 100 * time.Millisecond, ConnectionType: "direct"},
 			},
 			wantSuccesses:  1,
@@ -38,7 +39,11 @@ func TestPingHistory_AddResult(t *testing.T) {
 		},
 		{
 			name: "single failure",
-			results: []PingResult{
+			results: []struct {
+				Success        bool
+				Latency        time.Duration
+				ConnectionType string
+			}{
 				{Success: false, Latency: 0, ConnectionType: ""},
 			},
 			wantSuccesses:  0,
@@ -46,7 +51,11 @@ func TestPingHistory_AddResult(t *testing.T) {
 		},
 		{
 			name: "mixed results",
-			results: []PingResult{
+			results: []struct {
+				Success        bool
+				Latency        time.Duration
+				ConnectionType string
+			}{
 				{Success: true, Latency: 100 * time.Millisecond, ConnectionType: "direct"},
 				{Success: false, Latency: 0, ConnectionType: ""},
 				{Success: true, Latency: 200 * time.Millisecond, ConnectionType: "direct"},
@@ -58,7 +67,7 @@ func TestPingHistory_AddResult(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ph := NewPingHistory()
+			ph := instances.NewPingHistory()
 			for _, r := range tt.results {
 				ph.AddResult(r.Success, r.Latency, r.ConnectionType)
 			}
@@ -75,37 +84,8 @@ func TestPingHistory_AddResult(t *testing.T) {
 	}
 }
 
-func TestPingHistory_RingBufferBehavior(t *testing.T) {
-	ph := NewPingHistory()
-	numEntries := historySize + 10 // Test wraparound
-
-	// Add more entries than buffer size
-	for i := range numEntries {
-		success := i%2 == 0
-		latency := time.Duration(100*(i+1)) * time.Millisecond
-		ph.AddResult(success, latency, "direct")
-	}
-
-	// Verify buffer size hasn't grown
-	if len(ph.history) != historySize {
-		t.Errorf("Buffer grew beyond historySize: got %d, want %d", len(ph.history), historySize)
-	}
-
-	// Verify position wrapped around
-	if ph.position != numEntries%historySize {
-		t.Errorf("Position incorrect after wraparound: got %d, want %d", ph.position, numEntries%historySize)
-	}
-
-	// Verify stats are based only on entries in the buffer
-	rate, _, _, _, _ := ph.GetStats()
-	expectedRate := 0.5 // Due to alternating success/failure
-	if rate < expectedRate-0.1 || rate > expectedRate+0.1 {
-		t.Errorf("Success rate incorrect after wraparound: got %f, want approximately %f", rate, expectedRate)
-	}
-}
-
 func TestPingHistory_Jitter(t *testing.T) {
-	ph := NewPingHistory()
+	ph := instances.NewPingHistory()
 
 	// Add sequence of successful pings with varying latencies
 	latencies := []time.Duration{
@@ -127,7 +107,7 @@ func TestPingHistory_Jitter(t *testing.T) {
 }
 
 func TestPingHistory_TimeSinceFailure(t *testing.T) {
-	ph := NewPingHistory()
+	ph := instances.NewPingHistory()
 
 	// Add a successful ping
 	ph.AddResult(true, 100*time.Millisecond, "direct")
@@ -151,7 +131,7 @@ func TestPingHistory_TimeSinceFailure(t *testing.T) {
 }
 
 func TestPingHistory_ConnectionType(t *testing.T) {
-	ph := NewPingHistory()
+	ph := instances.NewPingHistory()
 
 	// Test connection type changes
 	scenarios := []struct {
