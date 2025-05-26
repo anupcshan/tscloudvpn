@@ -1,11 +1,10 @@
-package main
+package server
 
 import (
 	"context"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"sort"
@@ -15,7 +14,10 @@ import (
 
 	"github.com/anupcshan/tscloudvpn/cmd/tscloudvpn/assets"
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
+	httputils "github.com/anupcshan/tscloudvpn/internal/http"
+	"github.com/anupcshan/tscloudvpn/internal/instances"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/anupcshan/tscloudvpn/internal/status"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
 	"github.com/bradenaw/juniper/xmaps"
 	"github.com/bradenaw/juniper/xslices"
@@ -275,8 +277,8 @@ type mappedRegion struct {
 	CreatedTS time.Time
 }
 
-func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], error) {
-	var zero statusInfo[[]mappedRegion]
+func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], error) {
+	var zero status.Info[[]mappedRegion]
 	var mappedRegions []mappedRegion
 
 	tsStatus, err := m.tsLocalClient.Status(ctx)
@@ -335,11 +337,10 @@ func (m *Manager) GetStatus(ctx context.Context) (statusInfo[[]mappedRegion], er
 		return mappedRegions[i].Region < mappedRegions[j].Region
 	})
 
-	return wrapWithStatusInfo(mappedRegions, m.cloudProviders, m.lazyListRegionsMap, tsStatus), nil
+	return status.WrapWithInfo(mappedRegions, m.cloudProviders, m.lazyListRegionsMap, tsStatus), nil
 }
 
-func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller controlapi.ControlApi) error {
-	mux := http.NewServeMux()
+func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controller controlapi.ControlApi) {
 	mux.Handle("/events", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 
@@ -521,14 +522,15 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller con
 					}
 
 				case "PUT":
-					logger := log.New(io.MultiWriter(flushWriter{w}, os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
+					logger := log.New(io.MultiWriter(httputils.NewFlushWriter(w), os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
 					ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer func() {
 						cancelFunc()
 						m.launchTSMap.Set(provider.Hostname(region.Code), time.Time{})
 					}()
 					m.launchTSMap.Set(provider.Hostname(region.Code), time.Now())
-					err := createInstance(ctx, logger, controller, provider, region.Code)
+					creator := instances.NewCreator()
+					err := creator.Create(ctx, logger, controller, provider, region.Code)
 					if err != nil {
 						w.Write([]byte(err.Error()))
 					} else {
@@ -543,7 +545,4 @@ func (m *Manager) Serve(ctx context.Context, listen net.Listener, controller con
 	}
 
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets.Assets))))
-
-	log.Printf("Listening on %s", listen.Addr())
-	return http.Serve(listen, logRequest(mux))
 }
