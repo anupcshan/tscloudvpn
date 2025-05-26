@@ -51,7 +51,7 @@ func (c *Creator) Create(
 	logger.Printf("Waiting for instance to be listed via provider API")
 
 	// Wait for instance to be available in provider API
-	if err := c.waitForInstanceInAPI(ctx, logger, provider, region, hostname); err != nil {
+	if err := c.waitForInstanceInAPI(ctx, provider, region, hostname); err != nil {
 		return err
 	}
 
@@ -69,7 +69,6 @@ func (c *Creator) Create(
 // waitForInstanceInAPI waits for the instance to be available in the provider's API
 func (c *Creator) waitForInstanceInAPI(
 	ctx context.Context,
-	logger *log.Logger,
 	provider providers.Provider,
 	region string,
 	hostname string,

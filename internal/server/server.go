@@ -9,14 +9,14 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	httputils "github.com/anupcshan/tscloudvpn/internal/http"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
-	"tailscale.com/client/tailscale"
+	"tailscale.com/client/local"
 	"tailscale.com/tsnet"
 )
 
 // Config holds the configuration for the server
 type Config struct {
 	CloudProviders map[string]providers.Provider
-	TSLocalClient  *tailscale.LocalClient
+	TSLocalClient  *local.Client
 	Controller     controlapi.ControlApi
 }
 
@@ -75,7 +75,7 @@ func (ts *TSNetServer) Listen(network, address string) (net.Listener, error) {
 }
 
 // LocalClient returns a Tailscale local client
-func (ts *TSNetServer) LocalClient() (*tailscale.LocalClient, error) {
+func (ts *TSNetServer) LocalClient() (*local.Client, error) {
 	return ts.server.LocalClient()
 }
 

@@ -20,10 +20,10 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/status"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
 	"github.com/bradenaw/juniper/xmaps"
-	"github.com/bradenaw/juniper/xslices"
+
 	"github.com/hako/durafmt"
 	"golang.org/x/sync/errgroup"
-	"tailscale.com/client/tailscale"
+	"tailscale.com/client/local"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
 )
@@ -172,13 +172,13 @@ type Manager struct {
 	lazyListRegionsMap map[string]func() []providers.Region
 	pingHistories      *ConcurrentMap[providers.HostName, *PingHistory]
 	launchTSMap        *ConcurrentMap[providers.HostName, time.Time]
-	tsLocalClient      *tailscale.LocalClient
+	tsLocalClient      *local.Client
 }
 
 func NewManager(
 	ctx context.Context,
 	cloudProviders map[string]providers.Provider,
-	tsLocalClient *tailscale.LocalClient,
+	tsLocalClient *local.Client,
 ) *Manager {
 	lazyListRegionsMap := make(map[string]func() []providers.Region)
 
@@ -297,7 +297,7 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 
 		regions := m.lazyListRegionsMap[providerName]()
 
-		mappedRegions = append(mappedRegions, xslices.Map(regions, func(region providers.Region) mappedRegion {
+		for _, region := range regions {
 			node, hasNode := deviceMap[provider.Hostname(region.Code)]
 			var sinceCreated string
 			var createdTS time.Time
@@ -317,7 +317,7 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 					pingStats.SuccessRate, pingStats.AvgLatency, pingStats.Jitter, pingStats.TimeSinceFailure, pingStats.ConnectionType = history.GetStats()
 				}
 			}
-			return mappedRegion{
+			mappedRegions = append(mappedRegions, mappedRegion{
 				Provider:          providerName,
 				Region:            region.Code,
 				LongName:          region.LongName,
@@ -326,8 +326,8 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 				SinceCreated:      sinceCreated,
 				PriceCentsPerHour: provider.GetRegionPrice(region.Code) * 100,
 				PingStats:         pingStats,
-			}
-		})...)
+			})
+		}
 	}
 
 	sort.Slice(mappedRegions, func(i, j int) bool {
@@ -506,9 +506,12 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 						return
 					}
 
-					filtered := xslices.Filter(devices, func(device controlapi.Device) bool {
-						return providers.HostName(device.Hostname) == provider.Hostname(region.Code)
-					})
+					var filtered []controlapi.Device
+					for _, device := range devices {
+						if providers.HostName(device.Hostname) == provider.Hostname(region.Code) {
+							filtered = append(filtered, device)
+						}
+					}
 
 					if len(filtered) > 0 {
 						err := controller.DeleteDevice(ctx, filtered[0].ID)

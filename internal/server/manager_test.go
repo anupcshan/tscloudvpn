@@ -80,7 +80,7 @@ func TestPingHistory_RingBufferBehavior(t *testing.T) {
 	numEntries := historySize + 10 // Test wraparound
 
 	// Add more entries than buffer size
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		success := i%2 == 0
 		latency := time.Duration(100*(i+1)) * time.Millisecond
 		ph.AddResult(success, latency, "direct")
