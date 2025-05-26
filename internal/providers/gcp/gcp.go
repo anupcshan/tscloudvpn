@@ -128,11 +128,11 @@ func (g *gcpProvider) ListRegions(ctx context.Context) ([]providers.Region, erro
 	return regions, nil
 }
 
-func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (string, error) {
+func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
 	prefix := "https://www.googleapis.com/compute/v1/projects/" + g.projectId
 	zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, region)).Do()
 	if err != nil {
-		return "", err
+		return providers.InstanceID{}, err
 	}
 
 	zone := zones.Items[rand.Intn(len(zones.Items))].Name
@@ -155,7 +155,7 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 		OnExit: fmt.Sprintf(`gcloud compute instances delete %s --quiet --zone=%s`, name, zone),
 		SSHKey: g.sshKey,
 	}); err != nil {
-		return "", err
+		return providers.InstanceID{}, err
 	}
 
 	_, err = compute.NewInstancesService(g.service).Insert(g.projectId, zone, &compute.Instance{
@@ -201,12 +201,16 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 		},
 	}).Context(ctx).Do()
 	if err != nil {
-		return "", err
+		return providers.InstanceID{}, err
 	}
 
 	log.Printf("Launched instance %s", name)
 
-	return hostname, nil
+	return providers.InstanceID{
+		Hostname:     hostname,
+		ProviderID:   name,
+		ProviderName: providerName,
+	}, nil
 }
 
 func (g *gcpProvider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {

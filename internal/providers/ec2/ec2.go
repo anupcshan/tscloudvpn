@@ -205,7 +205,7 @@ func (e *ec2Provider) addVPNPortRule(ctx context.Context, client *ec2.Client, gr
 	return err
 }
 
-func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (string, error) {
+func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
 	e.mu.Lock()
 	e.cfg.Region = region
 	client := ec2.NewFromConfig(e.cfg)
@@ -216,7 +216,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 		Name: aws.String(debianLatestImageSSMPath),
 	})
 	if err != nil {
-		return "", err
+		return providers.InstanceID{}, err
 	}
 
 	log.Printf("Found image id %s in region %s", aws.ToString(imageParam.Parameter.Value), region)
@@ -236,13 +236,13 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 		OnExit: "sudo /sbin/poweroff",
 		SSHKey: e.sshKey,
 	}); err != nil {
-		return "", err
+		return providers.InstanceID{}, err
 	}
 
 	// Get or create security group
 	sgID, err := e.getOrCreateSecurityGroup(ctx, client)
 	if err != nil {
-		return "", fmt.Errorf("failed to setup security group: %v", err)
+		return providers.InstanceID{}, fmt.Errorf("failed to setup security group: %v", err)
 	}
 
 	input := &ec2.RunInstancesInput{
@@ -265,11 +265,15 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 
 	output, err := client.RunInstances(ctx, input)
 	if err != nil {
-		return "", err
+		return providers.InstanceID{}, err
 	}
 	log.Printf("Launched instance %s", aws.ToString(output.Instances[0].InstanceId))
 
-	return hostname, nil
+	return providers.InstanceID{
+		Hostname:     hostname,
+		ProviderID:   aws.ToString(output.Instances[0].InstanceId),
+		ProviderName: "ec2",
+	}, nil
 }
 
 func (e *ec2Provider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {

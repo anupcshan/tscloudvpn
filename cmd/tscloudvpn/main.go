@@ -50,12 +50,13 @@ func createInstance(ctx context.Context, logger *log.Logger, controller controla
 
 	launchTime := time.Now()
 
-	hostname, err := provider.CreateInstance(ctx, region, authKey)
+	createdInstance, err := provider.CreateInstance(ctx, region, authKey)
 	if err != nil {
-		logger.Printf("Failed to launch instance %s: %s", hostname, err)
+		logger.Printf("Failed to launch instance %s: %s", provider.Hostname(region), err)
 		return err
 	}
 
+	hostname := createdInstance.Hostname
 	logger.Printf("Launched instance %s", hostname)
 	logger.Printf("Waiting for instance to be listed via provider API")
 

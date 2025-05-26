@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -44,7 +45,7 @@ func linodeInstanceHostname(region string) string {
 	return fmt.Sprintf("linode-%s", region)
 }
 
-func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (string, error) {
+func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
 	tmplOut := new(bytes.Buffer)
 	hostname := linodeInstanceHostname(region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
@@ -63,7 +64,7 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key 
 		curl -H 'Authorization: Bearer %s' -X DELETE https://api.linode.com/v4/linode/instances/$INSTANCE_ID`, l.token),
 		SSHKey: l.sshKey,
 	}); err != nil {
-		return "", err
+		return providers.InstanceID{}, err
 	}
 
 	createOpts := linodego.InstanceCreateOptions{
@@ -79,12 +80,16 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key 
 
 	instance, err := l.client.CreateInstance(ctx, createOpts)
 	if err != nil {
-		return "", fmt.Errorf("failed to create Linode instance: %w", err)
+		return providers.InstanceID{}, fmt.Errorf("failed to create Linode instance: %w", err)
 	}
 
 	log.Printf("Launched Linode instance %d", instance.ID)
 
-	return hostname, nil
+	return providers.InstanceID{
+		Hostname:     hostname,
+		ProviderID:   strconv.Itoa(instance.ID),
+		ProviderName: "ec2",
+	}, nil
 }
 
 func (l *linodeProvider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {

@@ -130,7 +130,7 @@ func vultrInstanceHostname(region string) string {
 	return fmt.Sprintf("vultr-%s", region)
 }
 
-func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (string, error) {
+func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
 	tmplOut := new(bytes.Buffer)
 	hostname := vultrInstanceHostname(region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
@@ -146,7 +146,7 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 		OnExit: fmt.Sprintf("curl https://api.vultr.com/v2/instances/$(curl -s http://169.254.169.254/v1.json | jq -r '.\"instance-v2-id\"') -X DELETE -H 'Authorization: Bearer %s'", v.apiKey),
 		SSHKey: v.sshKey,
 	}); err != nil {
-		return "", err
+		return providers.InstanceID{}, err
 	}
 
 	// Get cached plan ID for the region
@@ -163,14 +163,14 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 	v.regionSizeCacheLock.RUnlock()
 
 	if !ok || regionSize.PlanID == "" {
-		return "", fmt.Errorf("no plans available in region %s", region)
+		return providers.InstanceID{}, fmt.Errorf("no plans available in region %s", region)
 	}
 
 	log.Printf("Using cached plan ID %s for region %s", regionSize.PlanID, region)
 
 	oses, _, _, err := v.vultrClient.OS.List(ctx, nil)
 	if err != nil {
-		return "", err
+		return providers.InstanceID{}, err
 	}
 
 	oses = xslices.Filter(oses, func(os govultr.OS) bool {
@@ -178,7 +178,7 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 	})
 
 	if len(oses) == 0 {
-		return "", fmt.Errorf("no OSes available")
+		return providers.InstanceID{}, fmt.Errorf("no OSes available")
 	}
 
 	log.Printf("Selected OS: %+v", oses[0])
@@ -194,11 +194,14 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 		EnableVPC2: govultr.BoolToBoolPtr(true),
 	})
 	if err != nil {
-		return "", err
+		return providers.InstanceID{}, err
 	}
-	_ = instance
 
-	return hostname, nil
+	return providers.InstanceID{
+		Hostname:     hostname,
+		ProviderID:   instance.ID,
+		ProviderName: "vultr",
+	}, nil
 }
 
 func (v *vultrProvider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {

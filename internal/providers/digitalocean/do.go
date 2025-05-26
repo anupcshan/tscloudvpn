@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -57,7 +58,7 @@ func doInstanceHostname(region string) string {
 	return fmt.Sprintf("do-%s", region)
 }
 
-func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (string, error) {
+func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
 	// Ensure region size cache is populated
 	d.regionSizeCacheLock.Lock()
 	if time.Since(d.regionSizeCacheTime) >= cacheDuration || d.regionSizeCache == nil {
@@ -65,7 +66,7 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 		d.regionSizeCache, err = d.loadRegionSizes()
 		if err != nil {
 			d.regionSizeCacheLock.Unlock()
-			return "", fmt.Errorf("failed to load region sizes: %w", err)
+			return providers.InstanceID{}, fmt.Errorf("failed to load region sizes: %w", err)
 		}
 		d.regionSizeCacheTime = time.Now()
 	}
@@ -86,7 +87,7 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 		OnExit: fmt.Sprintf("curl https://api.digitalocean.com/v2/droplets/$(curl -s http://169.254.169.254/metadata/v1/id) -X DELETE -H 'Authorization: Bearer %s'", d.token),
 		SSHKey: d.sshKey,
 	}); err != nil {
-		return "", err
+		return providers.InstanceID{}, err
 	}
 
 	createRequest := &godo.DropletCreateRequest{
@@ -101,12 +102,16 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 
 	droplet, _, err := d.client.Droplets.Create(ctx, createRequest)
 	if err != nil {
-		return "", fmt.Errorf("failed to create droplet: %w", err)
+		return providers.InstanceID{}, fmt.Errorf("failed to create droplet: %w", err)
 	}
 
 	log.Printf("Launched instance %d", droplet.ID)
 
-	return hostname, nil
+	return providers.InstanceID{
+		Hostname:     hostname,
+		ProviderID:   strconv.Itoa(droplet.ID),
+		ProviderName: "do",
+	}, nil
 }
 
 func (d *digitaloceanProvider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {
