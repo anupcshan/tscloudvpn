@@ -67,8 +67,9 @@ func (r *Registry) CreateInstance(ctx context.Context, providerName, region stri
 			return fmt.Errorf("unknown provider: %s", providerName)
 		}
 
-		// Create controller
-		controller := NewController(ctx, r.logger, provider, region, r.controlApi, r.tsClient)
+		// Create controller with a background context that won't be canceled
+		// when the HTTP request ends
+		controller := NewController(context.Background(), r.logger, provider, region, r.controlApi, r.tsClient)
 		r.controllers[key] = controller
 	}
 	controller := r.controllers[key]
@@ -202,8 +203,8 @@ func (r *Registry) discoverExistingInstances(ctx context.Context) {
 				if _, alreadyExists := r.controllers[key]; !alreadyExists {
 					r.logger.Printf("Discovered existing instance: %s (device ID: %s)", hostname, device.ID)
 
-					// Create controller for existing instance
-					controller := NewController(ctx, r.logger, provider, region.Code, r.controlApi, r.tsClient)
+					// Create controller for existing instance with background context
+					controller := NewController(context.Background(), r.logger, provider, region.Code, r.controlApi, r.tsClient)
 
 					// Mark as running and set creation time
 					controller.mu.Lock()

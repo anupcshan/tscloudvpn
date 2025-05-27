@@ -311,3 +311,46 @@ func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 		t.Errorf("Expected 2 instances after trying to create existing one, got %d", len(allStatuses))
 	}
 }
+
+func TestRegistry_CreateInstance_ContextCancellation(t *testing.T) {
+	logger := log.Default()
+	controlApi := &MockControlApi{}
+	providers := map[string]providers.Provider{
+		"mock": &MockProvider{
+			hostname: "mock-test-region",
+			status:   providers.InstanceStatusMissing,
+		},
+	}
+
+	registry := NewRegistry(logger, controlApi, nil, providers)
+	defer registry.Shutdown()
+
+	// Create a context that we'll cancel immediately
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start instance creation
+	err := registry.CreateInstance(ctx, "mock", "test-region")
+	if err != nil {
+		t.Fatalf("Failed to create instance: %v", err)
+	}
+
+	// Cancel the context immediately after starting creation
+	cancel()
+
+	// Wait a bit for creation to process
+	time.Sleep(20 * time.Millisecond)
+
+	// Verify that instance creation wasn't affected by context cancellation
+	status, err := registry.GetInstanceStatus("mock", "test-region")
+	if err != nil {
+		t.Fatalf("Failed to get instance status: %v", err)
+	}
+
+	// The instance should exist and creation should have proceeded despite context cancellation
+	if status.Provider != "mock" {
+		t.Errorf("Expected provider 'mock', got %s", status.Provider)
+	}
+	if status.Region != "test-region" {
+		t.Errorf("Expected region 'test-region', got %s", status.Region)
+	}
+}
