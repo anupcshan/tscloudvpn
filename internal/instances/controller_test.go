@@ -241,3 +241,73 @@ func TestRegistry_GetAllInstanceStatuses(t *testing.T) {
 		t.Error("mock2 instance not found in all statuses")
 	}
 }
+
+func TestRegistry_DiscoverExistingInstances(t *testing.T) {
+	logger := log.Default()
+	controlApi := &MockControlApi{
+		// Pre-populate with existing devices
+		devices: []controlapi.Device{
+			{
+				ID:       "existing-device-1",
+				Hostname: "mock1-test-region",
+				Created:  time.Now().Add(-time.Hour), // Created 1 hour ago
+			},
+			{
+				ID:       "existing-device-2",
+				Hostname: "mock2-other-region",
+				Created:  time.Now().Add(-30 * time.Minute), // Created 30 minutes ago
+			},
+		},
+	}
+
+	providers := map[string]providers.Provider{
+		"mock1": &MockProvider{
+			hostname: "mock1-test-region",
+			status:   providers.InstanceStatusRunning,
+		},
+		"mock2": &MockProvider{
+			hostname: "mock2-other-region",
+			status:   providers.InstanceStatusRunning,
+		},
+	}
+
+	registry := NewRegistry(logger, controlApi, nil, providers)
+	defer registry.Shutdown()
+
+	// Wait for discovery to complete
+	time.Sleep(3 * time.Second)
+
+	// Check that discovered instances are tracked
+	allStatuses := registry.GetAllInstanceStatuses()
+
+	if len(allStatuses) != 2 {
+		t.Errorf("Expected 2 discovered instances, got %d", len(allStatuses))
+	}
+
+	// Verify the discovered instances have correct status
+	for key, status := range allStatuses {
+		if !status.IsRunning {
+			t.Errorf("Discovered instance %s should be marked as running", key)
+		}
+		if status.CreatedAt.IsZero() {
+			t.Errorf("Discovered instance %s should have creation time set", key)
+		}
+		if status.LaunchedAt.IsZero() {
+			// LaunchedAt should be zero for discovered instances since we don't know when they were launched
+			// This is expected behavior
+		}
+	}
+
+	// Test that creating an instance that already exists doesn't duplicate it
+	ctx := context.Background()
+	err := registry.CreateInstance(ctx, "mock1", "test-region")
+	if err != nil {
+		t.Errorf("Creating existing instance should not fail: %v", err)
+	}
+
+	// Should still have only 2 instances
+	allStatuses = registry.GetAllInstanceStatuses()
+	if len(allStatuses) != 2 {
+		t.Errorf("Expected 2 instances after trying to create existing one, got %d", len(allStatuses))
+	}
+}

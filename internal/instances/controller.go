@@ -207,6 +207,12 @@ func NewController(
 // Create creates and configures the instance
 func (c *Controller) Create() error {
 	c.mu.Lock()
+	// Check if instance is already running (discovered on startup)
+	if c.isRunning {
+		c.mu.Unlock()
+		c.logger.Printf("Instance %s is already running, skipping creation", c.provider.Hostname(c.region))
+		return nil
+	}
 	c.launchedAt = time.Now()
 	c.mu.Unlock()
 
@@ -299,6 +305,11 @@ func (c *Controller) monitorHealth() {
 
 // performHealthCheck performs a single health check
 func (c *Controller) performHealthCheck(hostname providers.HostName) {
+	// Skip health check if tsClient is nil (testing)
+	if c.tsClient == nil {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
 	defer cancel()
 
