@@ -128,6 +128,31 @@ func (g *gcpProvider) ListRegions(ctx context.Context) ([]providers.Region, erro
 	return regions, nil
 }
 
+func (g *gcpProvider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+	// Extract region from hostname (e.g., "gcp-us-central1" -> "us-central1")
+	region := strings.TrimPrefix(instanceID.Hostname, "gcp-")
+	zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, region)).Do()
+	if err != nil {
+		return err
+	}
+
+	// Find the zone where the instance exists
+	for _, zone := range zones.Items {
+		_, err := compute.NewInstancesService(g.service).Get(g.projectId, zone.Name, instanceID.ProviderID).Context(ctx).Do()
+		if err == nil {
+			// Instance found, delete it
+			_, err = compute.NewInstancesService(g.service).Delete(g.projectId, zone.Name, instanceID.ProviderID).Context(ctx).Do()
+			if err != nil {
+				return fmt.Errorf("failed to delete instance: %w", err)
+			}
+			log.Printf("Deleted instance %s", instanceID.ProviderID)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("instance not found: %s", instanceID.ProviderID)
+}
+
 func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
 	prefix := "https://www.googleapis.com/compute/v1/projects/" + g.projectId
 	zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, region)).Do()
@@ -248,6 +273,33 @@ func (g *gcpProvider) GetInstanceStatus(ctx context.Context, region string) (pro
 	}
 
 	return providers.InstanceStatusMissing, err
+}
+
+func (g *gcpProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+	zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, region)).Do()
+	if err != nil {
+		return nil, err
+	}
+
+	var instanceIDs []providers.InstanceID
+	for _, zone := range zones.Items {
+		instanceList, err := compute.NewInstancesService(g.service).List(g.projectId, zone.Name).Filter("labels.tscloudvpn:*").Context(ctx).Do()
+		if err != nil {
+			return nil, err
+		}
+
+		for _, instance := range instanceList.Items {
+			if instance.Status != "TERMINATED" {
+				instanceIDs = append(instanceIDs, providers.InstanceID{
+					Hostname:     gcpInstanceHostname(region),
+					ProviderID:   instance.Name,
+					ProviderName: providerName,
+				})
+			}
+		}
+	}
+
+	return instanceIDs, nil
 }
 
 func (g *gcpProvider) Hostname(region string) providers.HostName {

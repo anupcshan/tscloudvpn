@@ -32,7 +32,9 @@ const (
 
 type Provider interface {
 	CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (InstanceID, error)
+	DeleteInstance(ctx context.Context, instanceID InstanceID) error
 	GetInstanceStatus(ctx context.Context, region string) (InstanceStatus, error)
+	ListInstances(ctx context.Context, region string) ([]InstanceID, error)
 	ListRegions(ctx context.Context) ([]Region, error)
 	Hostname(region string) HostName
 	GetRegionPrice(region string) float64 // Get hourly price for a region

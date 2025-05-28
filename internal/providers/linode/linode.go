@@ -45,6 +45,21 @@ func linodeInstanceHostname(region string) string {
 	return fmt.Sprintf("linode-%s", region)
 }
 
+func (l *linodeProvider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+	linodeID, err := strconv.Atoi(instanceID.ProviderID)
+	if err != nil {
+		return fmt.Errorf("invalid Linode ID: %w", err)
+	}
+
+	err = l.client.DeleteInstance(ctx, linodeID)
+	if err != nil {
+		return fmt.Errorf("failed to delete Linode instance: %w", err)
+	}
+
+	log.Printf("Deleted Linode instance %d", linodeID)
+	return nil
+}
+
 func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
 	tmplOut := new(bytes.Buffer)
 	hostname := linodeInstanceHostname(region)
@@ -88,7 +103,7 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key 
 	return providers.InstanceID{
 		Hostname:     hostname,
 		ProviderID:   strconv.Itoa(instance.ID),
-		ProviderName: "ec2",
+		ProviderName: "linode",
 	}, nil
 }
 
@@ -105,6 +120,26 @@ func (l *linodeProvider) GetInstanceStatus(ctx context.Context, region string) (
 	}
 
 	return providers.InstanceStatusMissing, nil
+}
+
+func (l *linodeProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+	instances, err := l.client.ListInstances(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var instanceIDs []providers.InstanceID
+	for _, instance := range instances {
+		if instance.Region == region {
+			instanceIDs = append(instanceIDs, providers.InstanceID{
+				Hostname:     linodeInstanceHostname(region),
+				ProviderID:   strconv.Itoa(instance.ID),
+				ProviderName: "linode",
+			})
+		}
+	}
+
+	return instanceIDs, nil
 }
 
 func (l *linodeProvider) ListRegions(ctx context.Context) ([]providers.Region, error) {

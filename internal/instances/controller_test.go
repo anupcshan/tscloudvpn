@@ -41,6 +41,21 @@ func (m *MockProvider) GetRegionPrice(region string) float64 {
 	return 0.05
 }
 
+func (m *MockProvider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+	return nil
+}
+
+func (m *MockProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+	if m.status == providers.InstanceStatusRunning {
+		return []providers.InstanceID{{
+			Hostname:     string(m.hostname),
+			ProviderID:   "mock-123",
+			ProviderName: "mock",
+		}}, nil
+	}
+	return []providers.InstanceID{}, nil
+}
+
 // MockControlApi implements a simple mock control API for testing
 type MockControlApi struct {
 	devices []controlapi.Device

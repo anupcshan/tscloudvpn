@@ -184,6 +184,39 @@ func (f *FakeProvider) GetRegionPrice(region string) float64 {
 	return f.config.PricePerHour
 }
 
+// ListInstances returns all instances in a specific region
+func (f *FakeProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+	// Simulate list delay
+	if f.config.StatusCheckDelay > 0 {
+		select {
+		case <-time.After(f.config.StatusCheckDelay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	// Check for configured failure
+	if f.config.StatusFailure != nil {
+		return nil, f.config.StatusFailure
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	var instances []providers.InstanceID
+	for instanceRegion, instance := range f.instances {
+		if instanceRegion == region && instance.Status == providers.InstanceStatusRunning {
+			instances = append(instances, providers.InstanceID{
+				Hostname:     string(f.Hostname(region)),
+				ProviderID:   instance.ID,
+				ProviderName: "fake",
+			})
+		}
+	}
+
+	return instances, nil
+}
+
 // SetInstanceStatus allows tests to control instance status
 func (f *FakeProvider) SetInstanceStatus(region string, status providers.InstanceStatus) {
 	f.mu.Lock()
@@ -194,8 +227,39 @@ func (f *FakeProvider) SetInstanceStatus(region string, status providers.Instanc
 	}
 }
 
-// DeleteInstance removes an instance (for testing)
-func (f *FakeProvider) DeleteInstance(region string) {
+// DeleteInstance removes an instance by InstanceID
+func (f *FakeProvider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+	// Simulate deletion delay
+	if f.config.CreateDelay > 0 {
+		select {
+		case <-time.After(f.config.CreateDelay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	// Check for configured failure
+	if f.config.CreateFailure != nil {
+		return f.config.CreateFailure
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Find and delete the instance by ProviderID
+	for region, instance := range f.instances {
+		if instance.ID == instanceID.ProviderID {
+			delete(f.instances, region)
+			return nil
+		}
+	}
+
+	// Instance not found
+	return fmt.Errorf("instance not found: %s", instanceID.ProviderID)
+}
+
+// DeleteInstanceByRegion removes an instance by region (for testing)
+func (f *FakeProvider) DeleteInstanceByRegion(region string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

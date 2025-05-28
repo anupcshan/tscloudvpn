@@ -205,6 +205,25 @@ func (e *ec2Provider) addVPNPortRule(ctx context.Context, client *ec2.Client, gr
 	return err
 }
 
+func (e *ec2Provider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+	e.mu.Lock()
+	// Extract region from hostname (e.g., "ec2-us-west-2" -> "us-west-2")
+	region := strings.TrimPrefix(instanceID.Hostname, "ec2-")
+	e.cfg.Region = region
+	client := ec2.NewFromConfig(e.cfg)
+	e.mu.Unlock()
+
+	_, err := client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
+		InstanceIds: []string{instanceID.ProviderID},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to terminate instance: %w", err)
+	}
+
+	log.Printf("Terminated instance %s", instanceID.ProviderID)
+	return nil
+}
+
 func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
 	e.mu.Lock()
 	e.cfg.Region = region
@@ -311,6 +330,41 @@ func (e *ec2Provider) GetInstanceStatus(ctx context.Context, region string) (pro
 	}
 
 	return providers.InstanceStatusMissing, err
+}
+
+func (e *ec2Provider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+	e.mu.Lock()
+	e.cfg.Region = region
+	client := ec2.NewFromConfig(e.cfg)
+	e.mu.Unlock()
+
+	listInstances, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []types.Filter{
+			{
+				Name:   aws.String("tag-key"),
+				Values: []string{"tscloudvpn"},
+			},
+		},
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	var instanceIDs []providers.InstanceID
+	for _, reservation := range listInstances.Reservations {
+		for _, instance := range reservation.Instances {
+			if instance.State.Name != types.InstanceStateNameTerminated {
+				instanceIDs = append(instanceIDs, providers.InstanceID{
+					Hostname:     ec2InstanceHostname(region),
+					ProviderID:   aws.ToString(instance.InstanceId),
+					ProviderName: providerName,
+				})
+			}
+		}
+	}
+
+	return instanceIDs, nil
 }
 
 func (e *ec2Provider) Hostname(region string) providers.HostName {

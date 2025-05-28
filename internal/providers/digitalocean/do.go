@@ -114,6 +114,21 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 	}, nil
 }
 
+func (d *digitaloceanProvider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+	dropletID, err := strconv.Atoi(instanceID.ProviderID)
+	if err != nil {
+		return fmt.Errorf("invalid droplet ID: %w", err)
+	}
+
+	_, err = d.client.Droplets.Delete(ctx, dropletID)
+	if err != nil {
+		return fmt.Errorf("failed to delete droplet: %w", err)
+	}
+
+	log.Printf("Deleted instance %d", dropletID)
+	return nil
+}
+
 func (d *digitaloceanProvider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {
 	droplets, _, err := d.client.Droplets.List(ctx, &godo.ListOptions{})
 	if err != nil {
@@ -127,6 +142,26 @@ func (d *digitaloceanProvider) GetInstanceStatus(ctx context.Context, region str
 	}
 
 	return providers.InstanceStatusMissing, nil
+}
+
+func (d *digitaloceanProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+	droplets, _, err := d.client.Droplets.List(ctx, &godo.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	var instances []providers.InstanceID
+	for _, droplet := range droplets {
+		if droplet.Region.Slug == region {
+			instances = append(instances, providers.InstanceID{
+				Hostname:     doInstanceHostname(region),
+				ProviderID:   strconv.Itoa(droplet.ID),
+				ProviderName: "do",
+			})
+		}
+	}
+
+	return instances, nil
 }
 
 func (d *digitaloceanProvider) ListRegions(ctx context.Context) ([]providers.Region, error) {

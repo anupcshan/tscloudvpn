@@ -130,6 +130,16 @@ func vultrInstanceHostname(region string) string {
 	return fmt.Sprintf("vultr-%s", region)
 }
 
+func (v *vultrProvider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+	err := v.vultrClient.Instance.Delete(ctx, instanceID.ProviderID)
+	if err != nil {
+		return fmt.Errorf("failed to delete Vultr instance: %w", err)
+	}
+
+	log.Printf("Deleted Vultr instance %s", instanceID.ProviderID)
+	return nil
+}
+
 func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
 	tmplOut := new(bytes.Buffer)
 	hostname := vultrInstanceHostname(region)
@@ -223,6 +233,28 @@ func (v *vultrProvider) GetInstanceStatus(ctx context.Context, region string) (p
 	}
 
 	return providers.InstanceStatusMissing, nil
+}
+
+func (v *vultrProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+	instances, _, _, err := v.vultrClient.Instance.List(ctx, &govultr.ListOptions{
+		Region: region,
+		Label:  "tscloudvpn",
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	var instanceIDs []providers.InstanceID
+	for _, instance := range instances {
+		instanceIDs = append(instanceIDs, providers.InstanceID{
+			Hostname:     vultrInstanceHostname(region),
+			ProviderID:   instance.ID,
+			ProviderName: providerName,
+		})
+	}
+
+	return instanceIDs, nil
 }
 
 func (v *vultrProvider) Hostname(region string) providers.HostName {

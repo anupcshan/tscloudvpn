@@ -291,7 +291,7 @@ func TestFakeProvider_DeleteInstance(t *testing.T) {
 
 	// Create an instance
 	key := &controlapi.PreauthKey{Key: "test-key"}
-	_, err := fakeProvider.CreateInstance(ctx, "fake-us-east", key)
+	instanceID, err := fakeProvider.CreateInstance(ctx, "fake-us-east", key)
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
@@ -302,8 +302,11 @@ func TestFakeProvider_DeleteInstance(t *testing.T) {
 		t.Error("Instance should exist after creation")
 	}
 
-	// Delete it
-	fakeProvider.DeleteInstance("fake-us-east")
+	// Delete it using the interface method
+	err = fakeProvider.DeleteInstance(ctx, instanceID)
+	if err != nil {
+		t.Fatalf("Failed to delete instance: %v", err)
+	}
 
 	// Verify it's gone
 	_, exists = fakeProvider.GetInstance("fake-us-east")
@@ -318,6 +321,48 @@ func TestFakeProvider_DeleteInstance(t *testing.T) {
 	}
 	if status != providers.InstanceStatusMissing {
 		t.Errorf("Expected status missing, got %v", status)
+	}
+}
+
+func TestFakeProvider_ListInstances(t *testing.T) {
+	ctx := context.Background()
+	fakeProvider := NewWithConfig(DefaultConfig())
+
+	// Initially empty
+	instances, err := fakeProvider.ListInstances(ctx, "fake-us-east")
+	if err != nil {
+		t.Fatalf("Failed to list instances: %v", err)
+	}
+	if len(instances) != 0 {
+		t.Errorf("Expected 0 instances initially, got %d", len(instances))
+	}
+
+	// Create an instance
+	key := &controlapi.PreauthKey{Key: "test-key"}
+	instanceID, err := fakeProvider.CreateInstance(ctx, "fake-us-east", key)
+	if err != nil {
+		t.Fatalf("Failed to create instance: %v", err)
+	}
+
+	// List instances in the region
+	instances, err = fakeProvider.ListInstances(ctx, "fake-us-east")
+	if err != nil {
+		t.Fatalf("Failed to list instances: %v", err)
+	}
+	if len(instances) != 1 {
+		t.Errorf("Expected 1 instance, got %d", len(instances))
+	}
+	if instances[0].ProviderID != instanceID.ProviderID {
+		t.Errorf("Expected instance ID %s, got %s", instanceID.ProviderID, instances[0].ProviderID)
+	}
+
+	// List instances in a different region
+	instances, err = fakeProvider.ListInstances(ctx, "fake-us-west")
+	if err != nil {
+		t.Fatalf("Failed to list instances: %v", err)
+	}
+	if len(instances) != 0 {
+		t.Errorf("Expected 0 instances in different region, got %d", len(instances))
 	}
 }
 
