@@ -184,10 +184,10 @@ make test-integration # Integration tests with fake provider
 
 The project includes comprehensive end-to-end integration tests that:
 - Create actual cloud instances across all supported providers
-- Test VPN connectivity and exit node functionality
-- Verify direct (non-relayed) connections
-- Test internet access through exit nodes
-- Clean up all created resources
+- Test complete instance lifecycle management
+- Verify cloud provider API integration
+- Test resource cleanup and deletion
+- Validate pricing and region information
 
 See [E2E_TESTING.md](E2E_TESTING.md) for detailed setup and usage instructions.
 

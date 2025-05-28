@@ -4,18 +4,16 @@ This document describes how to run comprehensive end-to-end integration tests fo
 
 ## Overview
 
-The end-to-end tests create actual cloud instances, verify VPN connectivity, test internet access through exit nodes, and clean up resources. These tests incur real costs and require valid cloud provider credentials.
+The end-to-end tests create actual cloud instances, verify their lifecycle management, and clean up resources. These tests incur real costs and require valid cloud provider credentials.
 
 ## Test Coverage
 
 The E2E tests cover:
 
 1. **Instance Lifecycle**: Create, verify running status, delete instances
-2. **Network Connectivity**: Test direct (non-relayed) VPN connections
-3. **Internet Access**: Verify internet connectivity through exit nodes
-4. **Cloud Provider APIs**: List regions, get pricing, manage instances
-5. **Control Plane Integration**: Device registration, exit node approval
-6. **Resource Cleanup**: Ensure all created resources are properly deleted
+2. **Cloud Provider APIs**: List regions, get pricing, manage instances
+3. **Control Plane Integration**: Device registration and management
+4. **Resource Cleanup**: Ensure all created resources are properly deleted
 
 ## Supported Providers
 
@@ -169,11 +167,9 @@ For each provider:
 3. Creates a new instance
 4. Waits for instance to be running
 5. Verifies instance appears in provider's instance list
-6. Tests network connectivity
-7. Simulates VPN connection establishment
-8. Tests direct connection verification
-9. Deletes the instance
-10. Verifies instance is completely removed
+6. Verifies hostname generation and pricing information
+7. Deletes the instance
+8. Verifies instance is completely removed
 
 ### 2. Parallel Multi-Provider Test
 

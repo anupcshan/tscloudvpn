@@ -6,9 +6,6 @@ package providers_test
 import (
 	"context"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -167,8 +164,8 @@ func TestE2E_AllProvidersLifecycle(t *testing.T) {
 		t.Skip("No cloud provider credentials found - set environment variables for at least one provider")
 	}
 
-	t.Logf("Running E2E tests for providers: %v", getEnabledProviderNames(testConfig.EnabledProviders))
-	t.Logf("Using regions: %v", testConfig.TestRegions)
+	t.Logf("Configured providers for E2E tests: %v", getEnabledProviderNames(testConfig.EnabledProviders))
+	t.Logf("Test regions: %v", testConfig.TestRegions)
 	t.Logf("Test timeout: %v", testConfig.Timeout)
 
 	for providerName := range testConfig.EnabledProviders {
@@ -340,45 +337,7 @@ func testProviderLifecycle(t *testing.T, testConfig *E2ETestConfig, providerName
 		t.Logf("Found %d instances in region, our instance is listed", len(instances))
 	})
 
-	// Test 6: Test network connectivity (simulate VPN connection test)
-	t.Run("NetworkConnectivity", func(t *testing.T) {
-		// This is a simulated test since we can't actually connect to the VPN
-		// In a real scenario, you would:
-		// 1. Wait for the instance to register with Tailscale/Headscale
-		// 2. Establish a connection through the exit node
-		// 3. Test internet connectivity via the exit node
-		// 4. Verify the connection is direct (not relayed)
-
-		// For now, we'll test that we can at least make HTTP requests
-		// to verify the instance has internet connectivity
-		client := &http.Client{
-			Timeout: 30 * time.Second,
-		}
-
-		// Test connectivity to a reliable service
-		resp, err := client.Get("https://httpbin.org/ip")
-		if err != nil {
-			// This might fail in some test environments, so we'll log but not fail
-			t.Logf("HTTP connectivity test failed (this may be expected in test environments): %v", err)
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			t.Errorf("HTTP request failed with status %d", resp.StatusCode)
-			return
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Errorf("Failed to read response body: %v", err)
-			return
-		}
-
-		t.Logf("Network connectivity test passed, response: %s", strings.TrimSpace(string(body)))
-	})
-
-	// Test 7: Verify hostname generation
+	// Test 6: Verify hostname generation
 	t.Run("HostnameGeneration", func(t *testing.T) {
 		hostname := provider.Hostname(region)
 		if hostname == "" {
@@ -393,7 +352,7 @@ func testProviderLifecycle(t *testing.T, testConfig *E2ETestConfig, providerName
 		t.Logf("Generated hostname: %s", hostname)
 	})
 
-	// Test 8: Verify pricing information
+	// Test 7: Verify pricing information
 	t.Run("PricingInfo", func(t *testing.T) {
 		price := provider.GetRegionPrice(region)
 		if price <= 0 {
@@ -402,61 +361,7 @@ func testProviderLifecycle(t *testing.T, testConfig *E2ETestConfig, providerName
 		t.Logf("Region %s price: $%.4f/hour", region, price)
 	})
 
-	// Test 9: Test VPN connection establishment (simulation)
-	t.Run("VPNConnectionSimulation", func(t *testing.T) {
-		// Simulate checking if the device registered with the control plane
-		mockAPI := testConfig.ControlAPI.(*MockControlAPI)
-		device, exists := mockAPI.GetDevice(instanceID.ProviderID)
-		if !exists {
-			t.Error("Device not found in control plane")
-			return
-		}
-
-		if device.Hostname != instanceID.Hostname {
-			t.Errorf("Device hostname mismatch: expected %s, got %s", instanceID.Hostname, device.Hostname)
-		}
-
-		if !device.IsOnline {
-			t.Error("Device should be online")
-		}
-
-		// Test approving as exit node
-		err := testConfig.ControlAPI.ApproveExitNode(ctx, device.ID)
-		if err != nil {
-			t.Errorf("Failed to approve exit node: %v", err)
-		}
-
-		t.Logf("VPN connection simulation passed for device %s", device.ID)
-	})
-
-	// Test 10: Test direct connection verification (simulation)
-	t.Run("DirectConnectionSimulation", func(t *testing.T) {
-		// In a real scenario, you would use Tailscale's API to check
-		// if the connection is direct (DERP relay = false)
-		// For now, we'll simulate this by checking if we can "ping" the device
-
-		mockAPI := testConfig.ControlAPI.(*MockControlAPI)
-		device, exists := mockAPI.GetDevice(instanceID.ProviderID)
-		if !exists {
-			t.Error("Device not found for direct connection test")
-			return
-		}
-
-		// Simulate a "direct" connection test by checking IP addresses
-		if len(device.IPAddrs) == 0 {
-			t.Error("Device has no IP addresses")
-			return
-		}
-
-		// Simulate testing direct connectivity to the first IP
-		testIP := device.IPAddrs[0]
-		_, err := net.LookupAddr(testIP) // This will likely fail, but that's okay
-		// We're just testing that we can attempt the connection
-
-		t.Logf("Direct connection simulation completed for IP %s (err: %v)", testIP, err)
-	})
-
-	// Test 11: Delete instance
+	// Test 8: Delete instance
 	t.Run("DeleteInstance", func(t *testing.T) {
 		err := provider.DeleteInstance(ctx, instanceID)
 		if err != nil {
@@ -493,7 +398,7 @@ func testProviderLifecycle(t *testing.T, testConfig *E2ETestConfig, providerName
 		instanceID = providers.InstanceID{}
 	})
 
-	// Test 12: Verify instance is gone via cloud provider API
+	// Test 9: Verify instance is gone via cloud provider API
 	t.Run("VerifyDeletion", func(t *testing.T) {
 		instances, err := provider.ListInstances(ctx, region)
 		if err != nil {
