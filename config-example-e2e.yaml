@@ -1,0 +1,70 @@
+# Example configuration for E2E testing
+# Copy this file and fill in your credentials
+
+ssh:
+  public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAA... your-public-key-here"
+
+# VPN Control Plane Configuration
+# Choose either Tailscale OR Headscale
+control:
+  type: "tailscale"  # or "headscale"
+  
+  # Tailscale configuration
+  tailscale:
+    client_id: "your-tailscale-client-id"
+    client_secret: "your-tailscale-client-secret"
+    tailnet: "your-tailnet.ts.net"
+  
+  # Headscale configuration (alternative to Tailscale)
+  headscale:
+    api: "https://your-headscale-server/api/v1"
+    url: "https://your-headscale-server"
+    api_key: "your-headscale-api-key"
+    user: "your-headscale-user"
+
+# Cloud Provider Credentials
+providers:
+  # DigitalOcean
+  digitalocean:
+    token: "dop_v1_your-digitalocean-token-here"
+  
+  # Vultr
+  vultr:
+    api_key: "your-vultr-api-key-here"
+  
+  # Linode
+  linode:
+    token: "your-linode-token-here"
+  
+  # Amazon Web Services
+  aws:
+    access_key: "AKIA..."
+    secret_key: "your-aws-secret-key"
+    # Optional: if not specified, will use ~/.aws/credentials or environment
+    # session_token: "temporary-session-token"  # For STS/temporary credentials
+    # shared_config_dir: "/custom/path/.aws"    # Custom AWS config directory
+  
+  # Google Cloud Platform
+  gcp:
+    credentials_json: |
+      {
+        "type": "service_account",
+        "project_id": "your-project-id",
+        "private_key_id": "key-id",
+        "private_key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
+        "client_email": "service-account@project.iam.gserviceaccount.com",
+        "client_id": "client-id",
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+        "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/service-account%40project.iam.gserviceaccount.com"
+      }
+    project_id: "your-gcp-project-id"
+    service_account: "service-account@project.iam.gserviceaccount.com"
+
+# Notes:
+# 1. You only need to configure providers you want to test
+# 2. For E2E tests, you can also use environment variables instead of this file
+# 3. Environment variables take precedence over config file values
+# 4. See E2E_TESTING.md for detailed setup instructions
+# 5. The VPN control plane is optional for E2E tests (mock is used by default)

@@ -1,0 +1,266 @@
+name: End-to-End Tests
+
+on:
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      providers:
+        description: 'Comma-separated list of providers to test (do,vultr,linode,ec2,gcp) or "all"'
+        required: false
+        default: 'all'
+      test_type:
+        description: 'Type of test to run'
+        required: false
+        default: 'lifecycle'
+        type: choice
+        options:
+          - lifecycle
+          - parallel
+          - stress
+      skip_cleanup:
+        description: 'Skip cleanup for debugging (WARNING: will leave resources running)'
+        required: false
+        default: false
+        type: boolean
+
+  # Scheduled runs (optional - uncomment to enable)
+  # schedule:
+  #   - cron: '0 2 * * 1'  # Weekly on Mondays at 2 AM
+
+  # Run on PR to main (only if E2E test files are modified)
+  pull_request:
+    branches: [main]
+    paths:
+      - 'internal/providers/e2e_test.go'
+      - '.github/workflows/e2e-tests.yml'
+      - 'E2E_TESTING.md'
+      - 'Makefile'
+
+jobs:
+  check-credentials:
+    runs-on: ubuntu-latest
+    outputs:
+      has-do: ${{ steps.check.outputs.has-do }}
+      has-vultr: ${{ steps.check.outputs.has-vultr }}
+      has-linode: ${{ steps.check.outputs.has-linode }}
+      has-aws: ${{ steps.check.outputs.has-aws }}
+      has-gcp: ${{ steps.check.outputs.has-gcp }}
+      enabled-providers: ${{ steps.check.outputs.enabled-providers }}
+    steps:
+      - name: Check available credentials
+        id: check
+        env:
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          VULTR_API_KEY: ${{ secrets.VULTR_API_KEY }}
+          LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          providers=()
+          
+          if [[ -n "$DIGITALOCEAN_TOKEN" ]]; then
+            echo "has-do=true" >> $GITHUB_OUTPUT
+            providers+=("do")
+          else
+            echo "has-do=false" >> $GITHUB_OUTPUT
+          fi
+          
+          if [[ -n "$VULTR_API_KEY" ]]; then
+            echo "has-vultr=true" >> $GITHUB_OUTPUT
+            providers+=("vultr")
+          else
+            echo "has-vultr=false" >> $GITHUB_OUTPUT
+          fi
+          
+          if [[ -n "$LINODE_TOKEN" ]]; then
+            echo "has-linode=true" >> $GITHUB_OUTPUT
+            providers+=("linode")
+          else
+            echo "has-linode=false" >> $GITHUB_OUTPUT
+          fi
+          
+          if [[ -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" ]]; then
+            echo "has-aws=true" >> $GITHUB_OUTPUT
+            providers+=("ec2")
+          else
+            echo "has-aws=false" >> $GITHUB_OUTPUT
+          fi
+          
+          if [[ -n "$GCP_CREDENTIALS_JSON" && -n "$GCP_PROJECT_ID" ]]; then
+            echo "has-gcp=true" >> $GITHUB_OUTPUT
+            providers+=("gcp")
+          else
+            echo "has-gcp=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Create comma-separated list
+          IFS=','
+          echo "enabled-providers=${providers[*]}" >> $GITHUB_OUTPUT
+          
+          echo "Available providers: ${providers[*]:-none}"
+
+  e2e-tests:
+    needs: check-credentials
+    runs-on: ubuntu-latest
+    if: needs.check-credentials.outputs.enabled-providers != ''
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: ${{ fromJson(format('[{0}]', needs.check-credentials.outputs.enabled-providers)) }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+      
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      
+      - name: Generate SSH key for testing
+        run: |
+          ssh-keygen -t rsa -b 2048 -f ~/.ssh/id_rsa -N ""
+          echo "SSH_PUBKEY=$(cat ~/.ssh/id_rsa.pub)" >> $GITHUB_ENV
+      
+      - name: Set up DigitalOcean credentials
+        if: matrix.provider == 'do' && needs.check-credentials.outputs.has-do == 'true'
+        env:
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+        run: |
+          echo "DIGITALOCEAN_TOKEN=$DIGITALOCEAN_TOKEN" >> $GITHUB_ENV
+      
+      - name: Set up Vultr credentials
+        if: matrix.provider == 'vultr' && needs.check-credentials.outputs.has-vultr == 'true'
+        env:
+          VULTR_API_KEY: ${{ secrets.VULTR_API_KEY }}
+        run: |
+          echo "VULTR_API_KEY=$VULTR_API_KEY" >> $GITHUB_ENV
+      
+      - name: Set up Linode credentials
+        if: matrix.provider == 'linode' && needs.check-credentials.outputs.has-linode == 'true'
+        env:
+          LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
+        run: |
+          echo "LINODE_TOKEN=$LINODE_TOKEN" >> $GITHUB_ENV
+      
+      - name: Set up AWS credentials
+        if: matrix.provider == 'ec2' && needs.check-credentials.outputs.has-aws == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          echo "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" >> $GITHUB_ENV
+      
+      - name: Set up GCP credentials
+        if: matrix.provider == 'gcp' && needs.check-credentials.outputs.has-gcp == 'true'
+        env:
+          GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        run: |
+          echo "$GCP_CREDENTIALS_JSON" > /tmp/gcp-credentials.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-credentials.json" >> $GITHUB_ENV
+          echo "GCP_PROJECT_ID=$GCP_PROJECT_ID" >> $GITHUB_ENV
+          echo "GCP_SERVICE_ACCOUNT=$GCP_SERVICE_ACCOUNT" >> $GITHUB_ENV
+      
+      - name: Set test configuration
+        run: |
+          # Set timeout based on test type
+          case "${{ github.event.inputs.test_type || 'lifecycle' }}" in
+            stress)
+              echo "E2E_TIMEOUT=20m" >> $GITHUB_ENV
+              echo "E2E_STRESS_TEST=true" >> $GITHUB_ENV
+              ;;
+            parallel)
+              echo "E2E_TIMEOUT=15m" >> $GITHUB_ENV
+              ;;
+            *)
+              echo "E2E_TIMEOUT=10m" >> $GITHUB_ENV
+              ;;
+          esac
+          
+          # Set cleanup behavior
+          if [[ "${{ github.event.inputs.skip_cleanup }}" == "true" ]]; then
+            echo "E2E_SKIP_CLEANUP=true" >> $GITHUB_ENV
+            echo "⚠️ Cleanup disabled - resources will be left running!" >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      - name: Run E2E tests
+        run: |
+          # Determine test to run
+          case "${{ github.event.inputs.test_type || 'lifecycle' }}" in
+            stress)
+              TEST_NAME="TestE2E_StressTest"
+              ;;
+            parallel)
+              TEST_NAME="TestE2E_MultipleProvidersParallel"
+              ;;
+            *)
+              TEST_NAME="TestE2E_AllProvidersLifecycle/Provider_${{ matrix.provider }}"
+              ;;
+          esac
+          
+          echo "Running test: $TEST_NAME for provider: ${{ matrix.provider }}"
+          
+          # Run the test
+          go test -tags=e2e -v ./internal/providers -run "$TEST_NAME" -timeout=25m
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: e2e-test-results-${{ matrix.provider }}
+          path: |
+            test.log
+            *.log
+          retention-days: 7
+      
+      - name: Cleanup warning
+        if: failure() && github.event.inputs.skip_cleanup != 'true'
+        run: |
+          echo "⚠️ Test failed but cleanup should have run automatically." >> $GITHUB_STEP_SUMMARY
+          echo "If resources are still running, please clean them up manually:" >> $GITHUB_STEP_SUMMARY
+          echo "- Check your cloud provider console" >> $GITHUB_STEP_SUMMARY
+          echo "- Look for resources with 'tscloudvpn' in the name" >> $GITHUB_STEP_SUMMARY
+
+  summary:
+    needs: [check-credentials, e2e-tests]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Test Summary
+        run: |
+          echo "# E2E Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.check-credentials.outputs.enabled-providers }}" == "" ]]; then
+            echo "❌ No cloud provider credentials found" >> $GITHUB_STEP_SUMMARY
+            echo "Configure secrets for at least one provider to run E2E tests" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ Tested providers: ${{ needs.check-credentials.outputs.enabled-providers }}" >> $GITHUB_STEP_SUMMARY
+            echo "📊 Test type: ${{ github.event.inputs.test_type || 'lifecycle' }}" >> $GITHUB_STEP_SUMMARY
+            
+            if [[ "${{ needs.e2e-tests.result }}" == "success" ]]; then
+              echo "✅ All tests passed" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ Some tests failed" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "- Review test artifacts for detailed logs" >> $GITHUB_STEP_SUMMARY
+          echo "- Check cloud provider consoles for any remaining resources" >> $GITHUB_STEP_SUMMARY
+          echo "- See E2E_TESTING.md for manual testing instructions" >> $GITHUB_STEP_SUMMARY

@@ -161,6 +161,55 @@ Configure your chosen cloud provider(s) by setting their respective environment 
    go build ./cmd/tscloudvpn
    ```
 
+## Testing
+
+### Unit and Integration Tests
+
+Run the standard test suite:
+
+```bash
+make test
+```
+
+Or run specific test types:
+
+```bash
+make test-unit        # Unit tests only
+make test-integration # Integration tests with fake provider
+```
+
+### End-to-End Tests
+
+**WARNING**: E2E tests create real cloud resources and incur costs!
+
+The project includes comprehensive end-to-end integration tests that:
+- Create actual cloud instances across all supported providers
+- Test VPN connectivity and exit node functionality
+- Verify direct (non-relayed) connections
+- Test internet access through exit nodes
+- Clean up all created resources
+
+See [E2E_TESTING.md](E2E_TESTING.md) for detailed setup and usage instructions.
+
+Quick start:
+
+```bash
+# Check what providers you can test
+./scripts/run-e2e-tests.sh -n
+
+# Set credentials (example for DigitalOcean)
+export DIGITALOCEAN_TOKEN="your-token"
+export SSH_PUBKEY="$(cat ~/.ssh/id_rsa.pub)"
+
+# Run E2E tests
+./scripts/run-e2e-tests.sh
+
+# Or use make targets
+make test-e2e                    # All providers
+make test-e2e PROVIDER=do        # DigitalOcean only
+make test-e2e-parallel           # Parallel testing
+```
+
 ## License
 
 Copyright (c) 2023, Anup Chenthamarakshan
