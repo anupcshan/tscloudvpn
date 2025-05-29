@@ -135,3 +135,13 @@ func (a *App) initCloudProviders(ctx context.Context) (map[string]providers.Prov
 
 	return cloudProviders, nil
 }
+
+// GetCloudProviders returns the map of configured cloud providers
+func (a *App) GetCloudProviders() map[string]providers.Provider {
+	return a.cloudProviders
+}
+
+// GetCloudProvider returns a specific cloud provider by name
+func (a *App) GetCloudProvider(name string) providers.Provider {
+	return a.cloudProviders[name]
+}
