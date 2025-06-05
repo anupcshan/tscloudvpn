@@ -15,6 +15,7 @@ tscloudvpn is a tool for automatically managing VPN instances across multiple cl
   - DigitalOcean
   - AWS EC2
   - Google Cloud Platform (GCP)
+  - Hetzner Cloud
   - Linode
   - Vultr
 - Integration with both Tailscale and Headscale control APIs
@@ -70,6 +71,8 @@ providers:
     credentials_json: "..."
     project_id: "..."
     service_account: "..."
+  hetzner:
+    token: "..."
   vultr:
     api_key: "..."
   linode:
@@ -111,6 +114,7 @@ Configure your chosen cloud provider(s) by setting their respective environment 
   - `GCP_CREDENTIALS_JSON_FILE`
   - `GCP_PROJECT_ID`
   - `GCP_SERVICE_ACCOUNT`
+- Hetzner Cloud: `HETZNER_TOKEN`
 - Vultr: `VULTR_API_KEY`
 - Linode: `LINODE_TOKEN`
 - AWS: Uses standard AWS environment variables and ~/.aws/credentials

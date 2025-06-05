@@ -49,6 +49,9 @@ type Config struct {
 			SessionToken    string `yaml:"session_token"`     // Optional, can use environment or ~/.aws/credentials
 			SharedConfigDir string `yaml:"shared_config_dir"` // Optional, defaults to ~/.aws
 		} `yaml:"aws"`
+		Hetzner struct {
+			Token string `yaml:"token"`
+		} `yaml:"hetzner"`
 		// Add other providers as needed
 	} `yaml:"providers"`
 }
@@ -151,6 +154,9 @@ func LoadFromEnv() *Config {
 
 	// Linode configuration
 	cfg.Providers.Linode.Token = os.Getenv("LINODE_TOKEN")
+
+	// Hetzner configuration
+	cfg.Providers.Hetzner.Token = os.Getenv("HETZNER_TOKEN")
 
 	// AWS configuration will be handled by the AWS SDK directly from environment variables and ~/.aws/credentials
 

@@ -20,7 +20,7 @@ type HostName string
 type InstanceID struct {
 	Hostname     string // e.g., "ec2-us-west-2", "do-nyc1"
 	ProviderID   string // e.g., "i-1234567890abcdef0", "123456789"
-	ProviderName string // e.g., "ec2", "do", "linode", "gcp", "vultr"
+	ProviderName string // e.g., "ec2", "do", "linode", "gcp", "vultr", "hetzner"
 }
 
 const (
