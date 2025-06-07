@@ -44,6 +44,7 @@ var (
 		"australia-southeast2":    "Melbourne, Australia, APAC",
 		"europe-central2":         "Warsaw, Poland, Europe",
 		"europe-north1":           "Hamina, Finland, Europe",
+		"europe-north2":           "Stockholm, Sweden, Europe",
 		"europe-southwest1":       "Madrid, Spain, Europe",
 		"europe-west1":            "St. Ghislain, Belgium, Europe",
 		"europe-west10":           "Berlin, Germany, Europe",
