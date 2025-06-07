@@ -257,7 +257,7 @@ jobs:
       - uses: actions/setup-go@v4
         with:
           go-version: '1.24'
-      
+
       - name: Run E2E Tests
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
