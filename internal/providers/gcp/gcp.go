@@ -104,12 +104,15 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 		return nil, err
 	}
 
-	return &gcpProvider{
+	prov := &gcpProvider{
 		projectId:      cfg.Providers.GCP.ProjectID,
 		serviceAccount: cfg.Providers.GCP.ServiceAccount,
 		service:        service,
 		sshKey:         cfg.SSH.PublicKey,
-	}, nil
+	}
+
+	go prov.ensureMachineTypeCache()
+	return prov, nil
 }
 
 func gcpInstanceHostname(region string) string {
@@ -148,6 +151,8 @@ func (g *gcpProvider) loadRegionMachineTypes() (map[string]regionMachineType, er
 	defer cancel()
 
 	result := make(map[string]regionMachineType)
+	var resultLock sync.Mutex
+	var wg sync.WaitGroup
 
 	// Get all regions first
 	regionsList, err := compute.NewRegionsService(g.service).List(g.projectId).Context(ctx).Do()
@@ -158,8 +163,8 @@ func (g *gcpProvider) loadRegionMachineTypes() (map[string]regionMachineType, er
 	// Common cheap machine types to try, in order of preference (cheapest first)
 	// These are the typical low-cost options available across GCP regions
 	cheapMachineTypes := []string{
-		"e2-micro",      // Current cheapest shared-core option
 		"f1-micro",      // Legacy option, not available in all regions
+		"e2-micro",      // Cheapest, non-legacy shared-core option
 		"g1-small",      // Legacy option
 		"e2-small",      // Slightly more expensive but widely available
 		"n1-standard-1", // Fallback option
@@ -169,52 +174,63 @@ func (g *gcpProvider) loadRegionMachineTypes() (map[string]regionMachineType, er
 	// In production, consider using the Cloud Billing API for real-time pricing
 	// https://cloud.google.com/billing/v1/how-tos/catalog-api
 	machineTypePricing := map[string]float64{
-		"e2-micro":      0.0056, // Cheapest current option
 		"f1-micro":      0.0076, // Legacy pricing
-		"g1-small":      0.0270, // Legacy pricing
+		"e2-micro":      0.0084, // Cheapest non-legacy option
 		"e2-small":      0.0134, // Small but reliable
 		"n1-standard-1": 0.0475, // Standard fallback
 	}
 
 	for _, region := range regionsList.Items {
-		// Get zones for this region
-		zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, region.Name)).Do()
-		if err != nil {
-			log.Printf("Failed to list zones for region %s: %v", region.Name, err)
-			continue
-		}
+		wg.Add(1)
+		region := region
+		go func() {
+			defer wg.Done()
 
-		if len(zones.Items) == 0 {
-			continue
-		}
+			// Get zones for this region
+			zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, region.Name)).Do()
+			if err != nil {
+				log.Printf("Failed to list zones for region %s: %v", region.Name, err)
+				return
+			}
 
-		// Use the first zone to check machine type availability
-		zone := zones.Items[0].Name
+			if len(zones.Items) == 0 {
+				return
+			}
 
-		// Try each cheap machine type until we find one that's available
-		for _, machineType := range cheapMachineTypes {
-			_, err := compute.NewMachineTypesService(g.service).Get(g.projectId, zone, machineType).Context(ctx).Do()
-			if err == nil {
-				// This machine type is available in this region
-				price := machineTypePricing[machineType]
-				result[region.Name] = regionMachineType{
-					MachineType: machineType,
-					HourlyCost:  price,
+			// Use the first zone to check machine type availability
+			zone := zones.Items[0].Name
+
+			// Try each cheap machine type until we find one that's available
+			for _, machineType := range cheapMachineTypes {
+				_, err := compute.NewMachineTypesService(g.service).Get(g.projectId, zone, machineType).Context(ctx).Do()
+				if err == nil {
+					// This machine type is available in this region
+					price := machineTypePricing[machineType]
+					resultLock.Lock()
+					result[region.Name] = regionMachineType{
+						MachineType: machineType,
+						HourlyCost:  price,
+					}
+					resultLock.Unlock()
+					log.Printf("Region %s: using machine type %s at $%.4f/hr", region.Name, machineType, price)
+					break
 				}
-				log.Printf("Region %s: using machine type %s at $%.4f/hr", region.Name, machineType, price)
-				break
 			}
-		}
 
-		// If no machine type was found, log a warning and use a default
-		if _, ok := result[region.Name]; !ok {
-			log.Printf("Warning: No preferred machine type available in region %s, using e2-micro as fallback", region.Name)
-			result[region.Name] = regionMachineType{
-				MachineType: "e2-micro",
-				HourlyCost:  0.0056,
+			// If no machine type was found, log a warning and use a default
+			if _, ok := result[region.Name]; !ok {
+				log.Printf("Warning: No preferred machine type available in region %s, using e2-micro as fallback", region.Name)
+				resultLock.Lock()
+				result[region.Name] = regionMachineType{
+					MachineType: "e2-micro",
+					HourlyCost:  0.0086,
+				}
+				resultLock.Unlock()
 			}
-		}
+		}()
 	}
+
+	wg.Wait()
 
 	return result, nil
 }
@@ -436,7 +452,7 @@ func (g *gcpProvider) GetRegionPrice(region string) float64 {
 	// Ensure machine type cache is populated
 	if err := g.ensureMachineTypeCache(); err != nil {
 		log.Printf("Failed to ensure machine type cache: %v", err)
-		return 0.0056 // Return default e2-micro price as fallback
+		return 0.0084 // Return default e2-micro price as fallback
 	}
 
 	g.regionMachineTypeCacheLock.RLock()
@@ -447,7 +463,7 @@ func (g *gcpProvider) GetRegionPrice(region string) float64 {
 	}
 
 	// Default price if region not found in cache
-	return 0.0056 // e2-micro default price
+	return 0.0084 // e2-micro default price
 }
 
 func init() {
