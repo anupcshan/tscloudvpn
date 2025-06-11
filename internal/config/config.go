@@ -52,6 +52,13 @@ type Config struct {
 		Hetzner struct {
 			Token string `yaml:"token"`
 		} `yaml:"hetzner"`
+		Azure struct {
+			SubscriptionID string `yaml:"subscription_id"`
+			TenantID       string `yaml:"tenant_id"`
+			ClientID       string `yaml:"client_id"`
+			ClientSecret   string `yaml:"client_secret"`
+			ResourceGroup  string `yaml:"resource_group"`
+		} `yaml:"azure"`
 		// Add other providers as needed
 	} `yaml:"providers"`
 }
@@ -159,6 +166,13 @@ func LoadFromEnv() *Config {
 	cfg.Providers.Hetzner.Token = os.Getenv("HETZNER_TOKEN")
 
 	// AWS configuration will be handled by the AWS SDK directly from environment variables and ~/.aws/credentials
+
+	// Azure configuration
+	cfg.Providers.Azure.SubscriptionID = os.Getenv("AZURE_SUBSCRIPTION_ID")
+	cfg.Providers.Azure.TenantID = os.Getenv("AZURE_TENANT_ID")
+	cfg.Providers.Azure.ClientID = os.Getenv("AZURE_CLIENT_ID")
+	cfg.Providers.Azure.ClientSecret = os.Getenv("AZURE_CLIENT_SECRET")
+	cfg.Providers.Azure.ResourceGroup = os.Getenv("AZURE_RESOURCE_GROUP")
 
 	return &cfg
 }

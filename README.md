@@ -14,6 +14,7 @@ tscloudvpn is a tool for automatically managing VPN instances across multiple cl
 - Support for multiple cloud providers:
   - DigitalOcean
   - AWS EC2
+  - Microsoft Azure
   - Google Cloud Platform (GCP)
   - Hetzner Cloud
   - Linode
@@ -85,6 +86,12 @@ providers:
     # ... or use the shared config dir
     shared_config_dir: "~/.aws"  # optional
     # ... or use the AWS_ environment variables
+  azure:
+    subscription_id: "..."
+    tenant_id: "..."
+    client_id: "..."
+    client_secret: "..."
+    resource_group: "..."
 ```
 
 ### Environment Variables (Legacy Support)
@@ -118,6 +125,52 @@ Configure your chosen cloud provider(s) by setting their respective environment 
 - Vultr: `VULTR_API_KEY`
 - Linode: `LINODE_TOKEN`
 - AWS: Uses standard AWS environment variables and ~/.aws/credentials
+- Azure:
+  - `AZURE_SUBSCRIPTION_ID`
+  - `AZURE_TENANT_ID`
+  - `AZURE_CLIENT_ID`
+  - `AZURE_CLIENT_SECRET`
+  - `AZURE_RESOURCE_GROUP`
+
+### Azure Setup
+
+To use Azure as a provider, you need:
+
+1. An Azure subscription
+2. A service principal with Contributor access to a resource group
+3. The resource group must already exist
+
+#### Creating an Azure Service Principal
+
+```bash
+# Login to Azure
+az login
+
+# Create a resource group (if it doesn't exist)
+az group create --name tscloudvpn-rg --location eastus
+
+# Create a service principal with Contributor role on the resource group
+az ad sp create-for-rbac --name tscloudvpn-sp \
+  --role Contributor \
+  --scopes /subscriptions/YOUR_SUBSCRIPTION_ID/resourceGroups/tscloudvpn-rg
+```
+
+This will output:
+```json
+{
+  "appId": "your-client-id",
+  "displayName": "tscloudvpn-sp",
+  "password": "your-client-secret",
+  "tenant": "your-tenant-id"
+}
+```
+
+Use these values in your configuration:
+- `appId` → `client_id`
+- `password` → `client_secret`
+- `tenant` → `tenant_id`
+- Your subscription ID → `subscription_id`
+- Resource group name → `resource_group`
 
 ## Usage
 

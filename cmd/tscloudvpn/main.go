@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/anupcshan/tscloudvpn/internal/app"
+	_ "github.com/anupcshan/tscloudvpn/internal/providers/azure"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/digitalocean"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/ec2"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/gcp"

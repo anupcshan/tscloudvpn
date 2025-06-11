@@ -62,6 +62,14 @@ providers:
     project_id: "your-gcp-project-id"
     service_account: "service-account@project.iam.gserviceaccount.com"
 
+  # Microsoft Azure
+  azure:
+    subscription_id: "your-azure-subscription-id"
+    tenant_id: "your-azure-tenant-id"
+    client_id: "your-azure-client-id"
+    client_secret: "your-azure-client-secret"
+    resource_group: "your-azure-resource-group"
+
 # Notes:
 # 1. You only need to configure providers you want to test
 # 2. For E2E tests, you can also use environment variables instead of this file
