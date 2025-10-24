@@ -26,7 +26,7 @@ sudo sysctl -p /etc/sysctl.d/99-tailscale.conf
 sudo sed -i 's/FLAGS=""/FLAGS="--state=mem:"/' /etc/default/tailscaled
 sudo systemctl restart tailscaled.service
 
-timeout 5m sudo tailscale up --accept-routes --advertise-exit-node {{.Args}}
+timeout 5m sudo tailscale up --accept-routes --advertise-exit-node --advertise-connector {{.Args}}
 
 set +x
 
