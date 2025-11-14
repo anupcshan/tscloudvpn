@@ -63,7 +63,7 @@ control:
     api: "..."
     url: "..."
     api_key: "..."
-    user: "..."
+    user_id: 1
 
 providers:
   digitalocean:
@@ -110,7 +110,7 @@ The following environment variables are still supported for backward compatibili
 - `HEADSCALE_API`: Headscale API endpoint
 - `HEADSCALE_URL`: Headscale URL
 - `HEADSCALE_APIKEY`: Headscale API key
-- `HEADSCALE_USER`: Headscale username
+- `HEADSCALE_USER_ID`: Headscale user ID (e.g., "1") - use 'headscale users list' to find your user ID
 
 #### Cloud Provider Configuration
 

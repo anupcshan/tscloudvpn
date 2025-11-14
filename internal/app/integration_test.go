@@ -113,7 +113,7 @@ func loadRealConfig(t *testing.T) (*config.Config, error) {
 	}
 
 	// Fallback to environment variables
-	return config.LoadFromEnv(), nil
+	return config.LoadFromEnv()
 }
 
 // hasCloudProviderConfigured checks if at least one cloud provider has credentials

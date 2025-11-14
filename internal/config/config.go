@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"gopkg.in/yaml.v3"
@@ -24,7 +26,7 @@ type Config struct {
 			API    string `yaml:"api"`
 			URL    string `yaml:"url"`
 			APIKey string `yaml:"api_key"`
-			User   string `yaml:"user"`
+			UserID uint64 `yaml:"user_id"`
 		} `yaml:"headscale"`
 	} `yaml:"control"`
 
@@ -69,7 +71,7 @@ func (cfg *Config) GetController() (controlapi.ControlApi, error) {
 			cfg.Control.Headscale.API,
 			cfg.Control.Headscale.URL,
 			cfg.Control.Headscale.APIKey,
-			cfg.Control.Headscale.User,
+			cfg.Control.Headscale.UserID,
 		)
 	}
 
@@ -126,7 +128,7 @@ func LoadDefaultConfig() (*Config, error) {
 }
 
 // LoadFromEnv creates a Config from environment variables (for backward compatibility)
-func LoadFromEnv() *Config {
+func LoadFromEnv() (*Config, error) {
 	var cfg Config
 
 	cfg.SSH.PublicKey = os.Getenv("SSH_PUBKEY")
@@ -143,7 +145,13 @@ func LoadFromEnv() *Config {
 	cfg.Control.Headscale.API = os.Getenv("HEADSCALE_API")
 	cfg.Control.Headscale.URL = os.Getenv("HEADSCALE_URL")
 	cfg.Control.Headscale.APIKey = os.Getenv("HEADSCALE_APIKEY")
-	cfg.Control.Headscale.User = os.Getenv("HEADSCALE_USER")
+	if userID := os.Getenv("HEADSCALE_USER_ID"); userID != "" {
+		id, err := strconv.ParseUint(userID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid HEADSCALE_USER_ID: %w", err)
+		}
+		cfg.Control.Headscale.UserID = id
+	}
 
 	cfg.Providers.DigitalOcean.Token = os.Getenv("DIGITALOCEAN_TOKEN")
 
@@ -174,5 +182,5 @@ func LoadFromEnv() *Config {
 	cfg.Providers.Azure.ClientSecret = os.Getenv("AZURE_CLIENT_SECRET")
 	cfg.Providers.Azure.ResourceGroup = os.Getenv("AZURE_RESOURCE_GROUP")
 
-	return &cfg
+	return &cfg, nil
 }

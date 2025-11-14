@@ -20,7 +20,7 @@ control:
     api: "https://your-headscale-server/api/v1"
     url: "https://your-headscale-server"
     api_key: "your-headscale-api-key"
-    user: "your-headscale-user"
+    user_id: 1
 
 # Cloud Provider Credentials
 providers:

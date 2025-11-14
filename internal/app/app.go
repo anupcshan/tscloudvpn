@@ -41,7 +41,10 @@ func New(configFile string) (*App, error) {
 
 		if err == os.ErrNotExist {
 			log.Println("No config file found, falling back to environment variables")
-			cfg = config.LoadFromEnv()
+			cfg, err = config.LoadFromEnv()
+			if err != nil {
+				return nil, fmt.Errorf("failed to load config from environment: %v", err)
+			}
 		}
 	}
 

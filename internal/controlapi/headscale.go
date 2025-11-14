@@ -12,17 +12,24 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// HeadscaleClient implements the ControlApi interface for Headscale
+// HeadscaleClient implements the ControlApi interface for Headscale.
+//
+// This client stores both userId (uint64) and userName (string) because the
+// Headscale gRPC API has different type requirements for different methods:
+//   - CreatePreAuthKeyRequest.User is uint64
+//   - ListNodesRequest.User is string
+// The userName is resolved from userId during client initialization via ListUsers.
 type HeadscaleClient struct {
 	client       headscale.HeadscaleServiceClient
 	headscaleUrl string
-	user         string
+	userId       uint64 // Used for CreatePreAuthKey
+	userName     string // Used for ListNodes
 }
 
 // NewHeadscaleClient creates a new HeadscaleClient instance
-func NewHeadscaleClient(serverAddr string, headscaleUrl string, apiKey string, user string) (*HeadscaleClient, error) {
-	if serverAddr == "" || apiKey == "" || user == "" {
-		return nil, fmt.Errorf("serverAddr, apiKey and user are required")
+func NewHeadscaleClient(serverAddr string, headscaleUrl string, apiKey string, userId uint64) (*HeadscaleClient, error) {
+	if serverAddr == "" || apiKey == "" || userId == 0 {
+		return nil, fmt.Errorf("serverAddr, apiKey and userId are required")
 	}
 
 	// Create gRPC connection with API key auth
@@ -35,10 +42,31 @@ func NewHeadscaleClient(serverAddr string, headscaleUrl string, apiKey string, u
 		return nil, fmt.Errorf("failed to connect to headscale: %w", err)
 	}
 
+	client := headscale.NewHeadscaleServiceClient(conn)
+
+	// Look up the user name from the user ID
+	usersResp, err := client.ListUsers(context.Background(), &headscale.ListUsersRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list users: %w", err)
+	}
+
+	var userName string
+	for _, u := range usersResp.GetUsers() {
+		if u.GetId() == userId {
+			userName = u.GetName()
+			break
+		}
+	}
+
+	if userName == "" {
+		return nil, fmt.Errorf("user with ID %d not found", userId)
+	}
+
 	return &HeadscaleClient{
-		client:       headscale.NewHeadscaleServiceClient(conn),
+		client:       client,
 		headscaleUrl: headscaleUrl,
-		user:         user,
+		userId:       userId,
+		userName:     userName,
 	}, nil
 }
 
@@ -61,7 +89,7 @@ func (a *apiKeyAuth) RequireTransportSecurity() bool {
 func (c *HeadscaleClient) CreateKey(ctx context.Context) (*PreauthKey, error) {
 	// Create an ephemeral, preauthorized key
 	req := &headscale.CreatePreAuthKeyRequest{
-		User:      c.user,
+		User:      c.userId,
 		Reusable:  false,
 		Ephemeral: true,
 		// Expire the key in an hour - we can launch an instance and use the key in that time
@@ -84,7 +112,7 @@ func (c *HeadscaleClient) CreateKey(ctx context.Context) (*PreauthKey, error) {
 // ListDevices implements ControlApi.ListDevices
 func (c *HeadscaleClient) ListDevices(ctx context.Context) ([]Device, error) {
 	req := &headscale.ListNodesRequest{
-		User: c.user,
+		User: c.userName,
 	}
 
 	resp, err := c.client.ListNodes(ctx, req)
@@ -121,25 +149,37 @@ func (c *HeadscaleClient) ListDevices(ctx context.Context) ([]Device, error) {
 
 // ApproveExitNode implements ControlApi.ApproveExitNode
 func (c *HeadscaleClient) ApproveExitNode(ctx context.Context, deviceID string) error {
-	nodeId, err := strconv.Atoi(deviceID)
+	nodeId, err := strconv.ParseUint(deviceID, 10, 64)
 	if err != nil {
 		return fmt.Errorf("failed to parse device ID: %w", err)
 	}
-	routesResp, err := c.client.GetNodeRoutes(ctx, &headscale.GetNodeRoutesRequest{
-		NodeId: uint64(nodeId),
+
+	// Get the node to retrieve its available routes
+	nodeResp, err := c.client.GetNode(ctx, &headscale.GetNodeRequest{
+		NodeId: nodeId,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to get routes: %w", err)
+		return fmt.Errorf("failed to get node: %w", err)
 	}
 
-	// Enable each route
-	for _, route := range routesResp.GetRoutes() {
-		_, err = c.client.EnableRoute(ctx, &headscale.EnableRouteRequest{
-			RouteId: route.GetId(),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to enable route %s: %w", route.GetPrefix(), err)
-		}
+	node := nodeResp.GetNode()
+	if node == nil {
+		return fmt.Errorf("node not found")
+	}
+
+	// Get available routes
+	availableRoutes := node.GetAvailableRoutes()
+	if len(availableRoutes) == 0 {
+		return fmt.Errorf("no routes available to approve")
+	}
+
+	// Approve all available routes
+	_, err = c.client.SetApprovedRoutes(ctx, &headscale.SetApprovedRoutesRequest{
+		NodeId: nodeId,
+		Routes: availableRoutes,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to approve routes: %w", err)
 	}
 
 	return nil
@@ -147,13 +187,13 @@ func (c *HeadscaleClient) ApproveExitNode(ctx context.Context, deviceID string) 
 
 // DeleteDevice implements ControlApi.DeleteDevice
 func (c *HeadscaleClient) DeleteDevice(ctx context.Context, deviceID string) error {
-	nodeId, err := strconv.Atoi(deviceID)
+	nodeId, err := strconv.ParseUint(deviceID, 10, 64)
 	if err != nil {
 		return fmt.Errorf("failed to parse device ID: %w", err)
 	}
 
 	_, err = c.client.DeleteNode(ctx, &headscale.DeleteNodeRequest{
-		NodeId: uint64(nodeId),
+		NodeId: nodeId,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to delete device: %w", err)

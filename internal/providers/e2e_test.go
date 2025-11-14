@@ -86,7 +86,10 @@ func (m *MockControlAPI) GetDevice(deviceID string) (controlapi.Device, bool) {
 
 // SetupE2ETestConfig creates test configuration from environment variables
 func SetupE2ETestConfig(t *testing.T) *E2ETestConfig {
-	cfg := config.LoadFromEnv()
+	cfg, err := config.LoadFromEnv()
+	if err != nil {
+		t.Fatalf("failed to load config from environment: %v", err)
+	}
 	controlAPI := NewMockControlAPI()
 
 	// Default test configuration
