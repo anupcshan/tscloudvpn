@@ -201,7 +201,7 @@ func (r *Registry) discoverExistingInstances(ctx context.Context) {
 				r.mu.Lock()
 				// Only create controller if one doesn't already exist
 				if _, alreadyExists := r.controllers[key]; !alreadyExists {
-					r.logger.Printf("Discovered existing instance: %s (device ID: %s)", hostname, device.ID)
+					r.logger.Printf("Discovered existing instance: %s", hostname)
 
 					// Create controller for existing instance with background context
 					controller := NewController(context.Background(), r.logger, provider, region.Code, r.controlApi, r.tsClient)

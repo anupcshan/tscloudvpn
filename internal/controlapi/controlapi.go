@@ -9,7 +9,11 @@ import (
 
 // Device represents a VPN node in the network
 type Device struct {
-	ID               string
+	// Private fields - used by control API implementations
+	tailscaleID      string
+	headscaleID      uint64
+
+	// Public fields
 	Name             string
 	Hostname         string
 	Created          time.Time
@@ -45,8 +49,8 @@ type ControlApi interface {
 	ListDevices(ctx context.Context) ([]Device, error)
 
 	// ApproveExitNode enables the advertised routes for a device, making it an exit node
-	ApproveExitNode(ctx context.Context, deviceID string) error
+	ApproveExitNode(ctx context.Context, device *Device) error
 
 	// DeleteDevice removes a device from the network
-	DeleteDevice(ctx context.Context, deviceID string) error
+	DeleteDevice(ctx context.Context, device *Device) error
 }

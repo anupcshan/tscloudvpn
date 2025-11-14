@@ -84,7 +84,7 @@ func (api *IntegrationTestControlApi) ListDevices(ctx context.Context) ([]contro
 }
 
 // DeleteDevice removes a device by ID with optional delay/failure
-func (api *IntegrationTestControlApi) DeleteDevice(ctx context.Context, deviceID string) error {
+func (api *IntegrationTestControlApi) DeleteDevice(ctx context.Context, device *controlapi.Device) error {
 	if api.deleteDeviceDelay > 0 {
 		select {
 		case <-time.After(api.deleteDeviceDelay):
@@ -100,18 +100,18 @@ func (api *IntegrationTestControlApi) DeleteDevice(ctx context.Context, deviceID
 	api.mu.Lock()
 	defer api.mu.Unlock()
 
-	for i, device := range api.devices {
-		if device.ID == deviceID {
+	for i, d := range api.devices {
+		if d.Hostname == device.Hostname {
 			api.devices = slices.Delete(api.devices, i, i+1)
 			return nil
 		}
 	}
 
-	return fmt.Errorf("device not found: %s", deviceID)
+	return fmt.Errorf("device not found: %s", device.Hostname)
 }
 
 // ApproveExitNode approves a device as an exit node
-func (api *IntegrationTestControlApi) ApproveExitNode(ctx context.Context, deviceID string) error {
+func (api *IntegrationTestControlApi) ApproveExitNode(ctx context.Context, device *controlapi.Device) error {
 	return nil // No-op for testing
 }
 
@@ -191,7 +191,6 @@ func TestIntegration_ControllerWithFakeProvider_BasicLifecycle(t *testing.T) {
 
 	// Add device to control API before creation to simulate quick registration
 	controlApi.AddDevice(controlapi.Device{
-		ID:       "test-device-1",
 		Hostname: "fake-fake-us-east",
 		Created:  time.Now().Add(time.Second), // Created slightly in the future
 	})
@@ -269,9 +268,8 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 	regions := []string{"fake-us-east", "fake-us-west", "fake-eu-central"}
 
 	// Pre-add devices to simulate registration
-	for i, region := range regions {
+	for _, region := range regions {
 		controlApi.AddDevice(controlapi.Device{
-			ID:       fmt.Sprintf("test-device-%d", i+1),
 			Hostname: fmt.Sprintf("fake-%s", region),
 			Created:  time.Now().Add(time.Second), // Future timestamp
 		})
@@ -406,7 +404,6 @@ func TestIntegration_RegistryWithFakeProvider_ProviderFailures(t *testing.T) {
 
 	// Pre-add device to simulate registration for the first instance
 	controlApi.AddDevice(controlapi.Device{
-		ID:       "test-device-1",
 		Hostname: "fake-fake-us-east",
 		Created:  time.Now().Add(time.Second),
 	})
@@ -468,12 +465,10 @@ func TestIntegration_RegistryWithFakeProvider_DiscoverExistingInstances(t *testi
 
 	// Pre-populate control API with existing devices
 	controlApi.AddDevice(controlapi.Device{
-		ID:       "existing-1",
 		Hostname: "fake-fake-us-east",
 		Created:  time.Now().Add(-time.Hour),
 	})
 	controlApi.AddDevice(controlapi.Device{
-		ID:       "existing-2",
 		Hostname: "fake-fake-eu-central",
 		Created:  time.Now().Add(-30 * time.Minute),
 	})
@@ -545,7 +540,6 @@ func TestIntegration_ControllerWithFakeProvider_SlowOperations(t *testing.T) {
 
 	// Pre-add device to simulate registration
 	controlApi.AddDevice(controlapi.Device{
-		ID:       "test-device-1",
 		Hostname: "fake-fake-us-east",
 		Created:  time.Now().Add(2 * time.Second), // Future timestamp
 	})

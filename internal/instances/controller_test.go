@@ -69,10 +69,10 @@ func (m *MockControlApi) ListDevices(ctx context.Context) ([]controlapi.Device, 
 	return m.devices, nil
 }
 
-func (m *MockControlApi) DeleteDevice(ctx context.Context, deviceID string) error {
+func (m *MockControlApi) DeleteDevice(ctx context.Context, device *controlapi.Device) error {
 	// Remove device from mock list
-	for i, device := range m.devices {
-		if device.ID == deviceID {
+	for i, d := range m.devices {
+		if d.Hostname == device.Hostname {
 			m.devices = slices.Delete(m.devices, i, i+1)
 			return nil
 		}
@@ -80,7 +80,7 @@ func (m *MockControlApi) DeleteDevice(ctx context.Context, deviceID string) erro
 	return nil
 }
 
-func (m *MockControlApi) ApproveExitNode(ctx context.Context, deviceID string) error {
+func (m *MockControlApi) ApproveExitNode(ctx context.Context, device *controlapi.Device) error {
 	return nil
 }
 
@@ -180,7 +180,6 @@ func TestRegistry_CreateAndDeleteInstance(t *testing.T) {
 
 	// Add a mock device to simulate successful creation
 	controlApi.AddDevice(controlapi.Device{
-		ID:       "mock-device-123",
 		Hostname: "mock-test-region",
 	})
 
@@ -263,12 +262,10 @@ func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 		// Pre-populate with existing devices
 		devices: []controlapi.Device{
 			{
-				ID:       "existing-device-1",
 				Hostname: "mock1-test-region",
 				Created:  time.Now().Add(-time.Hour), // Created 1 hour ago
 			},
 			{
-				ID:       "existing-device-2",
 				Hostname: "mock2-other-region",
 				Created:  time.Now().Add(-30 * time.Minute), // Created 30 minutes ago
 			},

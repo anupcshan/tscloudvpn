@@ -64,23 +64,23 @@ func (m *MockControlAPI) ListDevices(ctx context.Context) ([]controlapi.Device, 
 	return devices, nil
 }
 
-func (m *MockControlAPI) ApproveExitNode(ctx context.Context, deviceID string) error {
+func (m *MockControlAPI) ApproveExitNode(ctx context.Context, device *controlapi.Device) error {
 	return nil // No-op for testing
 }
 
-func (m *MockControlAPI) DeleteDevice(ctx context.Context, deviceID string) error {
-	delete(m.devices, deviceID)
+func (m *MockControlAPI) DeleteDevice(ctx context.Context, device *controlapi.Device) error {
+	delete(m.devices, device.Hostname)
 	return nil
 }
 
 // AddDevice simulates a device registering with the control plane
 func (m *MockControlAPI) AddDevice(device controlapi.Device) {
-	m.devices[device.ID] = device
+	m.devices[device.Hostname] = device
 }
 
-// GetDevice returns a device by ID
-func (m *MockControlAPI) GetDevice(deviceID string) (controlapi.Device, bool) {
-	device, exists := m.devices[deviceID]
+// GetDevice returns a device by hostname
+func (m *MockControlAPI) GetDevice(hostname string) (controlapi.Device, bool) {
+	device, exists := m.devices[hostname]
 	return device, exists
 }
 

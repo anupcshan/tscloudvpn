@@ -240,9 +240,9 @@ func (c *Controller) Delete() error {
 	}
 
 	hostname := c.provider.Hostname(c.region)
-	for _, device := range devices {
+	for i, device := range devices {
 		if providers.HostName(device.Hostname) == hostname {
-			err := c.controlApi.DeleteDevice(c.ctx, device.ID)
+			err := c.controlApi.DeleteDevice(c.ctx, &devices[i])
 			if err != nil {
 				return err
 			}

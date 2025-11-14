@@ -122,23 +122,23 @@ func (c *Creator) waitForTailscaleRegistration(
 			return err
 		}
 
-		var deviceId string
+		var foundDevice *controlapi.Device
 		var nodeName string
-		for _, device := range devices {
+		for i, device := range devices {
 			if device.Hostname == hostname && launchTime.Before(device.Created) {
-				deviceId = device.ID
+				foundDevice = &devices[i]
 				nodeName = strings.SplitN(device.Name, ".", 2)[0]
-				logger.Printf("Instance registered on Tailscale with ID %s, name %s", deviceId, nodeName)
+				logger.Printf("Instance registered on Tailscale with name %s", nodeName)
 				break
 			}
 		}
 
-		if deviceId == "" {
+		if foundDevice == nil {
 			continue
 		}
 
 		logger.Printf("Approving exit node %s", nodeName)
-		if err := controller.ApproveExitNode(ctx, deviceId); err != nil {
+		if err := controller.ApproveExitNode(ctx, foundDevice); err != nil {
 			return err
 		}
 

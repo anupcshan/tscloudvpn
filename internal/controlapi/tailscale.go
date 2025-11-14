@@ -60,7 +60,7 @@ func (c *TailscaleClient) ListDevices(ctx context.Context) ([]Device, error) {
 		}
 
 		devices[i] = Device{
-			ID:               d.ID,
+			tailscaleID:      d.ID,
 			Name:             d.Name,
 			Hostname:         d.Hostname,
 			Created:          d.Created.Time,
@@ -75,17 +75,17 @@ func (c *TailscaleClient) ListDevices(ctx context.Context) ([]Device, error) {
 }
 
 // ApproveExitNode implements ControlApi.ApproveExitNode
-func (c *TailscaleClient) ApproveExitNode(ctx context.Context, deviceID string) error {
-	routes, err := c.client.DeviceSubnetRoutes(ctx, deviceID)
+func (c *TailscaleClient) ApproveExitNode(ctx context.Context, device *Device) error {
+	routes, err := c.client.DeviceSubnetRoutes(ctx, device.tailscaleID)
 	if err != nil {
 		return err
 	}
-	return c.client.SetDeviceSubnetRoutes(ctx, deviceID, routes.Advertised)
+	return c.client.SetDeviceSubnetRoutes(ctx, device.tailscaleID, routes.Advertised)
 }
 
 // DeleteDevice implements ControlApi.DeleteDevice
-func (c *TailscaleClient) DeleteDevice(ctx context.Context, deviceID string) error {
-	return c.client.DeleteDevice(ctx, deviceID)
+func (c *TailscaleClient) DeleteDevice(ctx context.Context, device *Device) error {
+	return c.client.DeleteDevice(ctx, device.tailscaleID)
 }
 
 var _ ControlApi = (*TailscaleClient)(nil)

@@ -193,7 +193,7 @@ func testCreateRealInstance(t *testing.T, ctx context.Context, app *app.App, cfg
 		t.Fatalf("Failed to wait for device registration: %v", err)
 	}
 
-	t.Logf("Device registered: %s (ID: %s) with IPs: %v", device.Name, device.ID, device.IPAddrs)
+	t.Logf("Device registered: %s with IPs: %v", device.Name, device.IPAddrs)
 
 	// Test basic connectivity - device should be online
 	if !device.IsOnline {
@@ -384,10 +384,10 @@ func testFullNetworkWorkflow(t *testing.T, ctx context.Context, app *app.App, cf
 
 		// Also try to clean up the device from Tailscale
 		if device, err := findDeviceByHostname(cleanupCtx, controller, instanceID.Hostname); err == nil && device != nil {
-			if err := controller.DeleteDevice(cleanupCtx, device.ID); err != nil {
-				t.Logf("Failed to delete device %s from Tailscale: %v", device.ID, err)
+			if err := controller.DeleteDevice(cleanupCtx, device); err != nil {
+				t.Logf("Failed to delete device %s from Tailscale: %v", device.Name, err)
 			} else {
-				t.Logf("Cleaned up device %s from Tailscale", device.ID)
+				t.Logf("Cleaned up device %s from Tailscale", device.Name)
 			}
 		}
 	}()
@@ -399,7 +399,7 @@ func testFullNetworkWorkflow(t *testing.T, ctx context.Context, app *app.App, cf
 		t.Fatalf("Failed to wait for device registration: %v", err)
 	}
 
-	t.Logf("Device registered: %s (ID: %s) with IPs: %v", device.Name, device.ID, device.IPAddrs)
+	t.Logf("Device registered: %s with IPs: %v", device.Name, device.IPAddrs)
 
 	if !device.IsOnline {
 		t.Fatalf("Device is not online: %+v", device)
@@ -428,15 +428,15 @@ func testExitNodeFunctionality(t *testing.T, ctx context.Context, controller con
 	}
 
 	// Enable exit node by approving routes
-	t.Logf("Enabling exit node for device %s...", device.ID)
-	err = controller.ApproveExitNode(ctx, device.ID)
+	t.Logf("Enabling exit node for device %s...", device.Name)
+	err = controller.ApproveExitNode(ctx, device)
 	if err != nil {
 		t.Logf("Warning: Failed to approve exit node routes: %v", err)
 		t.Logf("This might be expected if the device hasn't advertised routes yet")
 		return
 	}
 
-	t.Logf("✓ Successfully enabled exit node for device %s", device.ID)
+	t.Logf("✓ Successfully enabled exit node for device %s", device.Name)
 
 	// Note: Testing actual exit node routing requires configuring the local Tailscale client
 	// to use this node as an exit node, which is complex in a test environment.

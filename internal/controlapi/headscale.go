@@ -3,7 +3,6 @@ package controlapi
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
 	headscale "github.com/juanfont/headscale/gen/go/headscale/v1"
@@ -133,14 +132,14 @@ func (c *HeadscaleClient) ListDevices(ctx context.Context) ([]Device, error) {
 		}
 
 		devices[i] = Device{
-			ID:       fmt.Sprintf("%d", m.GetId()),
-			Name:     m.GetName(),
-			Hostname: m.GetName(), // Headscale uses name as hostname
-			Created:  created,
-			LastSeen: lastSeen,
-			IPAddrs:  m.GetIpAddresses(),
-			IsOnline: time.Since(lastSeen) < 5*time.Minute,
-			Tags:     []string{m.GetGivenName()}, // Use given name as tag
+			headscaleID: m.GetId(),
+			Name:        m.GetName(),
+			Hostname:    m.GetName(), // Headscale uses name as hostname
+			Created:     created,
+			LastSeen:    lastSeen,
+			IPAddrs:     m.GetIpAddresses(),
+			IsOnline:    time.Since(lastSeen) < 5*time.Minute,
+			Tags:        []string{m.GetGivenName()}, // Use given name as tag
 		}
 	}
 
@@ -148,15 +147,10 @@ func (c *HeadscaleClient) ListDevices(ctx context.Context) ([]Device, error) {
 }
 
 // ApproveExitNode implements ControlApi.ApproveExitNode
-func (c *HeadscaleClient) ApproveExitNode(ctx context.Context, deviceID string) error {
-	nodeId, err := strconv.ParseUint(deviceID, 10, 64)
-	if err != nil {
-		return fmt.Errorf("failed to parse device ID: %w", err)
-	}
-
+func (c *HeadscaleClient) ApproveExitNode(ctx context.Context, device *Device) error {
 	// Get the node to retrieve its available routes
 	nodeResp, err := c.client.GetNode(ctx, &headscale.GetNodeRequest{
-		NodeId: nodeId,
+		NodeId: device.headscaleID,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to get node: %w", err)
@@ -175,7 +169,7 @@ func (c *HeadscaleClient) ApproveExitNode(ctx context.Context, deviceID string) 
 
 	// Approve all available routes
 	_, err = c.client.SetApprovedRoutes(ctx, &headscale.SetApprovedRoutesRequest{
-		NodeId: nodeId,
+		NodeId: device.headscaleID,
 		Routes: availableRoutes,
 	})
 	if err != nil {
@@ -186,14 +180,9 @@ func (c *HeadscaleClient) ApproveExitNode(ctx context.Context, deviceID string) 
 }
 
 // DeleteDevice implements ControlApi.DeleteDevice
-func (c *HeadscaleClient) DeleteDevice(ctx context.Context, deviceID string) error {
-	nodeId, err := strconv.ParseUint(deviceID, 10, 64)
-	if err != nil {
-		return fmt.Errorf("failed to parse device ID: %w", err)
-	}
-
-	_, err = c.client.DeleteNode(ctx, &headscale.DeleteNodeRequest{
-		NodeId: nodeId,
+func (c *HeadscaleClient) DeleteDevice(ctx context.Context, device *Device) error {
+	_, err := c.client.DeleteNode(ctx, &headscale.DeleteNodeRequest{
+		NodeId: device.headscaleID,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to delete device: %w", err)

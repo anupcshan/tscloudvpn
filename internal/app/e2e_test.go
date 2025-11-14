@@ -109,18 +109,18 @@ func (m *MockControlAPI) ListDevices(ctx context.Context) ([]controlapi.Device, 
 	return devices, nil
 }
 
-func (m *MockControlAPI) ApproveExitNode(ctx context.Context, deviceID string) error {
+func (m *MockControlAPI) ApproveExitNode(ctx context.Context, device *controlapi.Device) error {
 	return nil // No-op for testing
 }
 
-func (m *MockControlAPI) DeleteDevice(ctx context.Context, deviceID string) error {
-	delete(m.devices, deviceID)
+func (m *MockControlAPI) DeleteDevice(ctx context.Context, device *controlapi.Device) error {
+	delete(m.devices, device.Hostname)
 	return nil
 }
 
 // AddDevice simulates a device registering with the control plane
 func (m *MockControlAPI) AddDevice(device controlapi.Device) {
-	m.devices[device.ID] = device
+	m.devices[device.Hostname] = device
 }
 
 // E2EServerTestConfig holds configuration for server E2E tests
@@ -278,7 +278,6 @@ func TestE2E_FullServerLifecycle(t *testing.T) {
 		// Simulate the instance registering with Tailscale by adding it to the mock control API
 		// This simulates what would happen when the real instance starts up and connects to Tailscale
 		testConfig.MockControlAPI.AddDevice(controlapi.Device{
-			ID:       "fake-instance-1",
 			Hostname: "fake-fake-us-east",
 			Name:     "fake-fake-us-east",
 			Created:  time.Now(),
