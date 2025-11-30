@@ -87,6 +87,7 @@ type gcpProvider struct {
 	serviceAccount string
 	service        *compute.Service
 	sshKey         string
+	ownerID        string // Unique identifier for this tscloudvpn instance
 
 	// Cache for machine types per region
 	regionMachineTypeCacheLock sync.RWMutex
@@ -109,6 +110,7 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 		serviceAccount: cfg.Providers.GCP.ServiceAccount,
 		service:        service,
 		sshKey:         cfg.SSH.PublicKey,
+		ownerID:        providers.GetOwnerID(cfg),
 	}
 
 	go prov.ensureMachineTypeCache()
@@ -117,6 +119,21 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 
 func gcpInstanceHostname(region string) string {
 	return fmt.Sprintf("gcp-%s", region)
+}
+
+// sanitizeLabelValue converts a string to a valid GCP label value
+// GCP labels must be lowercase and contain only letters, numbers, underscores, and dashes
+func (g *gcpProvider) sanitizeLabelValue(value string) string {
+	value = strings.ToLower(value)
+	var result strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			result.WriteRune(r)
+		} else if r == '.' || r == '@' || r == ' ' {
+			result.WriteRune('-')
+		}
+	}
+	return result.String()
 }
 
 func (g *gcpProvider) ListRegions(ctx context.Context) ([]providers.Region, error) {
@@ -337,7 +354,8 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 			},
 		},
 		Labels: map[string]string{
-			"tscloudvpn": "true",
+			"tscloudvpn":               "true",
+			"tscloudvpn-owner":         g.sanitizeLabelValue(g.ownerID),
 		},
 		NetworkInterfaces: []*compute.NetworkInterface{
 			{
@@ -385,9 +403,11 @@ func (g *gcpProvider) GetInstanceStatus(ctx context.Context, region string) (pro
 		return providers.InstanceStatusMissing, err
 	}
 
+	sanitizedOwnerID := g.sanitizeLabelValue(g.ownerID)
 	var instances []*compute.Instance
 	for _, zone := range zones.Items {
-		instanceList, err := compute.NewInstancesService(g.service).List(g.projectId, zone.Name).Filter("labels.tscloudvpn:*").Context(ctx).Do()
+		filter := fmt.Sprintf("labels.tscloudvpn:* AND labels.tscloudvpn-owner=%s", sanitizedOwnerID)
+		instanceList, err := compute.NewInstancesService(g.service).List(g.projectId, zone.Name).Filter(filter).Context(ctx).Do()
 		if err != nil {
 			return providers.InstanceStatusMissing, err
 		}
@@ -422,19 +442,24 @@ func (g *gcpProvider) ListInstances(ctx context.Context, region string) ([]provi
 		return nil, err
 	}
 
+	sanitizedOwnerID := g.sanitizeLabelValue(g.ownerID)
 	var instanceIDs []providers.InstanceID
 	for _, zone := range zones.Items {
-		instanceList, err := compute.NewInstancesService(g.service).List(g.projectId, zone.Name).Filter("labels.tscloudvpn:*").Context(ctx).Do()
+		// Filter by both tscloudvpn label and owner label
+		filter := fmt.Sprintf("labels.tscloudvpn:* AND labels.tscloudvpn-owner=%s", sanitizedOwnerID)
+		instanceList, err := compute.NewInstancesService(g.service).List(g.projectId, zone.Name).Filter(filter).Context(ctx).Do()
 		if err != nil {
 			return nil, err
 		}
 
 		for _, instance := range instanceList.Items {
 			if instance.Status != "TERMINATED" {
+				createdAt, _ := time.Parse(time.RFC3339, instance.CreationTimestamp)
 				instanceIDs = append(instanceIDs, providers.InstanceID{
 					Hostname:     gcpInstanceHostname(region),
 					ProviderID:   instance.Name,
 					ProviderName: providerName,
+					CreatedAt:    createdAt,
 				})
 			}
 		}

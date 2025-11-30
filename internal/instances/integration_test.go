@@ -122,6 +122,18 @@ func (api *IntegrationTestControlApi) AddDevice(device controlapi.Device) {
 	api.devices = append(api.devices, device)
 }
 
+// RemoveDevice removes a device by hostname (for testing)
+func (api *IntegrationTestControlApi) RemoveDevice(hostname string) {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	for i, d := range api.devices {
+		if d.Hostname == hostname {
+			api.devices = slices.Delete(api.devices, i, i+1)
+			return
+		}
+	}
+}
+
 // SetCreateKeyDelay sets delay for CreateKey operations
 func (api *IntegrationTestControlApi) SetCreateKeyDelay(delay time.Duration) {
 	api.mu.Lock()
@@ -259,7 +271,7 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers)
+	registry := NewRegistry(logger, controlApi, nil, providers, true)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -282,8 +294,9 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 		}
 	}
 
-	// Wait for creation to complete
-	time.Sleep(2 * time.Second)
+	// Wait for creation to complete and for discoverExistingInstances to finish
+	// (discoverExistingInstances waits 2 seconds before running)
+	time.Sleep(4 * time.Second)
 
 	// Verify all instances were created
 	allInstances := fakeProvider.GetAllInstances()
@@ -397,7 +410,7 @@ func TestIntegration_RegistryWithFakeProvider_ProviderFailures(t *testing.T) {
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers)
+	registry := NewRegistry(logger, controlApi, nil, providers, true)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -479,7 +492,7 @@ func TestIntegration_RegistryWithFakeProvider_DiscoverExistingInstances(t *testi
 	}
 
 	// Create registry - this should trigger discovery
-	registry := NewRegistry(logger, controlApi, nil, providers)
+	registry := NewRegistry(logger, controlApi, nil, providers, true)
 	defer registry.Shutdown()
 
 	// Wait for discovery to complete
@@ -659,4 +672,225 @@ func TestIntegration_FakeProvider_RegionOperations(t *testing.T) {
 			t.Errorf("Expected hostname %s, got %s", expected, hostname)
 		}
 	}
+}
+
+func TestIntegration_ControllerDelete_DeletesCloudInstance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	logger := log.New(os.Stderr, "[TEST] ", log.LstdFlags)
+	fakeProvider := fake.NewWithConfig(fake.DefaultConfig())
+	controlApi := NewIntegrationTestControlApi()
+
+	// Pre-add device to control API (before Create to simulate quick registration)
+	controlApi.AddDevice(controlapi.Device{
+		Hostname: "fake-fake-us-east",
+		Created:  time.Now().Add(time.Second), // Future timestamp
+	})
+
+	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", controlApi, nil)
+	defer controller.Stop()
+
+	// Create instance
+	err := controller.Create()
+	if err != nil {
+		t.Fatalf("Failed to create instance: %v", err)
+	}
+
+	// Give time for creation to process
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify instance exists in fake provider
+	_, exists := fakeProvider.GetInstance("fake-us-east")
+	if !exists {
+		t.Error("Instance should exist in fake provider after creation")
+	}
+
+	// Verify device exists in control API
+	devices, _ := controlApi.ListDevices(ctx)
+	if len(devices) != 1 {
+		t.Errorf("Expected 1 device in control API, got %d", len(devices))
+	}
+
+	// Delete instance
+	err = controller.Delete()
+	if err != nil {
+		t.Fatalf("Failed to delete instance: %v", err)
+	}
+
+	// Verify instance was deleted from control API
+	devices, _ = controlApi.ListDevices(ctx)
+	if len(devices) != 0 {
+		t.Errorf("Expected 0 devices after deletion, got %d", len(devices))
+	}
+
+	// Verify instance was deleted from cloud provider
+	_, exists = fakeProvider.GetInstance("fake-us-east")
+	if exists {
+		t.Error("Instance should NOT exist in fake provider after deletion - cloud deletion should happen")
+	}
+}
+
+func TestIntegration_ControllerDelete_CloudDeletionFailure_StillSucceeds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	logger := log.New(os.Stderr, "[TEST] ", log.LstdFlags)
+	controlApi := NewIntegrationTestControlApi()
+
+	// Create a mock provider that fails on delete
+	mockProvider := &MockProviderWithDeleteFailure{
+		hostname:  "mock-test-region",
+		instances: make(map[string]bool),
+	}
+	mockProvider.instances["test-region"] = true
+
+	// Pre-add device to control API
+	controlApi.AddDevice(controlapi.Device{
+		Hostname: "mock-test-region",
+		Created:  time.Now(),
+	})
+
+	controller := NewController(ctx, logger, mockProvider, "test-region", controlApi, nil)
+	defer controller.Stop()
+
+	// Mark controller as running (simulate existing instance)
+	controller.mu.Lock()
+	controller.isRunning = true
+	controller.mu.Unlock()
+
+	// Delete instance - should succeed even if cloud delete fails
+	// (Tailscale device is deleted, GC will clean up orphaned cloud instance)
+	err := controller.Delete()
+	if err != nil {
+		t.Fatalf("Delete should succeed even if cloud deletion fails: %v", err)
+	}
+
+	// Verify device was deleted from control API
+	devices, _ := controlApi.ListDevices(ctx)
+	if len(devices) != 0 {
+		t.Errorf("Expected 0 devices after deletion, got %d", len(devices))
+	}
+
+	// Verify delete was attempted on cloud provider
+	if !mockProvider.deleteAttempted {
+		t.Error("Cloud deletion should have been attempted")
+	}
+}
+
+func TestIntegration_ControllerDelete_DeviceNotInTailscale(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	logger := log.New(os.Stderr, "[TEST] ", log.LstdFlags)
+
+	// Use a fast provider config
+	config := fake.DefaultConfig()
+	config.CreateDelay = 0
+	config.StatusCheckDelay = 0
+	fakeProvider := fake.NewWithConfig(config)
+
+	controlApi := NewIntegrationTestControlApi()
+
+	// Pre-add device so Create() can complete
+	controlApi.AddDevice(controlapi.Device{
+		Hostname: "fake-fake-us-east",
+		Created:  time.Now().Add(time.Second),
+	})
+
+	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", controlApi, nil)
+	defer controller.Stop()
+
+	// Create instance
+	err := controller.Create()
+	if err != nil {
+		t.Fatalf("Failed to create instance: %v", err)
+	}
+
+	// Give a moment for instance creation to complete
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify instance exists in fake provider
+	_, exists := fakeProvider.GetInstance("fake-us-east")
+	if !exists {
+		t.Error("Instance should exist in fake provider after creation")
+	}
+
+	// NOW remove the device from control API to simulate it being deleted externally
+	controlApi.RemoveDevice("fake-fake-us-east")
+
+	// Verify device is gone from control API
+	devices, _ := controlApi.ListDevices(ctx)
+	if len(devices) != 0 {
+		t.Fatalf("Expected device to be removed from control API, got %d devices", len(devices))
+	}
+
+	// Delete instance - should succeed and delete cloud instance even though device is gone
+	err = controller.Delete()
+	if err != nil {
+		t.Fatalf("Delete should succeed even if device not in Tailscale: %v", err)
+	}
+
+	// Verify cloud instance was deleted
+	_, exists = fakeProvider.GetInstance("fake-us-east")
+	if exists {
+		t.Error("Cloud instance should be deleted even if Tailscale device was already gone")
+	}
+}
+
+// MockProviderWithDeleteFailure is a test helper that fails on DeleteInstance
+type MockProviderWithDeleteFailure struct {
+	hostname        providers.HostName
+	instances       map[string]bool
+	deleteAttempted bool
+}
+
+func (m *MockProviderWithDeleteFailure) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
+	m.instances[region] = true
+	return providers.InstanceID{
+		Hostname:     string(m.hostname),
+		ProviderID:   "mock-123",
+		ProviderName: "mock",
+	}, nil
+}
+
+func (m *MockProviderWithDeleteFailure) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {
+	if m.instances[region] {
+		return providers.InstanceStatusRunning, nil
+	}
+	return providers.InstanceStatusMissing, nil
+}
+
+func (m *MockProviderWithDeleteFailure) ListRegions(ctx context.Context) ([]providers.Region, error) {
+	return []providers.Region{{Code: "test-region", LongName: "Test Region"}}, nil
+}
+
+func (m *MockProviderWithDeleteFailure) Hostname(region string) providers.HostName {
+	return m.hostname
+}
+
+func (m *MockProviderWithDeleteFailure) GetRegionPrice(region string) float64 {
+	return 0.05
+}
+
+func (m *MockProviderWithDeleteFailure) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+	m.deleteAttempted = true
+	return errors.New("simulated cloud deletion failure")
+}
+
+func (m *MockProviderWithDeleteFailure) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+	if m.instances[region] {
+		return []providers.InstanceID{{
+			Hostname:     string(m.hostname),
+			ProviderID:   "mock-123",
+			ProviderName: "mock",
+		}}, nil
+	}
+	return []providers.InstanceID{}, nil
 }

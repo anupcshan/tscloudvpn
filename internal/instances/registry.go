@@ -28,6 +28,7 @@ func NewRegistry(
 	controlApi controlapi.ControlApi,
 	tsClient *local.Client,
 	providers map[string]providers.Provider,
+	enableGCDeletion bool,
 ) *Registry {
 	r := &Registry{
 		controllers: make(map[string]*Controller),
@@ -39,6 +40,10 @@ func NewRegistry(
 
 	// Discover existing instances on startup
 	go r.discoverExistingInstances(context.Background())
+
+	// Start garbage collector to clean up orphaned cloud instances
+	gc := NewGarbageCollector(logger, controlApi, providers, enableGCDeletion)
+	go gc.Run(context.Background())
 
 	return r
 }

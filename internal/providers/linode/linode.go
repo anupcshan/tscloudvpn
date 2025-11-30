@@ -19,9 +19,11 @@ import (
 )
 
 type linodeProvider struct {
-	client *linodego.Client
-	token  string
-	sshKey string
+	client   *linodego.Client
+	token    string
+	sshKey   string
+	ownerID  string // Unique identifier for this tscloudvpn instance
+	ownerTag string // Tag combining owner key and value for filtering
 }
 
 func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
@@ -33,11 +35,14 @@ func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
 	tokenSource := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: cfg.Providers.Linode.Token})
 	oauth2Client := oauth2.NewClient(ctx, tokenSource)
 	client := linodego.NewClient(oauth2Client)
+	ownerID := providers.GetOwnerID(cfg)
 
 	return &linodeProvider{
-		client: &client,
-		sshKey: cfg.SSH.PublicKey,
-		token:  cfg.Providers.Linode.Token,
+		client:   &client,
+		sshKey:   cfg.SSH.PublicKey,
+		token:    cfg.Providers.Linode.Token,
+		ownerID:  ownerID,
+		ownerTag: fmt.Sprintf("%s:%s", providers.OwnerTagKey, ownerID),
 	}, nil
 }
 
@@ -88,6 +93,7 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key 
 		Type:     "g6-nanode-1",
 		Image:    "linode/debian12",
 		RootPass: generateRandomPassword(),
+		Tags:     []string{"tscloudvpn", l.ownerTag},
 		Metadata: &linodego.InstanceMetadataOptions{
 			UserData: base64.StdEncoding.EncodeToString(tmplOut.Bytes()),
 		},
@@ -108,7 +114,9 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key 
 }
 
 func (l *linodeProvider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {
-	instances, err := l.client.ListInstances(ctx, nil)
+	// Filter instances by our owner tag
+	filter := fmt.Sprintf(`{"tags": "%s"}`, l.ownerTag)
+	instances, err := l.client.ListInstances(ctx, linodego.NewListOptions(0, filter))
 	if err != nil {
 		return providers.InstanceStatusMissing, err
 	}
@@ -123,7 +131,9 @@ func (l *linodeProvider) GetInstanceStatus(ctx context.Context, region string) (
 }
 
 func (l *linodeProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
-	instances, err := l.client.ListInstances(ctx, nil)
+	// Filter instances by our owner tag
+	filter := fmt.Sprintf(`{"tags": "%s"}`, l.ownerTag)
+	instances, err := l.client.ListInstances(ctx, linodego.NewListOptions(0, filter))
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +145,7 @@ func (l *linodeProvider) ListInstances(ctx context.Context, region string) ([]pr
 				Hostname:     linodeInstanceHostname(region),
 				ProviderID:   strconv.Itoa(instance.ID),
 				ProviderName: "linode",
+				CreatedAt:    *instance.Created,
 			})
 		}
 	}

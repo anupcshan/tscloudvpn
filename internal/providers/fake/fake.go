@@ -210,6 +210,7 @@ func (f *FakeProvider) ListInstances(ctx context.Context, region string) ([]prov
 				Hostname:     string(f.Hostname(region)),
 				ProviderID:   instance.ID,
 				ProviderName: "fake",
+				CreatedAt:    instance.CreatedAt,
 			})
 		}
 	}

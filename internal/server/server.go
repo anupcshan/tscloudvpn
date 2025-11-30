@@ -15,9 +15,10 @@ import (
 
 // Config holds the configuration for the server
 type Config struct {
-	CloudProviders map[string]providers.Provider
-	TSLocalClient  *local.Client
-	Controller     controlapi.ControlApi
+	CloudProviders   map[string]providers.Provider
+	TSLocalClient    *local.Client
+	Controller       controlapi.ControlApi
+	EnableGCDeletion bool // If true, GC will delete orphaned instances; if false, dry-run mode
 }
 
 // Server handles HTTP requests for the application
@@ -31,7 +32,7 @@ func New(config *Config) *Server {
 	logger := log.New(log.Writer(), "[server] ", log.Flags())
 	return &Server{
 		config:  config,
-		manager: NewManager(context.Background(), logger, config.CloudProviders, config.TSLocalClient, config.Controller),
+		manager: NewManager(context.Background(), logger, config.CloudProviders, config.TSLocalClient, config.Controller, config.EnableGCDeletion),
 	}
 }
 

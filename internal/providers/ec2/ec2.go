@@ -40,6 +40,7 @@ type ec2Provider struct {
 	regionPriceMap map[string]float64
 	cfg            aws.Config
 	sshKey         string
+	ownerID        string // Unique identifier for this tscloudvpn instance
 }
 
 func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
@@ -80,8 +81,9 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 	}
 
 	e := &ec2Provider{
-		cfg:    awsCfg,
-		sshKey: cfg.SSH.PublicKey,
+		cfg:     awsCfg,
+		sshKey:  cfg.SSH.PublicKey,
+		ownerID: providers.GetOwnerID(cfg),
 	}
 
 	go e.populatePriceCache()
@@ -276,6 +278,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 				ResourceType: "instance",
 				Tags: []types.Tag{
 					{Key: aws.String("tscloudvpn"), Value: aws.String("true")},
+					{Key: aws.String(providers.OwnerTagKey), Value: aws.String(e.ownerID)},
 				},
 			},
 		},
@@ -306,6 +309,10 @@ func (e *ec2Provider) GetInstanceStatus(ctx context.Context, region string) (pro
 			{
 				Name:   aws.String("tag-key"),
 				Values: []string{"tscloudvpn"},
+			},
+			{
+				Name:   aws.String("tag:" + providers.OwnerTagKey),
+				Values: []string{e.ownerID},
 			},
 		},
 	})
@@ -344,6 +351,10 @@ func (e *ec2Provider) ListInstances(ctx context.Context, region string) ([]provi
 				Name:   aws.String("tag-key"),
 				Values: []string{"tscloudvpn"},
 			},
+			{
+				Name:   aws.String("tag:" + providers.OwnerTagKey),
+				Values: []string{e.ownerID},
+			},
 		},
 	})
 
@@ -359,6 +370,7 @@ func (e *ec2Provider) ListInstances(ctx context.Context, region string) ([]provi
 					Hostname:     ec2InstanceHostname(region),
 					ProviderID:   aws.ToString(instance.InstanceId),
 					ProviderName: providerName,
+					CreatedAt:    aws.ToTime(instance.LaunchTime),
 				})
 			}
 		}

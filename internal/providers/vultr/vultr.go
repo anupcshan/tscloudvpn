@@ -35,6 +35,8 @@ type vultrProvider struct {
 	vultrClient         *govultr.Client
 	apiKey              string
 	sshKey              string
+	ownerID             string // Unique identifier for this tscloudvpn instance
+	ownerTag            string // Tag combining owner key and value for filtering
 	regionSizeCacheLock sync.RWMutex
 	regionSizeCache     map[string]vultrSize
 	regionSizeCacheTime time.Time
@@ -48,11 +50,14 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 	config := &oauth2.Config{}
 	ts := config.TokenSource(ctx, &oauth2.Token{AccessToken: cfg.Providers.Vultr.APIKey})
 	vultrClient := govultr.NewClient(oauth2.NewClient(ctx, ts))
+	ownerID := providers.GetOwnerID(cfg)
 
 	return &vultrProvider{
 		vultrClient:     vultrClient,
 		apiKey:          cfg.Providers.Vultr.APIKey,
 		sshKey:          cfg.SSH.PublicKey,
+		ownerID:         ownerID,
+		ownerTag:        fmt.Sprintf("%s:%s", providers.OwnerTagKey, ownerID),
 		regionSizeCache: make(map[string]vultrSize),
 	}, nil
 }
@@ -197,7 +202,7 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 		Region:     region,
 		Label:      "tscloudvpn",
 		Hostname:   hostname,
-		Tags:       []string{"tscloudvpn"},
+		Tags:       []string{"tscloudvpn", v.ownerTag},
 		Plan:       regionSize.PlanID,
 		UserData:   base64.StdEncoding.EncodeToString(tmplOut.Bytes()),
 		OsID:       oses[0].ID,
@@ -218,6 +223,7 @@ func (v *vultrProvider) GetInstanceStatus(ctx context.Context, region string) (p
 	instances, _, _, err := v.vultrClient.Instance.List(ctx, &govultr.ListOptions{
 		Region: region,
 		Label:  "tscloudvpn",
+		Tag:    v.ownerTag,
 	})
 
 	if err != nil {
@@ -239,6 +245,7 @@ func (v *vultrProvider) ListInstances(ctx context.Context, region string) ([]pro
 	instances, _, _, err := v.vultrClient.Instance.List(ctx, &govultr.ListOptions{
 		Region: region,
 		Label:  "tscloudvpn",
+		Tag:    v.ownerTag,
 	})
 
 	if err != nil {
@@ -247,10 +254,12 @@ func (v *vultrProvider) ListInstances(ctx context.Context, region string) ([]pro
 
 	var instanceIDs []providers.InstanceID
 	for _, instance := range instances {
+		createdAt, _ := time.Parse(time.RFC3339, instance.DateCreated)
 		instanceIDs = append(instanceIDs, providers.InstanceID{
 			Hostname:     vultrInstanceHostname(region),
 			ProviderID:   instance.ID,
 			ProviderName: providerName,
+			CreatedAt:    createdAt,
 		})
 	}
 

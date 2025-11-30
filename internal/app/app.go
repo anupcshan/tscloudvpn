@@ -13,16 +13,22 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/server"
 )
 
+// Options holds runtime options for the application
+type Options struct {
+	EnableGCDeletion bool // If true, GC will delete orphaned instances; if false, dry-run mode
+}
+
 // App represents the main application
 type App struct {
 	config         *config.Config
+	options        Options
 	cloudProviders map[string]providers.Provider
 	server         *server.Server
 	tsnetServer    *server.TSNetServer
 }
 
 // New creates a new application instance
-func New(configFile string) (*App, error) {
+func New(configFile string, opts Options) (*App, error) {
 	log.SetFlags(log.Lshortfile | log.Lmicroseconds)
 
 	var cfg *config.Config
@@ -49,7 +55,8 @@ func New(configFile string) (*App, error) {
 	}
 
 	return &App{
-		config: cfg,
+		config:  cfg,
+		options: opts,
 	}, nil
 }
 
@@ -80,9 +87,10 @@ func (a *App) Initialize(ctx context.Context) error {
 	}
 
 	a.server = server.New(&server.Config{
-		CloudProviders: cloudProviders,
-		TSLocalClient:  tsLocalClient,
-		Controller:     controller,
+		CloudProviders:   cloudProviders,
+		TSLocalClient:    tsLocalClient,
+		Controller:       controller,
+		EnableGCDeletion: a.options.EnableGCDeletion,
 	})
 
 	return nil

@@ -29,9 +29,10 @@ type regionServerType struct {
 }
 
 type hetznerProvider struct {
-	client *hcloud.Client
-	apiKey string
-	sshKey string
+	client  *hcloud.Client
+	apiKey  string
+	sshKey  string
+	ownerID string // Unique identifier for this tscloudvpn instance
 
 	regionServerTypeCacheLock sync.RWMutex
 	regionServerTypeCache     map[string]regionServerType
@@ -47,11 +48,30 @@ func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
 	token := cfg.Providers.Hetzner.Token
 	client := hcloud.NewClient(hcloud.WithToken(token))
 
+	// Sanitize ownerID for Hetzner labels (only alphanumeric, hyphens, underscores allowed)
+	ownerID := sanitizeLabelValue(providers.GetOwnerID(cfg))
+
 	return &hetznerProvider{
-		client: client,
-		apiKey: token,
-		sshKey: cfg.SSH.PublicKey,
+		client:  client,
+		apiKey:  token,
+		sshKey:  cfg.SSH.PublicKey,
+		ownerID: ownerID,
 	}, nil
+}
+
+// sanitizeLabelValue converts a string to a valid Hetzner label value
+// Hetzner labels only allow alphanumeric characters, hyphens, and underscores
+func sanitizeLabelValue(s string) string {
+	var result strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			result.WriteRune(r)
+		} else {
+			// Replace invalid characters with underscore
+			result.WriteRune('_')
+		}
+	}
+	return result.String()
 }
 
 func hetznerInstanceHostname(region string) string {
@@ -103,6 +123,10 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, region string, key
 		Image:      &hcloud.Image{Name: "debian-12"},
 		Location:   &hcloud.Location{Name: region},
 		UserData:   tmplOut.String(),
+		Labels: map[string]string{
+			"tscloudvpn":           "true",
+			providers.OwnerTagKey: h.ownerID,
+		},
 	}
 
 	result, _, err := h.client.Server.Create(ctx, createOpts)
@@ -135,7 +159,12 @@ func (h *hetznerProvider) DeleteInstance(ctx context.Context, instanceID provide
 }
 
 func (h *hetznerProvider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {
-	servers, err := h.client.Server.All(ctx)
+	// Filter servers by our owner label
+	servers, err := h.client.Server.AllWithOpts(ctx, hcloud.ServerListOpts{
+		ListOpts: hcloud.ListOpts{
+			LabelSelector: fmt.Sprintf("tscloudvpn,%s=%s", providers.OwnerTagKey, h.ownerID),
+		},
+	})
 	if err != nil {
 		return providers.InstanceStatusMissing, err
 	}
@@ -150,7 +179,12 @@ func (h *hetznerProvider) GetInstanceStatus(ctx context.Context, region string) 
 }
 
 func (h *hetznerProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
-	servers, err := h.client.Server.All(ctx)
+	// Filter servers by our owner label
+	servers, err := h.client.Server.AllWithOpts(ctx, hcloud.ServerListOpts{
+		ListOpts: hcloud.ListOpts{
+			LabelSelector: fmt.Sprintf("tscloudvpn,%s=%s", providers.OwnerTagKey, h.ownerID),
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +196,7 @@ func (h *hetznerProvider) ListInstances(ctx context.Context, region string) ([]p
 				Hostname:     hetznerInstanceHostname(region),
 				ProviderID:   strconv.FormatInt(server.ID, 10),
 				ProviderName: "hetzner",
+				CreatedAt:    server.Created,
 			})
 		}
 	}

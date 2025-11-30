@@ -16,26 +16,30 @@ import (
 )
 
 var (
-	configFile string
+	configFile         string
+	enableGCDeletion   bool
 )
 
 func init() {
 	flag.StringVar(&configFile, "config", "", "Path to config file (default: search in standard locations)")
+	flag.BoolVar(&enableGCDeletion, "enable-gc-deletion", false, "Enable garbage collector to delete orphaned cloud instances (default: dry-run mode)")
 }
 
 func Main() error {
 	ctx := context.Background()
 
-	app, err := app.New(configFile)
+	application, err := app.New(configFile, app.Options{
+		EnableGCDeletion: enableGCDeletion,
+	})
 	if err != nil {
 		return err
 	}
 
-	if err := app.Initialize(ctx); err != nil {
+	if err := application.Initialize(ctx); err != nil {
 		return err
 	}
 
-	return app.Run(ctx)
+	return application.Run(ctx)
 }
 
 func main() {

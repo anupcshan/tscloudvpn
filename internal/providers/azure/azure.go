@@ -48,6 +48,7 @@ type azureProvider struct {
 	tenantID       string
 	clientID       string
 	clientSecret   string
+	ownerID        string // Unique identifier for this tscloudvpn instance
 	computeClient  *armcompute.VirtualMachinesClient
 	networkClient  *armnetwork.VirtualNetworksClient
 	pipClient      *armnetwork.PublicIPAddressesClient
@@ -109,6 +110,7 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 		tenantID:       cfg.Providers.Azure.TenantID,
 		clientID:       cfg.Providers.Azure.ClientID,
 		clientSecret:   cfg.Providers.Azure.ClientSecret,
+		ownerID:        providers.GetOwnerID(cfg),
 		sshKey:         cfg.SSH.PublicKey,
 		computeClient:  computeClient,
 		networkClient:  networkClient,
@@ -203,8 +205,9 @@ func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *
 			},
 		},
 		Tags: map[string]*string{
-			"created-by": to.Ptr("tscloudvpn"),
-			"region":     to.Ptr(region),
+			"created-by":            to.Ptr("tscloudvpn"),
+			"region":                to.Ptr(region),
+			providers.OwnerTagKey:   to.Ptr(a.ownerID),
 		},
 	}
 
@@ -355,7 +358,7 @@ func (a *azureProvider) GetInstanceStatus(ctx context.Context, region string) (p
 func (a *azureProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
 	vmName := fmt.Sprintf("tscloudvpn-%s", region)
 
-	_, err := a.computeClient.Get(ctx, a.resourceGroup, vmName, nil)
+	vm, err := a.computeClient.Get(ctx, a.resourceGroup, vmName, nil)
 	if err != nil {
 		var responseError *azcore.ResponseError
 		if errors.As(err, &responseError) && responseError.StatusCode == 404 {
@@ -364,11 +367,25 @@ func (a *azureProvider) ListInstances(ctx context.Context, region string) ([]pro
 		return nil, err
 	}
 
+	// Verify this VM belongs to us by checking the owner tag
+	if vm.Tags != nil {
+		if owner, ok := vm.Tags[providers.OwnerTagKey]; ok && owner != nil && *owner != a.ownerID {
+			// VM exists but belongs to different owner
+			return []providers.InstanceID{}, nil
+		}
+	}
+
+	var createdAt time.Time
+	if vm.Properties != nil && vm.Properties.TimeCreated != nil {
+		createdAt = *vm.Properties.TimeCreated
+	}
+
 	return []providers.InstanceID{
 		{
 			Hostname:     azureInstanceHostname(region),
 			ProviderID:   vmName,
 			ProviderName: providerName,
+			CreatedAt:    createdAt,
 		},
 	}, nil
 }

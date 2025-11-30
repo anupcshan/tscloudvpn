@@ -232,28 +232,58 @@ func (c *Controller) Create() error {
 	return nil
 }
 
-// Delete removes the instance
+// Delete removes the instance from both Tailscale and the cloud provider
 func (c *Controller) Delete() error {
+	hostname := c.provider.Hostname(c.region)
+
+	// Step 1: Delete from Tailscale/Headscale
 	devices, err := c.controlApi.ListDevices(c.ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to list devices: %w", err)
 	}
 
-	hostname := c.provider.Hostname(c.region)
+	tailscaleDeleted := false
 	for i, device := range devices {
 		if providers.HostName(device.Hostname) == hostname {
-			err := c.controlApi.DeleteDevice(c.ctx, &devices[i])
-			if err != nil {
-				return err
+			if err := c.controlApi.DeleteDevice(c.ctx, &devices[i]); err != nil {
+				return fmt.Errorf("failed to delete device from control plane: %w", err)
 			}
-			c.mu.Lock()
-			c.isRunning = false
-			c.mu.Unlock()
-			return nil
+			tailscaleDeleted = true
+			c.logger.Printf("Deleted device %s from control plane", hostname)
+			break
 		}
 	}
 
-	return fmt.Errorf("device not found for hostname %s", hostname)
+	if !tailscaleDeleted {
+		c.logger.Printf("Device %s not found in control plane, may have already been deleted", hostname)
+	}
+
+	// Step 2: Delete from cloud provider
+	instances, err := c.provider.ListInstances(c.ctx, c.region)
+	if err != nil {
+		c.logger.Printf("Warning: failed to list cloud instances: %v", err)
+		// Don't fail here - the device is already removed from Tailscale
+		// The GC will clean up orphaned cloud instances
+	} else {
+		for _, instance := range instances {
+			if instance.Hostname == string(hostname) {
+				if err := c.provider.DeleteInstance(c.ctx, instance); err != nil {
+					c.logger.Printf("Warning: failed to delete cloud instance %s: %v (will be cleaned up by GC)", instance.ProviderID, err)
+					// Don't return error - the device is already removed from Tailscale
+					// The GC will clean up orphaned cloud instances
+				} else {
+					c.logger.Printf("Deleted cloud instance %s", instance.ProviderID)
+				}
+				break
+			}
+		}
+	}
+
+	c.mu.Lock()
+	c.isRunning = false
+	c.mu.Unlock()
+
+	return nil
 }
 
 // Status returns the current status of the instance

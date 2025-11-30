@@ -29,9 +29,11 @@ type regionSize struct {
 }
 
 type digitaloceanProvider struct {
-	client *godo.Client
-	token  string
-	sshKey string
+	client   *godo.Client
+	token    string
+	sshKey   string
+	ownerID  string   // Unique identifier for this tscloudvpn instance
+	ownerTag string   // Tag combining owner key and value for filtering
 
 	regionSizeCacheLock sync.RWMutex
 	regionSizeCache     map[string]regionSize
@@ -46,11 +48,14 @@ func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
 
 	token := cfg.Providers.DigitalOcean.Token
 	client := godo.NewFromToken(token)
+	ownerID := providers.GetOwnerID(cfg)
 
 	return &digitaloceanProvider{
-		client: client,
-		sshKey: cfg.SSH.PublicKey,
-		token:  token,
+		client:   client,
+		sshKey:   cfg.SSH.PublicKey,
+		token:    token,
+		ownerID:  ownerID,
+		ownerTag: fmt.Sprintf("%s:%s", providers.OwnerTagKey, ownerID),
 	}, nil
 }
 
@@ -98,6 +103,7 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 			Slug: "debian-12-x64",
 		},
 		UserData: tmplOut.String(),
+		Tags:     []string{"tscloudvpn", d.ownerTag},
 	}
 
 	droplet, _, err := d.client.Droplets.Create(ctx, createRequest)
@@ -130,13 +136,14 @@ func (d *digitaloceanProvider) DeleteInstance(ctx context.Context, instanceID pr
 }
 
 func (d *digitaloceanProvider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {
-	droplets, _, err := d.client.Droplets.List(ctx, &godo.ListOptions{})
+	// List droplets filtered by our owner tag
+	droplets, _, err := d.client.Droplets.ListByTag(ctx, d.ownerTag, &godo.ListOptions{})
 	if err != nil {
 		return providers.InstanceStatusMissing, err
 	}
 
-	for _, d := range droplets {
-		if d.Region.Slug == region {
+	for _, droplet := range droplets {
+		if droplet.Region.Slug == region {
 			return providers.InstanceStatusRunning, nil
 		}
 	}
@@ -145,7 +152,8 @@ func (d *digitaloceanProvider) GetInstanceStatus(ctx context.Context, region str
 }
 
 func (d *digitaloceanProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
-	droplets, _, err := d.client.Droplets.List(ctx, &godo.ListOptions{})
+	// List droplets filtered by our owner tag
+	droplets, _, err := d.client.Droplets.ListByTag(ctx, d.ownerTag, &godo.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -153,10 +161,12 @@ func (d *digitaloceanProvider) ListInstances(ctx context.Context, region string)
 	var instances []providers.InstanceID
 	for _, droplet := range droplets {
 		if droplet.Region.Slug == region {
+			createdAt, _ := time.Parse(time.RFC3339, droplet.Created)
 			instances = append(instances, providers.InstanceID{
 				Hostname:     doInstanceHostname(region),
 				ProviderID:   strconv.Itoa(droplet.ID),
 				ProviderName: "do",
+				CreatedAt:    createdAt,
 			})
 		}
 	}
