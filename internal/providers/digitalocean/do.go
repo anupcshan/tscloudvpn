@@ -32,8 +32,8 @@ type digitaloceanProvider struct {
 	client   *godo.Client
 	token    string
 	sshKey   string
-	ownerID  string   // Unique identifier for this tscloudvpn instance
-	ownerTag string   // Tag combining owner key and value for filtering
+	ownerID  string // Unique identifier for this tscloudvpn instance
+	ownerTag string // Tag combining owner key and value for filtering
 
 	regionSizeCacheLock sync.RWMutex
 	regionSizeCache     map[string]regionSize

@@ -14,8 +14,8 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/linode/linodego"
-	"golang.org/x/exp/rand"
 	"golang.org/x/oauth2"
+	"math/rand/v2"
 )
 
 type linodeProvider struct {
@@ -201,7 +201,7 @@ func generateRandomPassword() string {
 	length := 16
 	b := make([]byte, length)
 	for i := range b {
-		b[i] = charset[rand.Intn(len(charset))]
+		b[i] = charset[rand.IntN(len(charset))]
 	}
 	return string(b)
 }

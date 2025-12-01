@@ -249,9 +249,9 @@ func TestGarbageCollector_DeleteFailure(t *testing.T) {
 
 	// Mock provider that fails on delete
 	mockProvider := &MockProviderWithTimestamp{
-		hostname:     "fake-fake-us-east",
-		instances:    make(map[string]providers.InstanceID),
-		deleteError:  true,
+		hostname:    "fake-fake-us-east",
+		instances:   make(map[string]providers.InstanceID),
+		deleteError: true,
 	}
 	mockProvider.instances["fake-us-east"] = providers.InstanceID{
 		Hostname:     "fake-fake-us-east",

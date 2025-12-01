@@ -1,13 +1,12 @@
 package utils
 
 import (
+	"sync"
 	"time"
-
-	"github.com/bradenaw/juniper/xsync"
 )
 
 func LazyWithErrors[T any](f func() (T, error)) func() T {
-	return xsync.Lazy(
+	return sync.OnceValue(
 		func() T {
 			for {
 				v, err := f()

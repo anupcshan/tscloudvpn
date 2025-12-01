@@ -12,7 +12,6 @@
 // For local testing with mocked dependencies, see e2e_test.go
 
 //go:build e2e
-// +build e2e
 
 package app_test
 

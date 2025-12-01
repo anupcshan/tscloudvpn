@@ -76,7 +76,7 @@ func (c *Creator) waitForInstanceInAPI(
 	startTime := time.Now()
 	for {
 		if time.Since(startTime) > launchDetectTimeout {
-			return fmt.Errorf("Instance %s failed to be available in provider API in %s", hostname, launchDetectTimeout)
+			return fmt.Errorf("instance %s failed to be available in provider API in %s", hostname, launchDetectTimeout)
 		}
 
 		status, err := provider.GetInstanceStatus(ctx, region)
@@ -114,7 +114,7 @@ func (c *Creator) waitForTailscaleRegistration(
 
 		if status != providers.InstanceStatusRunning {
 			logger.Printf("Instance %s failed to launch", hostname)
-			return fmt.Errorf("Instance no longer running")
+			return fmt.Errorf("instance no longer running")
 		}
 
 		devices, err := controller.ListDevices(ctx)

@@ -205,9 +205,9 @@ func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *
 			},
 		},
 		Tags: map[string]*string{
-			"created-by":            to.Ptr("tscloudvpn"),
-			"region":                to.Ptr(region),
-			providers.OwnerTagKey:   to.Ptr(a.ownerID),
+			"created-by":          to.Ptr("tscloudvpn"),
+			"region":              to.Ptr(region),
+			providers.OwnerTagKey: to.Ptr(a.ownerID),
 		},
 	}
 
@@ -392,7 +392,7 @@ func (a *azureProvider) ListInstances(ctx context.Context, region string) ([]pro
 
 func (a *azureProvider) ListRegions(ctx context.Context) ([]providers.Region, error) {
 	if a.subsClient == nil {
-		return nil, fmt.Errorf("Azure subscriptions client not initialized")
+		return nil, fmt.Errorf("azure subscriptions client not initialized")
 	}
 
 	regions, err := a.loadRegions(ctx)
@@ -435,7 +435,7 @@ func (a *azureProvider) GetRegionPrice(region string) float64 {
 
 func (a *azureProvider) loadRegions(ctx context.Context) (map[string]regionInfo, error) {
 	if a.subsClient == nil {
-		return nil, fmt.Errorf("Azure subscriptions client not initialized")
+		return nil, fmt.Errorf("azure subscriptions client not initialized")
 	}
 
 	a.regionCacheLock.Lock()

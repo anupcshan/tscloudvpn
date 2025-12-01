@@ -304,10 +304,7 @@ func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 		if status.CreatedAt.IsZero() {
 			t.Errorf("Discovered instance %s should have creation time set", key)
 		}
-		if status.LaunchedAt.IsZero() {
-			// LaunchedAt should be zero for discovered instances since we don't know when they were launched
-			// This is expected behavior
-		}
+		// LaunchedAt may be zero for discovered instances since we don't know when they were launched
 	}
 
 	// Test that creating an instance that already exists doesn't duplicate it

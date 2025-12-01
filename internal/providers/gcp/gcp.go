@@ -229,7 +229,6 @@ func (g *gcpProvider) loadRegionMachineTypes() (map[string]regionMachineType, er
 						HourlyCost:  price,
 					}
 					resultLock.Unlock()
-					log.Printf("Region %s: using machine type %s at $%.4f/hr", region.Name, machineType, price)
 					break
 				}
 			}
@@ -354,8 +353,8 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 			},
 		},
 		Labels: map[string]string{
-			"tscloudvpn":               "true",
-			"tscloudvpn-owner":         g.sanitizeLabelValue(g.ownerID),
+			"tscloudvpn":       "true",
+			"tscloudvpn-owner": g.sanitizeLabelValue(g.ownerID),
 		},
 		NetworkInterfaces: []*compute.NetworkInterface{
 			{

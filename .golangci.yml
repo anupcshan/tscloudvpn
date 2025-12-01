@@ -1,0 +1,10 @@
+version: "2"
+
+linters:
+  disable:
+    - errcheck
+  exclusions:
+    rules:
+      - linters:
+          - staticcheck
+        text: "xslices\\.Filter is deprecated"

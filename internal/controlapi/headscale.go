@@ -17,6 +17,7 @@ import (
 // Headscale gRPC API has different type requirements for different methods:
 //   - CreatePreAuthKeyRequest.User is uint64
 //   - ListNodesRequest.User is string
+//
 // The userName is resolved from userId during client initialization via ListUsers.
 type HeadscaleClient struct {
 	client       headscale.HeadscaleServiceClient
@@ -32,7 +33,7 @@ func NewHeadscaleClient(serverAddr string, headscaleUrl string, apiKey string, u
 	}
 
 	// Create gRPC connection with API key auth
-	conn, err := grpc.Dial(
+	conn, err := grpc.NewClient(
 		serverAddr,
 		grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(nil, "")),
 		grpc.WithPerRPCCredentials(&apiKeyAuth{key: apiKey}),

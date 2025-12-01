@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -112,7 +113,7 @@ func (v *vultrProvider) prefetchPrices() {
 	// Process each region
 	for region := range regions {
 		validPlans := xslices.Filter(plans, func(plan govultr.Plan) bool {
-			return xslices.Index(plan.Locations, region) != -1
+			return slices.Index(plan.Locations, region) != -1
 		})
 
 		// Sort to find cheapest plan

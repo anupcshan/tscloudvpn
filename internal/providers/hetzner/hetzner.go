@@ -124,7 +124,7 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, region string, key
 		Location:   &hcloud.Location{Name: region},
 		UserData:   tmplOut.String(),
 		Labels: map[string]string{
-			"tscloudvpn":           "true",
+			"tscloudvpn":          "true",
 			providers.OwnerTagKey: h.ownerID,
 		},
 	}

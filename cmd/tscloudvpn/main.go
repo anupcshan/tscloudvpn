@@ -16,8 +16,8 @@ import (
 )
 
 var (
-	configFile         string
-	enableGCDeletion   bool
+	configFile       string
+	enableGCDeletion bool
 )
 
 func init() {

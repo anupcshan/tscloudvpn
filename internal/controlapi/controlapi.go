@@ -10,8 +10,8 @@ import (
 // Device represents a VPN node in the network
 type Device struct {
 	// Private fields - used by control API implementations
-	tailscaleID      string
-	headscaleID      uint64
+	tailscaleID string
+	headscaleID uint64
 
 	// Public fields
 	Name             string

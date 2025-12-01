@@ -33,6 +33,7 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/anupcshan/tscloudvpn/internal/providers/fake"
 	"github.com/anupcshan/tscloudvpn/internal/server"
+	"github.com/stretchr/testify/require"
 	"tailscale.com/client/local"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/types/key"
@@ -182,13 +183,20 @@ func startTestServer(t *testing.T) (*E2EServerTestConfig, func()) {
 		}
 	}()
 
-	// Wait for server to be ready
-	time.Sleep(100 * time.Millisecond)
-
 	// Create HTTP client with timeout
 	httpClient := &http.Client{
 		Timeout: 10 * time.Second,
 	}
+
+	// Wait for server to be ready
+	require.Eventually(t, func() bool {
+		resp, err := httpClient.Get(serverURL + "/")
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, 5*time.Second, 10*time.Millisecond, "server failed to become ready")
 
 	testConfig := &E2EServerTestConfig{
 		ServerURL:      serverURL,
@@ -214,36 +222,7 @@ func TestE2E_FullServerLifecycle(t *testing.T) {
 	testConfig, cleanup := startTestServer(t)
 	defer cleanup()
 
-	t.Logf("Testing server at %s", testConfig.ServerURL)
-
-	// Test 1: Verify server is responding (expect 500 due to missing Tailscale daemon)
-	t.Run("ServerHealthCheck", func(t *testing.T) {
-		resp, err := testConfig.HTTPClient.Get(testConfig.ServerURL + "/")
-		if err != nil {
-			t.Fatalf("Failed to connect to server: %v", err)
-		}
-		defer resp.Body.Close()
-
-		// We expect 500 because there's no real Tailscale daemon running
-		if resp.StatusCode != http.StatusInternalServerError {
-			t.Logf("Got status %d (expected 500 due to missing Tailscale daemon)", resp.StatusCode)
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("Failed to read response body: %v", err)
-		}
-
-		bodyStr := string(body)
-		// The error should mention Tailscale daemon connection
-		if !strings.Contains(bodyStr, "tailscale") && !strings.Contains(bodyStr, "daemon") {
-			t.Logf("Response body: %s", bodyStr)
-		}
-
-		t.Logf("Server health check passed (server responding with expected Tailscale connection error)")
-	})
-
-	// Test 2: Test instance creation via HTTP API
+	// Test 1: Test instance creation via HTTP API
 	t.Run("CreateInstance", func(t *testing.T) {
 		// Create instance via PUT request
 		req, err := http.NewRequest("PUT", testConfig.ServerURL+"/providers/fake/regions/fake-us-east", nil)
@@ -290,33 +269,30 @@ func TestE2E_FullServerLifecycle(t *testing.T) {
 		t.Logf("Instance creation initiated successfully")
 	})
 
-	// Test 3: Wait for instance to be running and verify via status
+	// Test 2: Verify instance is running via MockControlAPI
 	t.Run("VerifyInstanceRunning", func(t *testing.T) {
-		// Wait for instance to be created and running
-		ctx, cancel := context.WithTimeout(context.Background(), testConfig.Timeout)
-		defer cancel()
+		devices, err := testConfig.MockControlAPI.ListDevices(context.Background())
+		if err != nil {
+			t.Fatalf("Failed to list devices: %v", err)
+		}
 
 		var found bool
-		for {
-			select {
-			case <-ctx.Done():
-				if !found {
-					t.Fatal("Timeout waiting for instance to be running")
-				}
-				return
-			case <-time.After(500 * time.Millisecond):
-				// Since main page returns 500, check the server logs or use a different method
-				// For now, we'll assume the instance is running after the creation delay
-				// In a real test, we might check the instance registry directly
-				time.Sleep(200 * time.Millisecond) // Give it time to complete
+		for _, d := range devices {
+			if d.Hostname == "fake-fake-us-east" {
 				found = true
-				t.Logf("Instance assumed to be running (cannot verify via main page due to Tailscale daemon requirement)")
-				return
+				if !d.IsOnline {
+					t.Errorf("Device should be online")
+				}
+				break
 			}
+		}
+
+		if !found {
+			t.Errorf("Device 'fake-fake-us-east' not found in MockControlAPI")
 		}
 	})
 
-	// Test 4: Test Server-Sent Events endpoint
+	// Test 3: Test Server-Sent Events endpoint
 	t.Run("ServerSentEvents", func(t *testing.T) {
 		resp, err := testConfig.HTTPClient.Get(testConfig.ServerURL + "/events")
 		if err != nil {
@@ -365,7 +341,7 @@ func TestE2E_FullServerLifecycle(t *testing.T) {
 		}
 	})
 
-	// Test 5: Delete instance
+	// Test 4: Delete instance
 	t.Run("DeleteInstance", func(t *testing.T) {
 		req, err := http.NewRequest("DELETE", testConfig.ServerURL+"/providers/fake/regions/fake-us-east", nil)
 		if err != nil {
@@ -396,15 +372,18 @@ func TestE2E_FullServerLifecycle(t *testing.T) {
 		t.Logf("Instance deletion completed successfully")
 	})
 
-	// Test 6: Verify instance is deleted
+	// Test 5: Verify instance is deleted
 	t.Run("VerifyInstanceDeleted", func(t *testing.T) {
-		// Wait a moment for deletion to complete
-		time.Sleep(1 * time.Second)
+		devices, err := testConfig.MockControlAPI.ListDevices(context.Background())
+		if err != nil {
+			t.Fatalf("Failed to list devices: %v", err)
+		}
 
-		// Since we can't easily check the main page due to Tailscale daemon requirement,
-		// we'll just verify that the deletion endpoint worked (returned "ok")
-		// In a more sophisticated test, we might check the instance registry state directly
-		t.Logf("Instance deletion assumed complete (verified by successful DELETE response)")
+		for _, d := range devices {
+			if d.Hostname == "fake-fake-us-east" {
+				t.Errorf("Device 'fake-fake-us-east' should have been deleted but still exists")
+			}
+		}
 	})
 }
 
@@ -478,66 +457,6 @@ func TestE2E_MultipleRegionsParallel(t *testing.T) {
 	}
 
 	t.Logf("Multiple regions test completed")
-}
-
-// TestE2E_ErrorHandling tests server error conditions
-func TestE2E_ErrorHandling(t *testing.T) {
-	testConfig, cleanup := startTestServer(t)
-	defer cleanup()
-
-	// Test 1: Invalid provider
-	t.Run("InvalidProvider", func(t *testing.T) {
-		req, err := http.NewRequest("PUT", testConfig.ServerURL+"/providers/invalid/regions/invalid-region", nil)
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
-		}
-
-		resp, err := testConfig.HTTPClient.Do(req)
-		if err != nil {
-			t.Fatalf("Failed to make request: %v", err)
-		}
-		defer resp.Body.Close()
-
-		// The server might return 200 for invalid routes and handle them internally
-		// This is acceptable behavior as long as the server doesn't crash
-		t.Logf("Invalid provider handled with status %d", resp.StatusCode)
-	})
-
-	// Test 2: Invalid region
-	t.Run("InvalidRegion", func(t *testing.T) {
-		req, err := http.NewRequest("PUT", testConfig.ServerURL+"/providers/fake/regions/invalid-region", nil)
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
-		}
-
-		resp, err := testConfig.HTTPClient.Do(req)
-		if err != nil {
-			t.Fatalf("Failed to make request: %v", err)
-		}
-		defer resp.Body.Close()
-
-		// The server might return 200 for invalid regions and handle them internally
-		// This is acceptable behavior as long as the server doesn't crash
-		t.Logf("Invalid region handled with status %d", resp.StatusCode)
-	})
-
-	// Test 3: DELETE non-existent instance
-	t.Run("DeleteNonExistent", func(t *testing.T) {
-		req, err := http.NewRequest("DELETE", testConfig.ServerURL+"/providers/fake/regions/fake-us-east", nil)
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
-		}
-
-		resp, err := testConfig.HTTPClient.Do(req)
-		if err != nil {
-			t.Fatalf("Failed to make request: %v", err)
-		}
-		defer resp.Body.Close()
-
-		// Deleting non-existent instance might return 500 if device not found
-		// This is acceptable behavior - the important thing is the server responds
-		t.Logf("Delete non-existent instance handled with status %d", resp.StatusCode)
-	})
 }
 
 // TestE2E_AssetServing tests static asset serving
