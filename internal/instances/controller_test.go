@@ -4,11 +4,13 @@ import (
 	"context"
 	"log"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/stretchr/testify/require"
 )
 
 // MockProvider implements a simple mock provider for testing
@@ -58,6 +60,7 @@ func (m *MockProvider) ListInstances(ctx context.Context, region string) ([]prov
 
 // MockControlApi implements a simple mock control API for testing
 type MockControlApi struct {
+	mu      sync.RWMutex
 	devices []controlapi.Device
 }
 
@@ -66,10 +69,14 @@ func (m *MockControlApi) CreateKey(ctx context.Context) (*controlapi.PreauthKey,
 }
 
 func (m *MockControlApi) ListDevices(ctx context.Context) ([]controlapi.Device, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.devices, nil
 }
 
 func (m *MockControlApi) DeleteDevice(ctx context.Context, device *controlapi.Device) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	// Remove device from mock list
 	for i, d := range m.devices {
 		if d.Hostname == device.Hostname {
@@ -86,6 +93,8 @@ func (m *MockControlApi) ApproveExitNode(ctx context.Context, device *controlapi
 
 // AddDevice adds a device to the mock (for testing)
 func (m *MockControlApi) AddDevice(device controlapi.Device) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.devices = append(m.devices, device)
 }
 
@@ -115,27 +124,6 @@ func TestController_NewController(t *testing.T) {
 	if status.IsRunning {
 		t.Error("Expected instance to not be running initially")
 	}
-}
-
-func TestController_Status(t *testing.T) {
-	ctx := context.Background()
-	logger := log.Default()
-	provider := &MockProvider{
-		hostname: "test-instance",
-		status:   providers.InstanceStatusRunning,
-	}
-	controlApi := &MockControlApi{}
-
-	controller := NewController(ctx, logger, provider, "test-region", controlApi, nil)
-	defer controller.Stop()
-
-	// Test initial status
-	status := controller.Status()
-	if status.IsRunning {
-		t.Error("Expected instance to not be running initially")
-	}
-
-	// Verify the ping stats are initialized
 	if status.PingStats.SuccessRate != 0 {
 		t.Error("Expected initial success rate to be 0")
 	}
@@ -161,9 +149,6 @@ func TestRegistry_CreateAndDeleteInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
-
-	// Wait a bit for the creation to be processed
-	time.Sleep(10 * time.Millisecond)
 
 	// Test getting instance status
 	status, err := registry.GetInstanceStatus("mock", "test-region")
@@ -226,9 +211,6 @@ func TestRegistry_GetAllInstanceStatuses(t *testing.T) {
 		t.Fatalf("Failed to create instance 2: %v", err)
 	}
 
-	// Wait a bit for the creation to be processed
-	time.Sleep(10 * time.Millisecond)
-
 	// Get all statuses
 	statuses := registry.GetAllInstanceStatuses()
 
@@ -286,15 +268,12 @@ func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 	registry := NewRegistry(logger, controlApi, nil, providers, true)
 	defer registry.Shutdown()
 
-	// Wait for discovery to complete
-	time.Sleep(3 * time.Second)
+	// Wait for discovery to complete - use Eventually since discovery is async
+	require.Eventually(t, func() bool {
+		return len(registry.GetAllInstanceStatuses()) == 2
+	}, 5*time.Second, 10*time.Millisecond, "Expected 2 discovered instances")
 
-	// Check that discovered instances are tracked
 	allStatuses := registry.GetAllInstanceStatuses()
-
-	if len(allStatuses) != 2 {
-		t.Errorf("Expected 2 discovered instances, got %d", len(allStatuses))
-	}
 
 	// Verify the discovered instances have correct status
 	for key, status := range allStatuses {
@@ -345,9 +324,6 @@ func TestRegistry_CreateInstance_ContextCancellation(t *testing.T) {
 
 	// Cancel the context immediately after starting creation
 	cancel()
-
-	// Wait a bit for creation to process
-	time.Sleep(20 * time.Millisecond)
 
 	// Verify that instance creation wasn't affected by context cancellation
 	status, err := registry.GetInstanceStatus("mock", "test-region")

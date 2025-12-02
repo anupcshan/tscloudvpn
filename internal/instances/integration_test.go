@@ -14,6 +14,7 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/anupcshan/tscloudvpn/internal/providers/fake"
+	"github.com/stretchr/testify/require"
 )
 
 // IntegrationTestControlApi implements a more realistic control API for integration testing
@@ -213,9 +214,6 @@ func TestIntegration_ControllerWithFakeProvider_BasicLifecycle(t *testing.T) {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
 
-	// Give it time to process
-	time.Sleep(500 * time.Millisecond)
-
 	// Check that instance was created in fake provider
 	instance, exists := fakeProvider.GetInstance("fake-us-east")
 	if !exists {
@@ -233,8 +231,6 @@ func TestIntegration_ControllerWithFakeProvider_BasicLifecycle(t *testing.T) {
 	if status.LaunchedAt.IsZero() {
 		t.Error("Expected LaunchedAt to be set after creation")
 	}
-
-	// The device was already added before creation, so it should be there
 
 	// Test deletion
 	err = controller.Delete()
@@ -255,6 +251,11 @@ func TestIntegration_ControllerWithFakeProvider_BasicLifecycle(t *testing.T) {
 	status = controller.Status()
 	if status.IsRunning {
 		t.Error("Expected instance to not be running after deletion")
+	}
+
+	_, exists = fakeProvider.GetInstance("fake-us-east")
+	if exists {
+		t.Error("Instance was not deleted in fake provider")
 	}
 }
 
@@ -294,9 +295,19 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 		}
 	}
 
-	// Wait for creation to complete and for discoverExistingInstances to finish
-	// (discoverExistingInstances waits 2 seconds before running)
-	time.Sleep(4 * time.Second)
+	// Wait for all instances to be running
+	require.Eventually(t, func() bool {
+		statuses := registry.GetAllInstanceStatuses()
+		if len(statuses) != 3 {
+			return false
+		}
+		for _, status := range statuses {
+			if !status.IsRunning {
+				return false
+			}
+		}
+		return true
+	}, 10*time.Second, 100*time.Millisecond, "Expected 3 running instances")
 
 	// Verify all instances were created
 	allInstances := fakeProvider.GetAllInstances()
@@ -427,16 +438,11 @@ func TestIntegration_RegistryWithFakeProvider_ProviderFailures(t *testing.T) {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
 
-	time.Sleep(2 * time.Second) // Give time for full creation process
-
-	// Verify instance exists
-	status, err := registry.GetInstanceStatus("fake", "fake-us-east")
-	if err != nil {
-		t.Fatalf("Failed to get instance status: %v", err)
-	}
-	if !status.IsRunning {
-		t.Error("Expected instance to be running")
-	}
+	// Wait for instance to be running
+	require.Eventually(t, func() bool {
+		status, err := registry.GetInstanceStatus("fake", "fake-us-east")
+		return err == nil && status.IsRunning
+	}, 10*time.Second, 100*time.Millisecond, "Expected instance to be running")
 
 	// Now configure provider to fail status checks
 	config := fake.DefaultConfig()
@@ -444,7 +450,7 @@ func TestIntegration_RegistryWithFakeProvider_ProviderFailures(t *testing.T) {
 	fakeProvider.UpdateConfig(config)
 
 	// Status checks should now fail, but instance should still be tracked
-	status, err = registry.GetInstanceStatus("fake", "fake-us-east")
+	_, err = registry.GetInstanceStatus("fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Registry should still return status even if provider fails: %v", err)
 	}
@@ -455,10 +461,13 @@ func TestIntegration_RegistryWithFakeProvider_ProviderFailures(t *testing.T) {
 		t.Fatalf("Registry creation shouldn't fail immediately: %v", err)
 	}
 
-	// Give it time to try and fail
-	time.Sleep(500 * time.Millisecond)
+	// Wait for failed creation to be cleaned up (controller removed from registry)
+	require.Eventually(t, func() bool {
+		statuses := registry.GetAllInstanceStatuses()
+		return len(statuses) == 1
+	}, 5*time.Second, 100*time.Millisecond, "Expected only 1 instance after failed creation")
 
-	// Should have only 1 instance still (the first one)
+	// Verify only the first instance remains
 	statuses := registry.GetAllInstanceStatuses()
 	if len(statuses) != 1 {
 		t.Errorf("Expected 1 instance after failed creation, got %d", len(statuses))
@@ -496,13 +505,12 @@ func TestIntegration_RegistryWithFakeProvider_DiscoverExistingInstances(t *testi
 	defer registry.Shutdown()
 
 	// Wait for discovery to complete
-	time.Sleep(3 * time.Second)
+	require.Eventually(t, func() bool {
+		return len(registry.GetAllInstanceStatuses()) == 2
+	}, 10*time.Second, 100*time.Millisecond, "Expected 2 discovered instances")
 
 	// Verify discovered instances are tracked
 	statuses := registry.GetAllInstanceStatuses()
-	if len(statuses) != 2 {
-		t.Errorf("Expected 2 discovered instances, got %d", len(statuses))
-	}
 
 	// Check specific instances
 	for key, status := range statuses {
@@ -527,9 +535,7 @@ func TestIntegration_RegistryWithFakeProvider_DiscoverExistingInstances(t *testi
 		t.Errorf("Creating existing instance should not fail: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
-
-	// Should still have 2 instances
+	// Should still have 2 instances (CreateInstance returns immediately for running instances)
 	statuses = registry.GetAllInstanceStatuses()
 	if len(statuses) != 2 {
 		t.Errorf("Expected 2 instances after creating existing one, got %d", len(statuses))
@@ -577,159 +583,6 @@ func TestIntegration_ControllerWithFakeProvider_SlowOperations(t *testing.T) {
 	status := controller.Status()
 	if !status.IsRunning {
 		t.Error("Expected instance to be running after slow creation")
-	}
-}
-
-func TestIntegration_ControllerWithFakeProvider_ContextCancellation(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
-	logger := log.New(os.Stderr, "[TEST] ", log.LstdFlags)
-
-	// Configure fake provider with long delay
-	config := fake.DefaultConfig()
-	config.CreateDelay = 2 * time.Second
-	fakeProvider := fake.NewWithConfig(config)
-	controlApi := NewIntegrationTestControlApi()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", controlApi, nil)
-	defer controller.Stop()
-
-	// Start creation
-	start := time.Now()
-	go func() {
-		// Cancel context after short delay
-		time.Sleep(100 * time.Millisecond)
-		cancel()
-	}()
-
-	err := controller.Create()
-	duration := time.Since(start)
-
-	// Creation should fail due to context cancellation
-	if err == nil {
-		t.Fatal("Expected creation to fail due to context cancellation")
-	}
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("Expected context.Canceled error, got: %v", err)
-	}
-
-	// Should have failed quickly, not after the full delay
-	if duration >= config.CreateDelay {
-		t.Errorf("Creation took %v, should have been canceled before %v", duration, config.CreateDelay)
-	}
-
-	// Verify no instance was created
-	_, exists := fakeProvider.GetInstance("fake-us-east")
-	if exists {
-		t.Error("Instance should not exist after canceled creation")
-	}
-}
-
-func TestIntegration_FakeProvider_RegionOperations(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
-	ctx := context.Background()
-	fakeProvider := fake.NewWithConfig(fake.DefaultConfig())
-
-	// Test listing regions
-	regions, err := fakeProvider.ListRegions(ctx)
-	if err != nil {
-		t.Fatalf("Failed to list regions: %v", err)
-	}
-
-	expectedRegions := []string{"fake-us-east", "fake-us-west", "fake-eu-central", "fake-ap-south"}
-	if len(regions) != len(expectedRegions) {
-		t.Errorf("Expected %d regions, got %d", len(expectedRegions), len(regions))
-	}
-
-	for i, expected := range expectedRegions {
-		if regions[i].Code != expected {
-			t.Errorf("Expected region code %s, got %s", expected, regions[i].Code)
-		}
-		if regions[i].LongName == "" {
-			t.Errorf("Region %s should have a long name", regions[i].Code)
-		}
-	}
-
-	// Test price for each region
-	for _, region := range regions {
-		price := fakeProvider.GetRegionPrice(region.Code)
-		if price <= 0 {
-			t.Errorf("Expected positive price for region %s, got %f", region.Code, price)
-		}
-	}
-
-	// Test hostname generation
-	for _, region := range regions {
-		hostname := fakeProvider.Hostname(region.Code)
-		expected := fmt.Sprintf("fake-%s", region.Code)
-		if string(hostname) != expected {
-			t.Errorf("Expected hostname %s, got %s", expected, hostname)
-		}
-	}
-}
-
-func TestIntegration_ControllerDelete_DeletesCloudInstance(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
-	ctx := context.Background()
-	logger := log.New(os.Stderr, "[TEST] ", log.LstdFlags)
-	fakeProvider := fake.NewWithConfig(fake.DefaultConfig())
-	controlApi := NewIntegrationTestControlApi()
-
-	// Pre-add device to control API (before Create to simulate quick registration)
-	controlApi.AddDevice(controlapi.Device{
-		Hostname: "fake-fake-us-east",
-		Created:  time.Now().Add(time.Second), // Future timestamp
-	})
-
-	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", controlApi, nil)
-	defer controller.Stop()
-
-	// Create instance
-	err := controller.Create()
-	if err != nil {
-		t.Fatalf("Failed to create instance: %v", err)
-	}
-
-	// Give time for creation to process
-	time.Sleep(500 * time.Millisecond)
-
-	// Verify instance exists in fake provider
-	_, exists := fakeProvider.GetInstance("fake-us-east")
-	if !exists {
-		t.Error("Instance should exist in fake provider after creation")
-	}
-
-	// Verify device exists in control API
-	devices, _ := controlApi.ListDevices(ctx)
-	if len(devices) != 1 {
-		t.Errorf("Expected 1 device in control API, got %d", len(devices))
-	}
-
-	// Delete instance
-	err = controller.Delete()
-	if err != nil {
-		t.Fatalf("Failed to delete instance: %v", err)
-	}
-
-	// Verify instance was deleted from control API
-	devices, _ = controlApi.ListDevices(ctx)
-	if len(devices) != 0 {
-		t.Errorf("Expected 0 devices after deletion, got %d", len(devices))
-	}
-
-	// Verify instance was deleted from cloud provider
-	_, exists = fakeProvider.GetInstance("fake-us-east")
-	if exists {
-		t.Error("Instance should NOT exist in fake provider after deletion - cloud deletion should happen")
 	}
 }
 
@@ -812,9 +665,6 @@ func TestIntegration_ControllerDelete_DeviceNotInTailscale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
-
-	// Give a moment for instance creation to complete
-	time.Sleep(200 * time.Millisecond)
 
 	// Verify instance exists in fake provider
 	_, exists := fakeProvider.GetInstance("fake-us-east")

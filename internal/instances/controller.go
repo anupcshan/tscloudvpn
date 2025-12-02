@@ -307,9 +307,6 @@ func (c *Controller) Status() InstanceStatus {
 
 // Stop stops the controller and cleans up resources
 func (c *Controller) Stop() {
-	if c.healthCheckTicker != nil {
-		c.healthCheckTicker.Stop()
-	}
 	c.cancel()
 	<-c.done
 }

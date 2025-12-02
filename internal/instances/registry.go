@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"sync"
-	"time"
 
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
@@ -170,9 +169,6 @@ func (r *Registry) Shutdown() {
 
 // discoverExistingInstances finds and registers existing instances on startup
 func (r *Registry) discoverExistingInstances(ctx context.Context) {
-	// Give the Tailscale client time to initialize
-	time.Sleep(2 * time.Second)
-
 	r.logger.Printf("Discovering existing instances...")
 
 	// Get all devices from control API

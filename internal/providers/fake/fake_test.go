@@ -239,20 +239,16 @@ func TestFakeProvider_ContextCancellation(t *testing.T) {
 	config.CreateDelay = 500 * time.Millisecond
 	fakeProvider := NewWithConfig(config)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
 	key := &controlapi.PreauthKey{Key: "test-key"}
-
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
-	}()
 
 	_, err := fakeProvider.CreateInstance(ctx, "fake-us-east", key)
 	if err == nil {
 		t.Error("Expected create to be canceled")
 	}
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("Expected context.Canceled, got: %v", err)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Expected context.DeadlineExceeded, got: %v", err)
 	}
 
 	// Verify no instance was created
