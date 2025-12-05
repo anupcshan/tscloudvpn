@@ -272,7 +272,7 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers, true)
+	registry := NewRegistry(logger, controlApi, nil, providers)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -421,7 +421,7 @@ func TestIntegration_RegistryWithFakeProvider_ProviderFailures(t *testing.T) {
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers, true)
+	registry := NewRegistry(logger, controlApi, nil, providers)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -501,7 +501,7 @@ func TestIntegration_RegistryWithFakeProvider_DiscoverExistingInstances(t *testi
 	}
 
 	// Create registry - this should trigger discovery
-	registry := NewRegistry(logger, controlApi, nil, providers, true)
+	registry := NewRegistry(logger, controlApi, nil, providers)
 	defer registry.Shutdown()
 
 	// Wait for discovery to complete

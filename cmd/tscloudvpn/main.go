@@ -15,22 +15,16 @@ import (
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/vultr"
 )
 
-var (
-	configFile       string
-	enableGCDeletion bool
-)
+var configFile string
 
 func init() {
 	flag.StringVar(&configFile, "config", "", "Path to config file (default: search in standard locations)")
-	flag.BoolVar(&enableGCDeletion, "enable-gc-deletion", false, "Enable garbage collector to delete orphaned cloud instances (default: dry-run mode)")
 }
 
 func Main() error {
 	ctx := context.Background()
 
-	application, err := app.New(configFile, app.Options{
-		EnableGCDeletion: enableGCDeletion,
-	})
+	application, err := app.New(configFile)
 	if err != nil {
 		return err
 	}

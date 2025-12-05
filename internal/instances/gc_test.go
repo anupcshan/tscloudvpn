@@ -35,7 +35,7 @@ func TestGarbageCollector_NoOrphanedInstances(t *testing.T) {
 		"fake": fakeProvider,
 	}
 
-	gc := NewGarbageCollector(logger, controlApi, providers, true)
+	gc := NewGarbageCollector(logger, controlApi, providers)
 
 	// Run garbage collection
 	gc.collect(ctx)
@@ -92,7 +92,7 @@ func TestGarbageCollector_OrphanedInstance_OlderThanGracePeriod(t *testing.T) {
 		"mock": mockProvider,
 	}
 
-	gc := NewGarbageCollector(logger, controlApi, providersMap, true)
+	gc := NewGarbageCollector(logger, controlApi, providersMap)
 
 	// Run garbage collection
 	gc.collect(ctx)
@@ -129,7 +129,7 @@ func TestGarbageCollector_OrphanedInstance_WithinGracePeriod(t *testing.T) {
 		"mock": mockProvider,
 	}
 
-	gc := NewGarbageCollector(logger, controlApi, providersMap, true)
+	gc := NewGarbageCollector(logger, controlApi, providersMap)
 
 	// Run garbage collection
 	gc.collect(ctx)
@@ -137,48 +137,6 @@ func TestGarbageCollector_OrphanedInstance_WithinGracePeriod(t *testing.T) {
 	// Verify instance was NOT deleted (it's within grace period)
 	if mockProvider.deleted {
 		t.Error("Orphaned instance within grace period should NOT have been deleted")
-	}
-}
-
-func TestGarbageCollector_DryRunMode(t *testing.T) {
-	ctx := context.Background()
-	logger := log.New(os.Stderr, "[GC-TEST] ", log.LstdFlags)
-	controlApi := NewIntegrationTestControlApi()
-
-	// Create time in the past (older than grace period)
-	oldTime := time.Now().Add(-15 * time.Minute)
-
-	// Create a mock provider with an instance that is orphaned
-	mockProvider := &MockProviderWithTimestamp{
-		hostname:  "fake-fake-us-east",
-		instances: make(map[string]providers.InstanceID),
-	}
-	mockProvider.instances["fake-us-east"] = providers.InstanceID{
-		Hostname:     "fake-fake-us-east",
-		ProviderID:   "mock-123",
-		ProviderName: "mock",
-		CreatedAt:    oldTime,
-	}
-
-	// Do NOT add to control API - this makes it orphaned
-	// controlApi.AddDevice(...)
-
-	providersMap := map[string]providers.Provider{
-		"mock": mockProvider,
-	}
-
-	// Create GC with enableDeletion=false (dry-run mode)
-	gc := NewGarbageCollector(logger, controlApi, providersMap, false)
-
-	// Run garbage collection
-	gc.collect(ctx)
-
-	// Verify instance was NOT deleted (dry-run mode)
-	if mockProvider.deleted {
-		t.Error("Orphaned instance should NOT have been deleted in dry-run mode")
-	}
-	if mockProvider.deleteAttempted {
-		t.Error("Delete should not have been attempted in dry-run mode")
 	}
 }
 
@@ -224,7 +182,7 @@ func TestGarbageCollector_MultipleProvidersMultipleRegions(t *testing.T) {
 		"mock2": mockProvider2,
 	}
 
-	gc := NewGarbageCollector(logger, controlApi, providersMap, true)
+	gc := NewGarbageCollector(logger, controlApi, providersMap)
 
 	// Run garbage collection
 	gc.collect(ctx)
@@ -264,7 +222,7 @@ func TestGarbageCollector_DeleteFailure(t *testing.T) {
 		"mock": mockProvider,
 	}
 
-	gc := NewGarbageCollector(logger, controlApi, providersMap, true)
+	gc := NewGarbageCollector(logger, controlApi, providersMap)
 
 	// Run garbage collection - should not panic on delete failure
 	gc.collect(ctx)

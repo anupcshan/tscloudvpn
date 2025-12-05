@@ -21,10 +21,9 @@ const (
 // GarbageCollector periodically finds and deletes orphaned cloud instances
 // (instances that exist in the cloud but not in Tailscale/Headscale)
 type GarbageCollector struct {
-	logger         *log.Logger
-	controlApi     controlapi.ControlApi
-	providers      map[string]providers.Provider
-	enableDeletion bool // If false, only log what would be deleted (dry-run mode)
+	logger     *log.Logger
+	controlApi controlapi.ControlApi
+	providers  map[string]providers.Provider
 }
 
 // NewGarbageCollector creates a new garbage collector
@@ -32,23 +31,17 @@ func NewGarbageCollector(
 	logger *log.Logger,
 	controlApi controlapi.ControlApi,
 	providers map[string]providers.Provider,
-	enableDeletion bool,
 ) *GarbageCollector {
 	return &GarbageCollector{
-		logger:         logger,
-		controlApi:     controlApi,
-		providers:      providers,
-		enableDeletion: enableDeletion,
+		logger:     logger,
+		controlApi: controlApi,
+		providers:  providers,
 	}
 }
 
 // Run starts the garbage collector loop
 func (gc *GarbageCollector) Run(ctx context.Context) {
-	mode := "DRY-RUN"
-	if gc.enableDeletion {
-		mode = "ENABLED"
-	}
-	gc.logger.Printf("Starting garbage collector (interval: %v, grace period: %v, deletion: %s)", gcInterval, gcGracePeriod, mode)
+	gc.logger.Printf("Starting garbage collector (interval: %v, grace period: %v)", gcInterval, gcGracePeriod)
 
 	// Run immediately on startup
 	gc.collect(ctx)
@@ -122,13 +115,7 @@ func (gc *GarbageCollector) collect(ctx context.Context) {
 					continue
 				}
 
-				// Delete the orphaned instance (or log in dry-run mode)
-				if !gc.enableDeletion {
-					gc.logger.Printf("GC: [DRY-RUN] would delete orphaned instance %s/%s (provider ID: %s, age: %v)",
-						providerName, instance.Hostname, instance.ProviderID, instanceAge.Round(time.Second))
-					continue
-				}
-
+				// Delete the orphaned instance
 				gc.logger.Printf("GC: deleting orphaned instance %s/%s (provider ID: %s, age: %v)",
 					providerName, instance.Hostname, instance.ProviderID, instanceAge.Round(time.Second))
 

@@ -139,7 +139,7 @@ func TestRegistry_CreateAndDeleteInstance(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers, true)
+	registry := NewRegistry(logger, controlApi, nil, providers)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -195,7 +195,7 @@ func TestRegistry_GetAllInstanceStatuses(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers, true)
+	registry := NewRegistry(logger, controlApi, nil, providers)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -265,7 +265,7 @@ func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers, true)
+	registry := NewRegistry(logger, controlApi, nil, providers)
 	defer registry.Shutdown()
 
 	// Wait for discovery to complete - use Eventually since discovery is async
@@ -310,7 +310,7 @@ func TestRegistry_CreateInstance_ContextCancellation(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers, true)
+	registry := NewRegistry(logger, controlApi, nil, providers)
 	defer registry.Shutdown()
 
 	// Create a context that we'll cancel immediately

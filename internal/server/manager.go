@@ -36,7 +36,6 @@ func NewManager(
 	cloudProviders map[string]providers.Provider,
 	tsLocalClient *local.Client,
 	controlApi controlapi.ControlApi,
-	enableGCDeletion bool,
 ) *Manager {
 	lazyListRegionsMap := make(map[string]func() []providers.Region)
 
@@ -50,7 +49,7 @@ func NewManager(
 		)
 	}
 
-	instanceRegistry := instances.NewRegistry(logger, controlApi, tsLocalClient, cloudProviders, enableGCDeletion)
+	instanceRegistry := instances.NewRegistry(logger, controlApi, tsLocalClient, cloudProviders)
 
 	m := &Manager{
 		cloudProviders:     cloudProviders,
