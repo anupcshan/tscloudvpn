@@ -35,7 +35,7 @@ type PingHistory struct {
 	successCount          int
 	totalLatency          time.Duration
 	lastFailure           time.Time
-	position              int // Current position in ring buffer
+	position              int     // Current position in ring buffer
 	totalLatencySquaredNs float64 // Use float64 to avoid overflow with large latencies
 }
 

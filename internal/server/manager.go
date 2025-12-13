@@ -180,18 +180,18 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				}
 
 				html.WriteString("<tr>")
-				html.WriteString(fmt.Sprintf("<td>%s</td>", node.Provider))
-				html.WriteString(fmt.Sprintf("<td>%s</td>", node.Region))
-				html.WriteString(fmt.Sprintf("<td>%s</td>", node.SinceCreated))
-				html.WriteString(fmt.Sprintf("<td>%.2fc/hr</td>", node.PriceCentsPerHour))
-				html.WriteString(fmt.Sprintf("<td>%s</td>", connectionType))
-				html.WriteString(fmt.Sprintf(`<td><span class="label %s">%.1f%%</span></td>`,
-					successRateClass, node.PingStats.SuccessRate*100))
-				html.WriteString(fmt.Sprintf("<td>%s ± %s</td>",
-					node.PingStats.AvgLatency.Round(time.Millisecond), node.PingStats.StdDev.Round(time.Millisecond)))
-				html.WriteString(fmt.Sprintf(`<td><button class="btn btn-danger" hx-ext="disable-element" `+
+				fmt.Fprintf(&html, "<td>%s</td>", node.Provider)
+				fmt.Fprintf(&html, "<td>%s</td>", node.Region)
+				fmt.Fprintf(&html, "<td>%s</td>", node.SinceCreated)
+				fmt.Fprintf(&html, "<td>%.2fc/hr</td>", node.PriceCentsPerHour)
+				fmt.Fprintf(&html, "<td>%s</td>", connectionType)
+				fmt.Fprintf(&html, `<td><span class="label %s">%.1f%%</span></td>`,
+					successRateClass, node.PingStats.SuccessRate*100)
+				fmt.Fprintf(&html, "<td>%s ± %s</td>",
+					node.PingStats.AvgLatency.Round(time.Millisecond), node.PingStats.StdDev.Round(time.Millisecond))
+				fmt.Fprintf(&html, `<td><button class="btn btn-danger" hx-ext="disable-element" `+
 					`hx-disable-element="self" hx-delete="/providers/%s/regions/%s">Delete</button></td>`,
-					node.Provider, node.Region))
+					node.Provider, node.Region)
 				html.WriteString("</tr>")
 			}
 			return html.String()
