@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"sync"
 	"time"
 
@@ -21,30 +22,32 @@ const (
 
 // PingResult represents a single ping attempt result
 type PingResult struct {
-	Timestamp            time.Time
-	Success              bool
-	Latency              time.Duration
-	ConnectionType       string
-	PreviousLatencyDelta time.Duration
+	Timestamp      time.Time
+	Success        bool
+	Latency        time.Duration
+	ConnectionType string
 }
 
 // PingHistory tracks ping results for health monitoring
 type PingHistory struct {
-	mu                   sync.RWMutex
-	history              []PingResult // Ring buffer of last historySize results
-	successCount         int
-	totalLatency         time.Duration
-	lastFailure          time.Time
-	position             int // Current position in ring buffer
-	totalJitter          time.Duration
-	consecutiveJitterCnt int
-	lastSuccessLatency   time.Duration
+	mu                    sync.RWMutex
+	history               []PingResult // Ring buffer of last historySize results
+	successCount          int
+	totalLatency          time.Duration
+	lastFailure           time.Time
+	position              int // Current position in ring buffer
+	totalLatencySquaredNs int64
 }
 
 // NewPingHistory creates a new ping history tracker
 func NewPingHistory() *PingHistory {
+	return NewPingHistoryWithSize(historySize)
+}
+
+// NewPingHistoryWithSize creates a new ping history tracker with a custom buffer size
+func NewPingHistoryWithSize(size int) *PingHistory {
 	return &PingHistory{
-		history: make([]PingResult, historySize),
+		history: make([]PingResult, size),
 	}
 }
 
@@ -53,15 +56,12 @@ func (ph *PingHistory) AddResult(success bool, latency time.Duration, connection
 	ph.mu.Lock()
 	defer ph.mu.Unlock()
 
-	// If the entry at current position was successful, decrease success count
+	// If the entry at current position was successful, remove its contribution
 	if ph.history[ph.position].Success {
 		ph.successCount--
 		ph.totalLatency -= ph.history[ph.position].Latency
-	}
-
-	if ph.history[ph.position].PreviousLatencyDelta > 0 {
-		ph.totalJitter -= ph.history[ph.position].PreviousLatencyDelta
-		ph.consecutiveJitterCnt--
+		latencyNs := int64(ph.history[ph.position].Latency)
+		ph.totalLatencySquaredNs -= latencyNs * latencyNs
 	}
 
 	// Add new result
@@ -75,29 +75,18 @@ func (ph *PingHistory) AddResult(success bool, latency time.Duration, connection
 	if success {
 		ph.successCount++
 		ph.totalLatency += latency
-
-		// Calculate jitter only if we have a previous successful latency
-		if ph.lastSuccessLatency > 0 {
-			jitter := latency - ph.lastSuccessLatency
-			if jitter < 0 {
-				jitter = -jitter
-			}
-			ph.totalJitter += jitter
-			ph.consecutiveJitterCnt++
-			ph.history[ph.position].PreviousLatencyDelta = jitter
-		}
-		ph.lastSuccessLatency = latency
+		latencyNs := int64(latency)
+		ph.totalLatencySquaredNs += latencyNs * latencyNs
 	} else {
 		ph.lastFailure = time.Now()
-		ph.lastSuccessLatency = 0
 	}
 
 	// Move position forward
-	ph.position = (ph.position + 1) % historySize
+	ph.position = (ph.position + 1) % len(ph.history)
 }
 
 // GetStats returns current ping statistics
-func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration, jitter time.Duration, timeSinceFailure time.Duration, connectionType string) {
+func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration, stddev time.Duration, timeSinceFailure time.Duration, connectionType string) {
 	ph.mu.RLock()
 	defer ph.mu.RUnlock()
 
@@ -117,9 +106,14 @@ func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration
 	if ph.successCount > 0 {
 		avgLatency = ph.totalLatency / time.Duration(ph.successCount)
 
-		// Calculate average jitter
-		if ph.consecutiveJitterCnt > 0 {
-			jitter = ph.totalJitter / time.Duration(ph.consecutiveJitterCnt)
+		// Calculate standard deviation: stddev = sqrt(E[X²] - E[X]²)
+		if ph.successCount > 1 {
+			meanNs := float64(ph.totalLatency) / float64(ph.successCount)
+			meanOfSquares := float64(ph.totalLatencySquaredNs) / float64(ph.successCount)
+			variance := meanOfSquares - (meanNs * meanNs)
+			if variance > 0 {
+				stddev = time.Duration(math.Sqrt(variance))
+			}
 		}
 	}
 
@@ -137,7 +131,7 @@ func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration
 		}
 	}
 
-	return successRate, avgLatency, jitter, timeSinceFailure, connectionType
+	return successRate, avgLatency, stddev, timeSinceFailure, connectionType
 }
 
 // InstanceStatus represents the current state of an instance
@@ -151,7 +145,7 @@ type InstanceStatus struct {
 	PingStats  struct {
 		SuccessRate      float64
 		AvgLatency       time.Duration
-		Jitter           time.Duration
+		StdDev           time.Duration
 		TimeSinceFailure time.Duration
 		ConnectionType   string
 	}
@@ -300,7 +294,7 @@ func (c *Controller) Status() InstanceStatus {
 		LaunchedAt: c.launchedAt,
 	}
 
-	status.PingStats.SuccessRate, status.PingStats.AvgLatency, status.PingStats.Jitter, status.PingStats.TimeSinceFailure, status.PingStats.ConnectionType = c.ping.GetStats()
+	status.PingStats.SuccessRate, status.PingStats.AvgLatency, status.PingStats.StdDev, status.PingStats.TimeSinceFailure, status.PingStats.ConnectionType = c.ping.GetStats()
 
 	return status
 }

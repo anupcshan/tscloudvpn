@@ -72,7 +72,7 @@ type mappedRegion struct {
 	PingStats         struct {
 		SuccessRate      float64
 		AvgLatency       time.Duration
-		Jitter           time.Duration
+		StdDev           time.Duration
 		TimeSinceFailure time.Duration
 		ConnectionType   string
 	}
@@ -109,7 +109,7 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 			var pingStats struct {
 				SuccessRate      float64
 				AvgLatency       time.Duration
-				Jitter           time.Duration
+				StdDev           time.Duration
 				TimeSinceFailure time.Duration
 				ConnectionType   string
 			}
@@ -187,8 +187,8 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				html.WriteString(fmt.Sprintf("<td>%s</td>", connectionType))
 				html.WriteString(fmt.Sprintf(`<td><span class="label %s">%.1f%%</span></td>`,
 					successRateClass, node.PingStats.SuccessRate*100))
-				html.WriteString(fmt.Sprintf("<td>%s (±%s)</td>",
-					node.PingStats.AvgLatency.Round(time.Millisecond), node.PingStats.Jitter.Round(time.Millisecond)))
+				html.WriteString(fmt.Sprintf("<td>%s ± %s</td>",
+					node.PingStats.AvgLatency.Round(time.Millisecond), node.PingStats.StdDev.Round(time.Millisecond)))
 				html.WriteString(fmt.Sprintf(`<td><button class="btn btn-danger" hx-ext="disable-element" `+
 					`hx-disable-element="self" hx-delete="/providers/%s/regions/%s">Delete</button></td>`,
 					node.Provider, node.Region))
@@ -240,10 +240,10 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 					connectionType := region.PingStats.ConnectionType
 
 					tooltip := fmt.Sprintf(
-						"Success Rate: %.1f%% Avg Latency: %s (±%s jitter) Last Failure: %s Created: %s Connection: %s",
+						"Success Rate: %.1f%% Avg Latency: %s ± %s stddev Last Failure: %s Created: %s Connection: %s",
 						region.PingStats.SuccessRate*100,
 						region.PingStats.AvgLatency.Round(time.Millisecond),
-						region.PingStats.Jitter.Round(time.Millisecond),
+						region.PingStats.StdDev.Round(time.Millisecond),
 						lastFailureStr,
 						region.CreatedTS.Round(time.Second),
 						connectionType,
