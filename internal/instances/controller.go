@@ -36,7 +36,7 @@ type PingHistory struct {
 	totalLatency          time.Duration
 	lastFailure           time.Time
 	position              int // Current position in ring buffer
-	totalLatencySquaredNs int64
+	totalLatencySquaredNs float64 // Use float64 to avoid overflow with large latencies
 }
 
 // NewPingHistory creates a new ping history tracker
@@ -60,7 +60,7 @@ func (ph *PingHistory) AddResult(success bool, latency time.Duration, connection
 	if ph.history[ph.position].Success {
 		ph.successCount--
 		ph.totalLatency -= ph.history[ph.position].Latency
-		latencyNs := int64(ph.history[ph.position].Latency)
+		latencyNs := float64(ph.history[ph.position].Latency)
 		ph.totalLatencySquaredNs -= latencyNs * latencyNs
 	}
 
@@ -75,7 +75,7 @@ func (ph *PingHistory) AddResult(success bool, latency time.Duration, connection
 	if success {
 		ph.successCount++
 		ph.totalLatency += latency
-		latencyNs := int64(latency)
+		latencyNs := float64(latency)
 		ph.totalLatencySquaredNs += latencyNs * latencyNs
 	} else {
 		ph.lastFailure = time.Now()
@@ -109,7 +109,7 @@ func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration
 		// Calculate standard deviation: stddev = sqrt(E[X²] - E[X]²)
 		if ph.successCount > 1 {
 			meanNs := float64(ph.totalLatency) / float64(ph.successCount)
-			meanOfSquares := float64(ph.totalLatencySquaredNs) / float64(ph.successCount)
+			meanOfSquares := ph.totalLatencySquaredNs / float64(ph.successCount)
 			variance := meanOfSquares - (meanNs * meanNs)
 			if variance > 0 {
 				stddev = time.Duration(math.Sqrt(variance))
