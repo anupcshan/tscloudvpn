@@ -33,9 +33,11 @@ type PreauthKey struct {
 func (k PreauthKey) GetCLIArgs() []string {
 	var args []string
 	args = append(args, fmt.Sprintf("--authkey=%s", k.Key))
-	args = append(args, fmt.Sprintf("--advertise-tags=%s", strings.Join(k.Tags, ",")))
 	if k.ControlURL != "" {
 		args = append(args, fmt.Sprintf("--login-server=%s", k.ControlURL))
+	} else {
+		// Headscale 0.28+ rejects --advertise-tags with --authkey
+		args = append(args, fmt.Sprintf("--advertise-tags=%s", strings.Join(k.Tags, ",")))
 	}
 	return args
 }
