@@ -30,8 +30,15 @@ timeout 5m sudo tailscale up --accept-routes --advertise-exit-node --advertise-c
 
 set +x
 
-# If instance is able to check presence in Tailscale for 2m, shut it down
+# If instance is unable to check presence in Tailscale for 2m, shut it down
 lastGood=$(date "+%s")
+
+# Shut down if no traffic has been forwarded for 4 hours (14400 seconds).
+# ForwDatagrams in /proc/net/snmp counts only IP-forwarded packets (exit node
+# traffic), not locally-terminated control traffic or health-check pings.
+idleShutdownSeconds=14400
+lastForwarded=$(awk '/^Ip:/ && !/Forwarding/ {print $7}' /proc/net/snmp)
+lastForwardedTime=$(date "+%s")
 
 while sleep 1; do
   now=$(date "+%s")
@@ -46,4 +53,21 @@ while sleep 1; do
   fi
 
   [[ $(tailscale status --json | jq .Self.Online) == "true" ]] && lastGood=$now
+
+  # Check for idle exit node (no forwarded traffic)
+  currentForwarded=$(awk '/^Ip:/ && !/Forwarding/ {print $7}' /proc/net/snmp)
+  if [ "$currentForwarded" != "$lastForwarded" ]; then
+    lastForwarded=$currentForwarded
+    lastForwardedTime=$now
+  fi
+
+  idleSeconds=$(( now - lastForwardedTime ))
+  if [ $idleSeconds -gt $idleShutdownSeconds ]; then
+    echo "No forwarded traffic in $idleShutdownSeconds seconds, exiting"
+    exit 1
+  fi
+
+  if [ $idleSeconds -gt 0 ] && [ $(( idleSeconds % 3600 )) -lt 2 ]; then
+    echo "No forwarded traffic in $idleSeconds seconds ..."
+  fi
 done
