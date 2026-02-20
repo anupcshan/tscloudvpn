@@ -353,6 +353,11 @@ func (c *Controller) performHealthCheck(hostname providers.HostName) {
 	if peer == nil {
 		// Instance not registered yet or removed
 		c.mu.Lock()
+		if c.isRunning {
+			// Instance was running but peer disappeared - clear launchedAt
+			// so the UI doesn't show a stale "Launched instance xx ago" message.
+			c.launchedAt = time.Time{}
+		}
 		c.isRunning = false
 		c.mu.Unlock()
 		return
