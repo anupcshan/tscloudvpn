@@ -198,8 +198,8 @@ func TestIntegration_ControllerWithFakeProvider_BasicLifecycle(t *testing.T) {
 	if status.Region != "fake-us-east" {
 		t.Errorf("Expected region 'fake-us-east', got %s", status.Region)
 	}
-	if status.IsRunning {
-		t.Error("Expected instance to not be running initially")
+	if status.State != StateIdle {
+		t.Errorf("Expected instance state to be StateIdle, got %d", status.State)
 	}
 
 	// Add device to control API before creation to simulate quick registration
@@ -225,8 +225,8 @@ func TestIntegration_ControllerWithFakeProvider_BasicLifecycle(t *testing.T) {
 
 	// Test status after creation
 	status = controller.Status()
-	if !status.IsRunning {
-		t.Error("Expected instance to be running after creation")
+	if status.State != StateRunning {
+		t.Errorf("Expected instance state to be StateRunning, got %d", status.State)
 	}
 	if status.LaunchedAt.IsZero() {
 		t.Error("Expected LaunchedAt to be set after creation")
@@ -249,8 +249,8 @@ func TestIntegration_ControllerWithFakeProvider_BasicLifecycle(t *testing.T) {
 
 	// Test status after deletion
 	status = controller.Status()
-	if status.IsRunning {
-		t.Error("Expected instance to not be running after deletion")
+	if status.State != StateIdle {
+		t.Errorf("Expected instance state to be StateIdle after deletion, got %d", status.State)
 	}
 
 	_, exists = fakeProvider.GetInstance("fake-us-east")
@@ -302,7 +302,7 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 			return false
 		}
 		for _, status := range statuses {
-			if !status.IsRunning {
+			if status.State != StateRunning {
 				return false
 			}
 		}
@@ -342,8 +342,8 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 		if status.Region != region {
 			t.Errorf("Expected region %s, got %s", region, status.Region)
 		}
-		if !status.IsRunning {
-			t.Errorf("Expected instance %s to be running", key)
+		if status.State != StateRunning {
+			t.Errorf("Expected instance %s to have state StateRunning, got %d", key, status.State)
 		}
 	}
 
@@ -399,8 +399,8 @@ func TestIntegration_ControllerWithFakeProvider_CreateFailure(t *testing.T) {
 
 	// Verify controller status reflects failure
 	status := controller.Status()
-	if status.IsRunning {
-		t.Error("Expected instance to not be running after failed creation")
+	if status.State != StateIdle {
+		t.Errorf("Expected instance state to be StateIdle after failed creation, got %d", status.State)
 	}
 	if !status.LaunchedAt.IsZero() {
 		t.Error("Expected LaunchedAt to be zero after failed creation")
@@ -441,7 +441,7 @@ func TestIntegration_RegistryWithFakeProvider_ProviderFailures(t *testing.T) {
 	// Wait for instance to be running
 	require.Eventually(t, func() bool {
 		status, err := registry.GetInstanceStatus("fake", "fake-us-east")
-		return err == nil && status.IsRunning
+		return err == nil && status.State == StateRunning
 	}, 10*time.Second, 100*time.Millisecond, "Expected instance to be running")
 
 	// Now configure provider to fail status checks
@@ -514,8 +514,8 @@ func TestIntegration_RegistryWithFakeProvider_DiscoverExistingInstances(t *testi
 
 	// Check specific instances
 	for key, status := range statuses {
-		if !status.IsRunning {
-			t.Errorf("Discovered instance %s should be running", key)
+		if status.State != StateRunning {
+			t.Errorf("Discovered instance %s should have state StateRunning, got %d", key, status.State)
 		}
 		if status.CreatedAt.IsZero() {
 			t.Errorf("Discovered instance %s should have creation time", key)
@@ -581,8 +581,8 @@ func TestIntegration_ControllerWithFakeProvider_SlowOperations(t *testing.T) {
 
 	// Verify instance was created
 	status := controller.Status()
-	if !status.IsRunning {
-		t.Error("Expected instance to be running after slow creation")
+	if status.State != StateRunning {
+		t.Errorf("Expected instance state to be StateRunning after slow creation, got %d", status.State)
 	}
 }
 
@@ -613,7 +613,7 @@ func TestIntegration_ControllerDelete_CloudDeletionFailure_StillSucceeds(t *test
 
 	// Mark controller as running (simulate existing instance)
 	controller.mu.Lock()
-	controller.isRunning = true
+	controller.state = StateRunning
 	controller.mu.Unlock()
 
 	// Delete instance - should succeed even if cloud delete fails

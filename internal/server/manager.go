@@ -255,8 +255,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 					// Check if instance is being launched
 					instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Provider, region.Region)
 					disabledFragment := ""
-					if err == nil && !instanceStatus.LaunchedAt.IsZero() && !instanceStatus.IsRunning {
-						// Instance is launching but not yet running
+					if err == nil && instanceStatus.State == instances.StateLaunching {
 						data[hasNodeKey] = fmt.Sprintf(`<span class="badge badge-info">Launched instance %s ago ...</span>`, durafmt.ParseShort(time.Since(instanceStatus.LaunchedAt)).InternationalString())
 						disabledFragment = "disabled"
 					} else {

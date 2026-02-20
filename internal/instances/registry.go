@@ -208,9 +208,8 @@ func (r *Registry) discoverExistingInstances(ctx context.Context) {
 
 					// Mark as running and set creation time
 					controller.mu.Lock()
-					controller.isRunning = true
+					controller.state = StateRunning
 					controller.createdAt = device.Created
-					// We don't know the launch time for existing instances, so we'll leave it as zero
 					controller.mu.Unlock()
 
 					r.controllers[key] = controller

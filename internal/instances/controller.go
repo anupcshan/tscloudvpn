@@ -134,11 +134,21 @@ func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration
 	return successRate, avgLatency, stddev, timeSinceFailure, connectionType
 }
 
+// InstanceState represents the lifecycle state of an instance
+type InstanceState int
+
+const (
+	StateIdle      InstanceState = iota // No activity or instance gone
+	StateLaunching                      // Create() called, cloud API in progress
+	StateRunning                        // Instance is up, peer visible in Tailscale
+)
+
 // InstanceStatus represents the current state of an instance
 type InstanceStatus struct {
 	Hostname   providers.HostName
 	Provider   string
 	Region     string
+	State      InstanceState
 	IsRunning  bool
 	CreatedAt  time.Time
 	LaunchedAt time.Time
@@ -164,7 +174,7 @@ type Controller struct {
 	ping              *PingHistory
 	launchedAt        time.Time
 	createdAt         time.Time
-	isRunning         bool
+	state             InstanceState
 	done              chan struct{}
 	healthCheckTicker *time.Ticker
 }
@@ -202,11 +212,12 @@ func NewController(
 func (c *Controller) Create() error {
 	c.mu.Lock()
 	// Check if instance is already running (discovered on startup)
-	if c.isRunning {
+	if c.state == StateRunning {
 		c.mu.Unlock()
 		c.logger.Printf("Instance %s is already running, skipping creation", c.provider.Hostname(c.region))
 		return nil
 	}
+	c.state = StateLaunching
 	c.launchedAt = time.Now()
 	c.mu.Unlock()
 
@@ -214,13 +225,14 @@ func (c *Controller) Create() error {
 	err := creator.Create(c.ctx, c.logger, c.controlApi, c.provider, c.region)
 	if err != nil {
 		c.mu.Lock()
+		c.state = StateIdle
 		c.launchedAt = time.Time{}
 		c.mu.Unlock()
 		return err
 	}
 
 	c.mu.Lock()
-	c.isRunning = true
+	c.state = StateRunning
 	c.mu.Unlock()
 
 	return nil
@@ -274,7 +286,7 @@ func (c *Controller) Delete() error {
 	}
 
 	c.mu.Lock()
-	c.isRunning = false
+	c.state = StateIdle
 	c.mu.Unlock()
 
 	return nil
@@ -289,7 +301,8 @@ func (c *Controller) Status() InstanceStatus {
 		Hostname:   c.provider.Hostname(c.region),
 		Provider:   "", // Provider name will be set by caller
 		Region:     c.region,
-		IsRunning:  c.isRunning,
+		State:      c.state,
+		IsRunning:  c.state == StateRunning,
 		CreatedAt:  c.createdAt,
 		LaunchedAt: c.launchedAt,
 	}
@@ -353,19 +366,17 @@ func (c *Controller) performHealthCheck(hostname providers.HostName) {
 	if peer == nil {
 		// Instance not registered yet or removed
 		c.mu.Lock()
-		if c.isRunning {
-			// Instance was running but peer disappeared - clear launchedAt
-			// so the UI doesn't show a stale "Launched instance xx ago" message.
+		if c.state == StateRunning {
+			c.state = StateIdle
 			c.launchedAt = time.Time{}
 		}
-		c.isRunning = false
 		c.mu.Unlock()
 		return
 	}
 
 	c.mu.Lock()
-	if !c.isRunning {
-		c.isRunning = true
+	if c.state != StateRunning {
+		c.state = StateRunning
 		c.createdAt = peer.Created
 	}
 	c.mu.Unlock()

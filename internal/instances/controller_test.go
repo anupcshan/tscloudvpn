@@ -121,8 +121,8 @@ func TestController_NewController(t *testing.T) {
 	if status.Region != "test-region" {
 		t.Errorf("Expected region 'test-region', got %s", status.Region)
 	}
-	if status.IsRunning {
-		t.Error("Expected instance to not be running initially")
+	if status.State != StateIdle {
+		t.Errorf("Expected instance state to be StateIdle, got %d", status.State)
 	}
 	if status.PingStats.SuccessRate != 0 {
 		t.Error("Expected initial success rate to be 0")
@@ -277,13 +277,12 @@ func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 
 	// Verify the discovered instances have correct status
 	for key, status := range allStatuses {
-		if !status.IsRunning {
-			t.Errorf("Discovered instance %s should be marked as running", key)
+		if status.State != StateRunning {
+			t.Errorf("Discovered instance %s should have state StateRunning, got %d", key, status.State)
 		}
 		if status.CreatedAt.IsZero() {
 			t.Errorf("Discovered instance %s should have creation time set", key)
 		}
-		// LaunchedAt may be zero for discovered instances since we don't know when they were launched
 	}
 
 	// Test that creating an instance that already exists doesn't duplicate it
