@@ -588,5 +588,5 @@ func (a *azureProvider) estimateRegionPrice(region string) float64 {
 }
 
 func init() {
-	providers.Register(providerName, NewProvider)
+	providers.Register(providerName, "Azure", NewProvider)
 }

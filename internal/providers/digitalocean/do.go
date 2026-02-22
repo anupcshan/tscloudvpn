@@ -251,5 +251,5 @@ func (d *digitaloceanProvider) GetRegionPrice(region string) float64 {
 }
 
 func init() {
-	providers.Register("do", New)
+	providers.Register("do", "DigitalOcean", New)
 }

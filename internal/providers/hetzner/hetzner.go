@@ -311,5 +311,5 @@ func (h *hetznerProvider) GetRegionPrice(region string) float64 {
 }
 
 func init() {
-	providers.Register("hetzner", New)
+	providers.Register("hetzner", "Hetzner", New)
 }

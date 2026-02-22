@@ -309,5 +309,5 @@ func (v *vultrProvider) ListRegions(ctx context.Context) ([]providers.Region, er
 }
 
 func init() {
-	providers.Register(providerName, NewProvider)
+	providers.Register(providerName, "Vultr", NewProvider)
 }

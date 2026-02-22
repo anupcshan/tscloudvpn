@@ -1,70 +1,91 @@
 {{ template "header.tmpl" . }}
 
-<div class="row">
-  <div class="col-md-12">
-    <h1>Running Nodes</h1>
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Provider</th>
-          <th>Region</th>
-          <th>Uptime</th>
-          <th>Price</th>
-          <th>Connection</th>
-          <th>Success Rate</th>
-          <th>Latency</th>
-          <th>Action</th>
-        </tr>
-      </thead>
-      <tbody sse-swap="running-nodes-table">
-      </tbody>
-    </table>
+<!-- Active Nodes -->
+<section>
+  <h2>Active Nodes</h2>
+  <div id="nodes-list" sse-swap="running-nodes-table">
+    <div class="no-nodes">No active nodes</div>
   </div>
-</div>
+</section>
 
-<div class="row">
-  <div class="col-md-12">
-    <h1>Regions</h1>
-    <div>
-      <input class="form-control" id="filterInput" type="text" placeholder="Filter">
-      <script>
-      $(document).ready(function(){
-        $("#filterInput").on("keyup", function() {
-          var value = $(this).val().toLowerCase();
-          $("#regionsTable tr").filter(function() {
-            $(this).toggle($(this).text().toLowerCase().indexOf(value) > -1)
-          });
-        });
-      });
-      </script>
-    </div>
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Provider</th>
-          <th>Region</th>
-          <th>Location</th>
-          <th>Price</th>
-          <th>Status</th>
-          <th>Action</th>
-        </tr>
-      </thead>
-      <tbody id="regionsTable">
-        {{ range .Detail }}
-        <tr>
-          <td>{{.Provider}}</td>
-          <td>{{.Region}}</td>
-          <td>{{.LongName}}</td>
-          <td>
-            {{ printf "%.2f" .PriceCentsPerHour }}c/hr
-          </td>
-          <td sse-swap="{{.Provider}}-{{.Region}}-hasnode"></td>
-          <td sse-swap="{{.Provider}}-{{.Region}}-button"></td>
-        </tr>
-        {{ end }}
-      </tbody>
-    </table>
+<!-- Region Picker -->
+<section>
+  <h2>Launch Node</h2>
+  <div class="search-wrap">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+    </svg>
+    <input id="search" type="text" placeholder="Filter regions..." autocomplete="off">
   </div>
-</div>
+  <div id="providers">
+    {{ range groupByProvider .Detail }}
+    <div class="provider-group" data-provider="{{ .Provider }}">
+      <div class="provider-header" onclick="toggleProvider(this)">
+        <span class="provider-name">{{ .Label }}</span>
+        <span class="provider-count">{{ len .Regions }} region{{ if ne (len .Regions) 1 }}s{{ end }}</span>
+        <svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="m6 9 6 6 6-6"/>
+        </svg>
+      </div>
+      <div class="provider-body">
+        {{ range .Regions }}
+        <div class="region-row" data-name="{{ .LongName }}">
+          <span class="region-name">{{ .LongName }}</span>
+          <span class="region-price">{{ printf "%.2f" .PriceCentsPerHour }}c/hr</span>
+          <span class="region-status" sse-swap="{{ .Provider }}-{{ .Region }}-hasnode"></span>
+          <span class="region-action" sse-swap="{{ .Provider }}-{{ .Region }}-button"></span>
+        </div>
+        {{ end }}
+      </div>
+    </div>
+    {{ end }}
+  </div>
+  <div id="empty" class="empty" style="display:none">No regions match your search.</div>
+</section>
+
+<script>
+function toggleProvider(header) {
+  header.classList.toggle('open');
+  header.nextElementSibling.classList.toggle('open');
+}
+
+document.getElementById('search').addEventListener('input', function() {
+  var q = this.value.toLowerCase();
+  var anyVisible = false;
+
+  document.querySelectorAll('.provider-group').forEach(function(group) {
+    var rows = group.querySelectorAll('.region-row');
+    var visibleCount = 0;
+
+    rows.forEach(function(row) {
+      var name = row.getAttribute('data-name').toLowerCase();
+      var provider = group.getAttribute('data-provider').toLowerCase();
+      var match = !q || name.indexOf(q) > -1 || provider.indexOf(q) > -1;
+      row.style.display = match ? '' : 'none';
+      if (match) visibleCount++;
+    });
+
+    group.style.display = visibleCount > 0 ? '' : 'none';
+    if (visibleCount > 0) anyVisible = true;
+
+    // Auto-expand groups when searching, collapse when cleared
+    var header = group.querySelector('.provider-header');
+    var body = group.querySelector('.provider-body');
+    if (q.length > 0 && visibleCount > 0) {
+      header.classList.add('open');
+      body.classList.add('open');
+    } else if (q.length === 0) {
+      header.classList.remove('open');
+      body.classList.remove('open');
+    }
+
+    // Update visible count in header
+    group.querySelector('.provider-count').textContent =
+      visibleCount + ' region' + (visibleCount !== 1 ? 's' : '');
+  });
+
+  document.getElementById('empty').style.display = anyVisible ? 'none' : 'block';
+});
+</script>
 
 {{ template "footer.tmpl" . }}

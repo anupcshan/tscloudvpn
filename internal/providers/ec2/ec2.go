@@ -467,5 +467,5 @@ func (e *ec2Provider) GetRegionPrice(region string) float64 {
 }
 
 func init() {
-	providers.Register(providerName, NewProvider)
+	providers.Register(providerName, "AWS EC2", NewProvider)
 }

@@ -207,5 +207,5 @@ func generateRandomPassword() string {
 }
 
 func init() {
-	providers.Register("linode", New)
+	providers.Register("linode", "Linode", New)
 }

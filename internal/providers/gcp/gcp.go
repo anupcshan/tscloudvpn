@@ -491,5 +491,5 @@ func (g *gcpProvider) GetRegionPrice(region string) float64 {
 }
 
 func init() {
-	providers.Register(providerName, NewProvider)
+	providers.Register(providerName, "Google Cloud", NewProvider)
 }

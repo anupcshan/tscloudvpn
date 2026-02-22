@@ -45,8 +45,9 @@ type Provider interface {
 
 type ProviderFactory func(ctx context.Context, cfg *config.Config) (Provider, error)
 
-func Register(name string, providerFactory ProviderFactory) {
+func Register(name string, label string, providerFactory ProviderFactory) {
 	ProviderFactoryRegistry[name] = providerFactory
+	ProviderLabels[name] = label
 }
 
 const (
@@ -58,6 +59,7 @@ var (
 	//go:embed install.sh.tmpl
 	InitData                string
 	ProviderFactoryRegistry = make(map[string]ProviderFactory)
+	ProviderLabels          = make(map[string]string)
 )
 
 // GetOwnerID returns a unique identifier for the current tscloudvpn instance

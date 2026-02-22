@@ -301,5 +301,5 @@ func (f *FakeProvider) UpdateConfig(config *ProviderConfig) {
 }
 
 func init() {
-	providers.Register("fake", New)
+	providers.Register("fake", "Fake", New)
 }

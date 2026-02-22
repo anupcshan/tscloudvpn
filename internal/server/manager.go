@@ -63,6 +63,7 @@ func NewManager(
 
 type mappedRegion struct {
 	Provider          string
+	ProviderLabel     string
 	Region            string
 	LongName          string
 	HasNode           bool
@@ -128,6 +129,7 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 
 			mappedRegions = append(mappedRegions, mappedRegion{
 				Provider:          providerName,
+				ProviderLabel:     providers.ProviderLabels[providerName],
 				Region:            region.Code,
 				LongName:          region.LongName,
 				HasNode:           hasInstance && instanceStatus.IsRunning,
@@ -161,38 +163,71 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 		defer ticker.Stop()
 
 		buildRunningNodesTableHTML := func(detail []mappedRegion) string {
-			var runningNodes []mappedRegion
-			for _, r := range detail {
-				if r.HasNode {
-					runningNodes = append(runningNodes, r)
+			var html strings.Builder
+			hasCards := false
+
+			// Launching nodes first
+			for _, region := range detail {
+				if region.HasNode {
+					continue
 				}
+				instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Provider, region.Region)
+				if err != nil || instanceStatus.State != instances.StateLaunching {
+					continue
+				}
+				hasCards = true
+				elapsed := durafmt.ParseShort(time.Since(instanceStatus.LaunchedAt)).InternationalString()
+
+				html.WriteString(`<div class="node-card node-card-launching">`)
+				html.WriteString(`<div>`)
+				html.WriteString(`<div class="node-main">`)
+				fmt.Fprintf(&html, `<span class="node-location">%s</span>`, region.LongName)
+				fmt.Fprintf(&html, `<span class="node-provider">%s</span>`, region.ProviderLabel)
+				fmt.Fprintf(&html, `<span class="pill pill-blue">launching %s...</span>`, elapsed)
+				html.WriteString(`</div>`)
+				html.WriteString(`<div class="node-meta" style="margin-top:6px">`)
+				fmt.Fprintf(&html, `<span>cost <span class="val">%.2fc/hr</span></span>`, region.PriceCentsPerHour)
+				html.WriteString(`</div>`)
+				html.WriteString(`</div>`)
+				html.WriteString(`</div>`)
 			}
 
-			var html strings.Builder
-			for _, node := range runningNodes {
+			// Running nodes
+			for _, node := range detail {
+				if !node.HasNode {
+					continue
+				}
+				hasCards = true
 				connectionType := node.PingStats.ConnectionType
 
-				successRateClass := "label-danger"
-				if node.PingStats.SuccessRate >= 0.95 {
-					successRateClass = "label-success"
-				} else if node.PingStats.SuccessRate >= 0.80 {
-					successRateClass = "label-warning"
+				pillClass := "pill-green"
+				if node.PingStats.SuccessRate < 0.80 {
+					pillClass = "pill-yellow"
 				}
 
-				html.WriteString("<tr>")
-				fmt.Fprintf(&html, "<td>%s</td>", node.Provider)
-				fmt.Fprintf(&html, "<td>%s</td>", node.Region)
-				fmt.Fprintf(&html, "<td>%s</td>", node.SinceCreated)
-				fmt.Fprintf(&html, "<td>%.2fc/hr</td>", node.PriceCentsPerHour)
-				fmt.Fprintf(&html, "<td>%s</td>", connectionType)
-				fmt.Fprintf(&html, `<td><span class="label %s">%.1f%%</span></td>`,
-					successRateClass, node.PingStats.SuccessRate*100)
-				fmt.Fprintf(&html, "<td>%s ± %s</td>",
+				html.WriteString(`<div class="node-card">`)
+				html.WriteString(`<div>`)
+				html.WriteString(`<div class="node-main">`)
+				fmt.Fprintf(&html, `<span class="node-location">%s</span>`, node.LongName)
+				fmt.Fprintf(&html, `<span class="node-provider">%s</span>`, node.ProviderLabel)
+				fmt.Fprintf(&html, `<span class="pill %s">%s</span>`, pillClass, connectionType)
+				html.WriteString(`</div>`)
+				html.WriteString(`<div class="node-meta" style="margin-top:6px">`)
+				fmt.Fprintf(&html, `<span>uptime <span class="val">%s</span></span>`, node.SinceCreated)
+				fmt.Fprintf(&html, `<span>latency <span class="val">%s ± %s</span></span>`,
 					node.PingStats.AvgLatency.Round(time.Millisecond), node.PingStats.StdDev.Round(time.Millisecond))
-				fmt.Fprintf(&html, `<td><button class="btn btn-danger" hx-ext="disable-element" `+
-					`hx-disable-element="self" hx-delete="/providers/%s/regions/%s">Delete</button></td>`,
+				fmt.Fprintf(&html, `<span>cost <span class="val">%.2fc/hr</span></span>`, node.PriceCentsPerHour)
+				fmt.Fprintf(&html, `<span>success <span class="val">%.0f%%</span></span>`, node.PingStats.SuccessRate*100)
+				html.WriteString(`</div>`)
+				html.WriteString(`</div>`)
+				fmt.Fprintf(&html, `<button class="btn btn-danger" hx-ext="disable-element" `+
+					`hx-disable-element="self" hx-delete="/providers/%s/regions/%s">Delete</button>`,
 					node.Provider, node.Region)
-				html.WriteString("</tr>")
+				html.WriteString(`</div>`)
+			}
+
+			if !hasCards {
+				return `<div class="no-nodes">No active nodes</div>`
 			}
 			return html.String()
 		}
@@ -225,43 +260,24 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				buttonKey := fmt.Sprintf("%s-%s-button", region.Provider, region.Region)
 				opURL := fmt.Sprintf("/providers/%s/regions/%s", region.Provider, region.Region)
 				if region.HasNode {
-					labelClass := "label-danger"
-					if region.PingStats.SuccessRate >= 0.95 {
-						labelClass = "label-success"
-					} else if region.PingStats.SuccessRate >= 0.80 {
-						labelClass = "label-warning"
+					pillClass := "pill-green"
+					if region.PingStats.SuccessRate < 0.80 {
+						pillClass = "pill-yellow"
 					}
 
-					lastFailureStr := "never"
-					if region.PingStats.TimeSinceFailure > 0 {
-						lastFailureStr = durafmt.ParseShort(region.PingStats.TimeSinceFailure).String() + " ago"
-					}
-
-					connectionType := region.PingStats.ConnectionType
-
-					tooltip := fmt.Sprintf(
-						"Success Rate: %.1f%% Avg Latency: %s ± %s stddev Last Failure: %s Created: %s Connection: %s",
-						region.PingStats.SuccessRate*100,
-						region.PingStats.AvgLatency.Round(time.Millisecond),
-						region.PingStats.StdDev.Round(time.Millisecond),
-						lastFailureStr,
-						region.CreatedTS.Round(time.Second),
-						connectionType,
-					)
-
-					data[hasNodeKey] = fmt.Sprintf(`<span class="label %s" title="%s" style="margin-right: 0.25em">running for %s</span>`, labelClass, tooltip, region.SinceCreated)
+					data[hasNodeKey] = fmt.Sprintf(`<span class="pill %s">running %s</span>`, pillClass, region.SinceCreated)
 					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, opURL)
 				} else {
 					// Check if instance is being launched
 					instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Provider, region.Region)
 					disabledFragment := ""
 					if err == nil && instanceStatus.State == instances.StateLaunching {
-						data[hasNodeKey] = fmt.Sprintf(`<span class="badge badge-info">Launched instance %s ago ...</span>`, durafmt.ParseShort(time.Since(instanceStatus.LaunchedAt)).InternationalString())
+						data[hasNodeKey] = fmt.Sprintf(`<span class="pill pill-blue">launching %s...</span>`, durafmt.ParseShort(time.Since(instanceStatus.LaunchedAt)).InternationalString())
 						disabledFragment = "disabled"
 					} else {
 						data[hasNodeKey] = ""
 					}
-					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-primary" hx-ext="disable-element" hx-disable-element="self" hx-put="%s" %s>Create</button>`, opURL, disabledFragment)
+					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-create" hx-ext="disable-element" hx-disable-element="self" hx-put="%s" %s>Create</button>`, opURL, disabledFragment)
 				}
 			}
 
