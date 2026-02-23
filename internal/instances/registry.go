@@ -8,7 +8,7 @@ import (
 
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
-	"tailscale.com/client/local"
+	"github.com/anupcshan/tscloudvpn/internal/tsclient"
 )
 
 // Registry manages all instance controllers
@@ -17,7 +17,7 @@ type Registry struct {
 	controllers map[string]*Controller // key: "provider-region"
 	logger      *log.Logger
 	controlApi  controlapi.ControlApi
-	tsClient    *local.Client
+	tsClient    tsclient.TailscaleClient
 	providers   map[string]providers.Provider
 }
 
@@ -25,7 +25,7 @@ type Registry struct {
 func NewRegistry(
 	logger *log.Logger,
 	controlApi controlapi.ControlApi,
-	tsClient *local.Client,
+	tsClient tsclient.TailscaleClient,
 	providers map[string]providers.Provider,
 ) *Registry {
 	r := &Registry{

@@ -2,8 +2,6 @@ package status
 
 import (
 	"github.com/anupcshan/tscloudvpn/internal/providers"
-	"github.com/bradenaw/juniper/xmaps"
-	"tailscale.com/ipn/ipnstate"
 )
 
 // Info wraps any type T with status information about the cloud infrastructure
@@ -15,32 +13,34 @@ type Info[T any] struct {
 }
 
 // WrapWithInfo wraps the given detail with status information computed from
-// cloud providers, regions, and Tailscale status
+// cloud providers, regions, and the set of peer hostnames visible in Tailscale
 func WrapWithInfo[T any](
 	t T,
 	cloudProviders map[string]providers.Provider,
 	lazyListRegionsMap map[string]func() []providers.Region,
-	tsStatus *ipnstate.Status,
+	peerHostnames []string,
 ) Info[T] {
 	regionCount := 0
-	deviceMap := xmaps.Set[providers.HostName]{}
-	expectedHostnameMap := xmaps.Set[providers.HostName]{}
-
-	for _, peer := range tsStatus.Peer {
-		deviceMap.Add(providers.HostName(peer.HostName))
+	peerSet := make(map[providers.HostName]struct{}, len(peerHostnames))
+	for _, h := range peerHostnames {
+		peerSet[providers.HostName(h)] = struct{}{}
 	}
 
+	activeNodes := 0
 	for providerName, f := range lazyListRegionsMap {
 		for _, region := range f() {
 			regionCount++
-			expectedHostnameMap.Add(cloudProviders[providerName].Hostname(region.Code))
+			hostname := cloudProviders[providerName].Hostname(region.Code)
+			if _, ok := peerSet[hostname]; ok {
+				activeNodes++
+			}
 		}
 	}
 
 	return Info[T]{
 		ProviderCount: len(cloudProviders),
 		RegionCount:   regionCount,
-		ActiveNodes:   len(xmaps.Intersection(deviceMap, expectedHostnameMap)),
+		ActiveNodes:   activeNodes,
 		Detail:        t,
 	}
 }

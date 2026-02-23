@@ -11,6 +11,7 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/config"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/anupcshan/tscloudvpn/internal/server"
+	"github.com/anupcshan/tscloudvpn/internal/tsclient"
 )
 
 // App represents the main application
@@ -81,7 +82,7 @@ func (a *App) Initialize(ctx context.Context) error {
 
 	a.server = server.New(&server.Config{
 		CloudProviders: cloudProviders,
-		TSLocalClient:  tsLocalClient,
+		TSLocalClient:  tsclient.NewLocalClient(tsLocalClient),
 		Controller:     controller,
 	})
 

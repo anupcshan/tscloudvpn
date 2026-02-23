@@ -10,9 +10,7 @@ import (
 
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
-	"tailscale.com/client/local"
-	"tailscale.com/ipn/ipnstate"
-	"tailscale.com/tailcfg"
+	"github.com/anupcshan/tscloudvpn/internal/tsclient"
 )
 
 const (
@@ -170,7 +168,7 @@ type Controller struct {
 	provider          providers.Provider
 	region            string
 	controlApi        controlapi.ControlApi
-	tsClient          *local.Client
+	tsClient          tsclient.TailscaleClient
 	ping              *PingHistory
 	launchedAt        time.Time
 	createdAt         time.Time
@@ -186,7 +184,7 @@ func NewController(
 	provider providers.Provider,
 	region string,
 	controlApi controlapi.ControlApi,
-	tsClient *local.Client,
+	tsClient tsclient.TailscaleClient,
 ) *Controller {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -347,18 +345,17 @@ func (c *Controller) performHealthCheck(hostname providers.HostName) {
 	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
 	defer cancel()
 
-	// Get Tailscale status to find our peer
-	tsStatus, err := c.tsClient.Status(ctx)
+	peers, err := c.tsClient.GetPeers(ctx)
 	if err != nil {
-		c.logger.Printf("Error getting Tailscale status for %s: %s", hostname, err)
+		c.logger.Printf("Error getting Tailscale peers for %s: %s", hostname, err)
 		return
 	}
 
 	// Find our peer
-	var peer *ipnstate.PeerStatus
-	for _, p := range tsStatus.Peer {
-		if providers.HostName(p.HostName) == hostname {
-			peer = p
+	var peer *tsclient.PeerInfo
+	for i, p := range peers {
+		if providers.HostName(p.Hostname) == hostname {
+			peer = &peers[i]
 			break
 		}
 	}
@@ -382,16 +379,11 @@ func (c *Controller) performHealthCheck(hostname providers.HostName) {
 	c.mu.Unlock()
 
 	// Perform ping
-	result, err := c.tsClient.Ping(ctx, peer.TailscaleIPs[0], tailcfg.PingDisco)
+	result, err := c.tsClient.PingPeer(ctx, peer.TailscaleIPs[0])
 	if err != nil {
-		c.logger.Printf("Ping error from %s (%s): %s", peer.HostName, peer.TailscaleIPs[0], err)
+		c.logger.Printf("Ping error from %s (%s): %s", peer.Hostname, peer.TailscaleIPs[0], err)
 		c.ping.AddResult(false, 0, "")
 	} else {
-		latency := time.Duration(result.LatencySeconds*1000000) * time.Microsecond
-		connectionType := "direct"
-		if result.Endpoint == "" && result.DERPRegionCode != "" {
-			connectionType = "relayed via " + result.DERPRegionCode
-		}
-		c.ping.AddResult(true, latency, connectionType)
+		c.ping.AddResult(true, result.Latency, result.ConnectionType)
 	}
 }

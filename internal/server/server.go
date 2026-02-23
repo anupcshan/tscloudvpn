@@ -9,6 +9,7 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	httputils "github.com/anupcshan/tscloudvpn/internal/http"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/anupcshan/tscloudvpn/internal/tsclient"
 	"tailscale.com/client/local"
 	"tailscale.com/tsnet"
 )
@@ -16,7 +17,7 @@ import (
 // Config holds the configuration for the server
 type Config struct {
 	CloudProviders map[string]providers.Provider
-	TSLocalClient  *local.Client
+	TSLocalClient  tsclient.TailscaleClient
 	Controller     controlapi.ControlApi
 }
 

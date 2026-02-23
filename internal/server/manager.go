@@ -19,22 +19,22 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/status"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
 
+	"github.com/anupcshan/tscloudvpn/internal/tsclient"
 	"github.com/hako/durafmt"
-	"tailscale.com/client/local"
 )
 
 type Manager struct {
 	cloudProviders     map[string]providers.Provider
 	lazyListRegionsMap map[string]func() []providers.Region
 	instanceRegistry   *instances.Registry
-	tsLocalClient      *local.Client
+	tsLocalClient      tsclient.TailscaleClient
 }
 
 func NewManager(
 	ctx context.Context,
 	logger *log.Logger,
 	cloudProviders map[string]providers.Provider,
-	tsLocalClient *local.Client,
+	tsLocalClient tsclient.TailscaleClient,
 	controlApi controlapi.ControlApi,
 ) *Manager {
 	lazyListRegionsMap := make(map[string]func() []providers.Region)
@@ -85,9 +85,14 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 	var zero status.Info[[]mappedRegion]
 	var mappedRegions []mappedRegion
 
-	tsStatus, err := m.tsLocalClient.Status(ctx)
+	peers, err := m.tsLocalClient.GetPeers(ctx)
 	if err != nil {
 		return zero, err
+	}
+
+	peerHostnames := make([]string, len(peers))
+	for i, p := range peers {
+		peerHostnames[i] = p.Hostname
 	}
 
 	// Get all instance statuses from the registry
@@ -150,7 +155,7 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 		return mappedRegions[i].Region < mappedRegions[j].Region
 	})
 
-	return status.WrapWithInfo(mappedRegions, m.cloudProviders, m.lazyListRegionsMap, tsStatus), nil
+	return status.WrapWithInfo(mappedRegions, m.cloudProviders, m.lazyListRegionsMap, peerHostnames), nil
 }
 
 func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controller controlapi.ControlApi) {
