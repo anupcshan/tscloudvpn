@@ -221,7 +221,8 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				fmt.Fprintf(&html, `<span>uptime <span class="val">%s</span></span>`, node.SinceCreated)
 				fmt.Fprintf(&html, `<span>latency <span class="val">%s ± %s</span></span>`,
 					node.PingStats.AvgLatency.Round(time.Millisecond), node.PingStats.StdDev.Round(time.Millisecond))
-				fmt.Fprintf(&html, `<span>cost <span class="val">%.2fc/hr</span></span>`, node.PriceCentsPerHour)
+				runningCostDollars := node.PriceCentsPerHour / 100 * time.Since(node.CreatedTS).Hours()
+				fmt.Fprintf(&html, `<span>cost <span class="val">$%.2f</span> (%.2fc/hr)</span>`, runningCostDollars, node.PriceCentsPerHour)
 				fmt.Fprintf(&html, `<span>success <span class="val">%.0f%%</span></span>`, node.PingStats.SuccessRate*100)
 				html.WriteString(`</div>`)
 				html.WriteString(`</div>`)
