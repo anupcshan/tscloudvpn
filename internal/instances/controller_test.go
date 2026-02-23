@@ -87,10 +87,6 @@ func (m *MockControlApi) DeleteDevice(ctx context.Context, device *controlapi.De
 	return nil
 }
 
-func (m *MockControlApi) ApproveExitNode(ctx context.Context, device *controlapi.Device) error {
-	return nil
-}
-
 // AddDevice adds a device to the mock (for testing)
 func (m *MockControlApi) AddDevice(device controlapi.Device) {
 	m.mu.Lock()

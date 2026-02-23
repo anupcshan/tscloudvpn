@@ -229,10 +229,8 @@ func (c *Controller) Create() error {
 		return err
 	}
 
-	c.mu.Lock()
-	c.state = StateRunning
-	c.mu.Unlock()
-
+	// Stay in StateLaunching — the health check will transition to
+	// StateRunning when the peer appears in Tailscale.
 	return nil
 }
 

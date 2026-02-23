@@ -53,34 +53,18 @@ func (c *TailscaleClient) ListDevices(ctx context.Context) ([]Device, error) {
 
 	devices := make([]Device, len(tsDevices))
 	for i, d := range tsDevices {
-		// Get routes for each device
-		routes, err := c.client.DeviceSubnetRoutes(ctx, d.ID)
-		if err != nil {
-			return nil, err
-		}
-
 		devices[i] = Device{
-			tailscaleID:      d.ID,
-			Name:             d.Name,
-			Hostname:         d.Hostname,
-			Created:          d.Created.Time,
-			LastSeen:         d.LastSeen.Time,
-			IPAddrs:          d.Addresses,
-			IsOnline:         time.Since(d.LastSeen.Time) < 5*time.Minute, // Consider online if seen in last 5 minutes
-			Tags:             d.Tags,
-			AdvertisedRoutes: routes.Advertised,
+			tailscaleID: d.ID,
+			Name:        d.Name,
+			Hostname:    d.Hostname,
+			Created:     d.Created.Time,
+			LastSeen:    d.LastSeen.Time,
+			IPAddrs:     d.Addresses,
+			IsOnline:    time.Since(d.LastSeen.Time) < 5*time.Minute, // Consider online if seen in last 5 minutes
+			Tags:        d.Tags,
 		}
 	}
 	return devices, nil
-}
-
-// ApproveExitNode implements ControlApi.ApproveExitNode
-func (c *TailscaleClient) ApproveExitNode(ctx context.Context, device *Device) error {
-	routes, err := c.client.DeviceSubnetRoutes(ctx, device.tailscaleID)
-	if err != nil {
-		return err
-	}
-	return c.client.SetDeviceSubnetRoutes(ctx, device.tailscaleID, routes.Advertised)
 }
 
 // DeleteDevice implements ControlApi.DeleteDevice

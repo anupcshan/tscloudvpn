@@ -14,14 +14,13 @@ type Device struct {
 	headscaleID uint64
 
 	// Public fields
-	Name             string
-	Hostname         string
-	Created          time.Time
-	LastSeen         time.Time
-	IPAddrs          []string
-	IsOnline         bool
-	Tags             []string
-	AdvertisedRoutes []string
+	Name     string
+	Hostname string
+	Created  time.Time
+	LastSeen time.Time
+	IPAddrs  []string
+	IsOnline bool
+	Tags     []string
 }
 
 type PreauthKey struct {
@@ -49,9 +48,6 @@ type ControlApi interface {
 
 	// ListDevices returns all devices in the network
 	ListDevices(ctx context.Context) ([]Device, error)
-
-	// ApproveExitNode enables the advertised routes for a device, making it an exit node
-	ApproveExitNode(ctx context.Context, device *Device) error
 
 	// DeleteDevice removes a device from the network
 	DeleteDevice(ctx context.Context, device *Device) error

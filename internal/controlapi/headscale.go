@@ -147,39 +147,6 @@ func (c *HeadscaleClient) ListDevices(ctx context.Context) ([]Device, error) {
 	return devices, nil
 }
 
-// ApproveExitNode implements ControlApi.ApproveExitNode
-func (c *HeadscaleClient) ApproveExitNode(ctx context.Context, device *Device) error {
-	// Get the node to retrieve its available routes
-	nodeResp, err := c.client.GetNode(ctx, &headscale.GetNodeRequest{
-		NodeId: device.headscaleID,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to get node: %w", err)
-	}
-
-	node := nodeResp.GetNode()
-	if node == nil {
-		return fmt.Errorf("node not found")
-	}
-
-	// Get available routes
-	availableRoutes := node.GetAvailableRoutes()
-	if len(availableRoutes) == 0 {
-		return fmt.Errorf("no routes available to approve")
-	}
-
-	// Approve all available routes
-	_, err = c.client.SetApprovedRoutes(ctx, &headscale.SetApprovedRoutesRequest{
-		NodeId: device.headscaleID,
-		Routes: availableRoutes,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to approve routes: %w", err)
-	}
-
-	return nil
-}
-
 // DeleteDevice implements ControlApi.DeleteDevice
 func (c *HeadscaleClient) DeleteDevice(ctx context.Context, device *Device) error {
 	_, err := c.client.DeleteNode(ctx, &headscale.DeleteNodeRequest{

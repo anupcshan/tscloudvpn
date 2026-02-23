@@ -111,11 +111,6 @@ func (api *IntegrationTestControlApi) DeleteDevice(ctx context.Context, device *
 	return fmt.Errorf("device not found: %s", device.Hostname)
 }
 
-// ApproveExitNode approves a device as an exit node
-func (api *IntegrationTestControlApi) ApproveExitNode(ctx context.Context, device *controlapi.Device) error {
-	return nil // No-op for testing
-}
-
 // AddDevice adds a device to the mock (for testing)
 func (api *IntegrationTestControlApi) AddDevice(device controlapi.Device) {
 	api.mu.Lock()
@@ -223,10 +218,11 @@ func TestIntegration_ControllerWithFakeProvider_BasicLifecycle(t *testing.T) {
 		t.Errorf("Expected instance status to be running, got %v", instance.Status)
 	}
 
-	// Test status after creation
+	// After creation, state stays Launching until the health check discovers
+	// the peer (tsClient is nil in this test so that won't happen).
 	status = controller.Status()
-	if status.State != StateRunning {
-		t.Errorf("Expected instance state to be StateRunning, got %d", status.State)
+	if status.State != StateLaunching {
+		t.Errorf("Expected instance state to be StateLaunching, got %d", status.State)
 	}
 	if status.LaunchedAt.IsZero() {
 		t.Error("Expected LaunchedAt to be set after creation")
@@ -295,19 +291,19 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 		}
 	}
 
-	// Wait for all instances to be running
+	// Wait for all instances to finish creation (they stay Launching since tsClient is nil)
 	require.Eventually(t, func() bool {
 		statuses := registry.GetAllInstanceStatuses()
 		if len(statuses) != 3 {
 			return false
 		}
-		for _, status := range statuses {
-			if status.State != StateRunning {
+		for _, s := range statuses {
+			if s.State != StateLaunching {
 				return false
 			}
 		}
 		return true
-	}, 10*time.Second, 100*time.Millisecond, "Expected 3 running instances")
+	}, 10*time.Second, 100*time.Millisecond, "Expected 3 launching instances")
 
 	// Verify all instances were created
 	allInstances := fakeProvider.GetAllInstances()
@@ -342,8 +338,8 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 		if status.Region != region {
 			t.Errorf("Expected region %s, got %s", region, status.Region)
 		}
-		if status.State != StateRunning {
-			t.Errorf("Expected instance %s to have state StateRunning, got %d", key, status.State)
+		if status.State != StateLaunching {
+			t.Errorf("Expected instance %s to have state StateLaunching, got %d", key, status.State)
 		}
 	}
 
@@ -438,21 +434,21 @@ func TestIntegration_RegistryWithFakeProvider_ProviderFailures(t *testing.T) {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
 
-	// Wait for instance to be running
+	// Wait for instance to be created (stays Launching since tsClient is nil)
 	require.Eventually(t, func() bool {
 		status, err := registry.GetInstanceStatus("fake", "fake-us-east")
-		return err == nil && status.State == StateRunning
-	}, 10*time.Second, 100*time.Millisecond, "Expected instance to be running")
+		return err == nil && status.State == StateLaunching
+	}, 10*time.Second, 100*time.Millisecond, "Expected instance to be launching")
 
-	// Now configure provider to fail status checks
+	// Now configure provider to fail instance creation
 	config := fake.DefaultConfig()
-	config.StatusFailure = errors.New("simulated status failure")
+	config.CreateFailure = errors.New("simulated creation failure")
 	fakeProvider.UpdateConfig(config)
 
-	// Status checks should now fail, but instance should still be tracked
+	// First instance should still be tracked
 	_, err = registry.GetInstanceStatus("fake", "fake-us-east")
 	if err != nil {
-		t.Fatalf("Registry should still return status even if provider fails: %v", err)
+		t.Fatalf("Registry should still return status for existing instance: %v", err)
 	}
 
 	// Try to create another instance with failing provider
@@ -579,10 +575,10 @@ func TestIntegration_ControllerWithFakeProvider_SlowOperations(t *testing.T) {
 		t.Errorf("Creation took %v, expected at least %v", duration, config.CreateDelay)
 	}
 
-	// Verify instance was created
+	// Verify instance was created (stays Launching since tsClient is nil)
 	status := controller.Status()
-	if status.State != StateRunning {
-		t.Errorf("Expected instance state to be StateRunning after slow creation, got %d", status.State)
+	if status.State != StateLaunching {
+		t.Errorf("Expected instance state to be StateLaunching after creation, got %d", status.State)
 	}
 }
 

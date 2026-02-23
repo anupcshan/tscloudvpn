@@ -72,10 +72,6 @@ func (m *MockControlAPI) ListDevices(ctx context.Context) ([]controlapi.Device, 
 	return devices, nil
 }
 
-func (m *MockControlAPI) ApproveExitNode(ctx context.Context, device *controlapi.Device) error {
-	return nil
-}
-
 func (m *MockControlAPI) DeleteDevice(ctx context.Context, device *controlapi.Device) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
