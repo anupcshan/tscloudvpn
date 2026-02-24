@@ -26,6 +26,10 @@ const (
 	debianLatestImage = "projects/debian-cloud/global/images/family/debian-12"
 	providerName      = "gcp"
 	cacheDuration     = 24 * time.Hour // Cache machine types for 24 hours
+	firewallRuleName  = "tscloudvpn-allow-vpn"
+	networkTag        = "tscloudvpn"
+	// Tailscale uses this port for inbound connections - see https://tailscale.com/kb/1257/connection-types#hard-nat
+	tailscaledInboundPort = "41641"
 )
 
 var (
@@ -296,6 +300,51 @@ func (g *gcpProvider) DeleteInstance(ctx context.Context, instanceID providers.I
 	return fmt.Errorf("instance not found: %s", instanceID.ProviderID)
 }
 
+// getOrCreateFirewallRule ensures a firewall rule exists that allows inbound
+// UDP traffic on the Tailscale port for instances tagged with "tscloudvpn".
+func (g *gcpProvider) getOrCreateFirewallRule(ctx context.Context) error {
+	// Check if rule already exists
+	_, err := compute.NewFirewallsService(g.service).Get(g.projectId, firewallRuleName).Context(ctx).Do()
+	if err == nil {
+		return nil
+	}
+
+	// Create the firewall rule
+	op, err := compute.NewFirewallsService(g.service).Insert(g.projectId, &compute.Firewall{
+		Name:      firewallRuleName,
+		Network:   "global/networks/default",
+		Direction: "INGRESS",
+		Priority:  1000,
+		Allowed: []*compute.FirewallAllowed{
+			{
+				IPProtocol: "udp",
+				Ports:      []string{tailscaledInboundPort},
+			},
+		},
+		SourceRanges: []string{"0.0.0.0/0"},
+		TargetTags:   []string{networkTag},
+	}).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("failed to create firewall rule: %w", err)
+	}
+
+	// Wait for the operation to complete
+	op, err = compute.NewGlobalOperationsService(g.service).Wait(g.projectId, op.Name).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("failed waiting for firewall rule creation: %w", err)
+	}
+	if op.Error != nil {
+		var msgs []string
+		for _, e := range op.Error.Errors {
+			msgs = append(msgs, fmt.Sprintf("%s: %s", e.Code, e.Message))
+		}
+		return fmt.Errorf("firewall rule creation failed: %s", strings.Join(msgs, "; "))
+	}
+
+	log.Printf("Created GCP firewall rule %s", firewallRuleName)
+	return nil
+}
+
 func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
 	// Ensure machine type cache is populated
 	if err := g.ensureMachineTypeCache(); err != nil {
@@ -338,9 +387,17 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 		return providers.InstanceID{}, err
 	}
 
+	// Ensure firewall rule exists for Tailscale inbound port
+	if err := g.getOrCreateFirewallRule(ctx); err != nil {
+		return providers.InstanceID{}, fmt.Errorf("failed to setup firewall rule: %w", err)
+	}
+
 	op, err := compute.NewInstancesService(g.service).Insert(g.projectId, zone, &compute.Instance{
 		Name:        name,
 		MachineType: prefix + "/zones/" + zone + "/machineTypes/" + regionMachineType.MachineType,
+		Tags: &compute.Tags{
+			Items: []string{networkTag},
+		},
 		Disks: []*compute.AttachedDisk{
 			{
 				AutoDelete: true,
