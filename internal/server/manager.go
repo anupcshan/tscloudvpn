@@ -215,7 +215,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 					pillClass = "pill-yellow"
 				}
 
-				html.WriteString(`<div class="node-card">`)
+				html.WriteString(`<div class="node-card node-card-running">`)
 				html.WriteString(`<div>`)
 				html.WriteString(`<div class="node-main">`)
 				fmt.Fprintf(&html, `<span class="node-location">%s</span>`, node.LongName)

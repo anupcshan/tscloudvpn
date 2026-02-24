@@ -2,12 +2,10 @@ package app_test
 
 import (
 	"net/netip"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
-	"github.com/stretchr/testify/require"
 )
 
 // TestScenario_HappyPath tests the full lifecycle:
@@ -31,20 +29,14 @@ func TestScenario_HappyPath(t *testing.T) {
 	h.CreateInstance("fake", "fake-us-east")
 
 	// Wait for it to reach running state via SSE events
-	require.Eventually(t, func() bool {
-		events := h.GetSSEEvents(2 * time.Second)
-		return strings.Contains(events, "Fake US East") && strings.Contains(events, "node-card")
-	}, 15*time.Second, 500*time.Millisecond, "Expected running node card in SSE events")
+	h.WaitForSSEEvent(15*time.Second, "node-card-running")
 
 	// Delete it
 	h.DeleteInstance("fake", "fake-us-east")
 	h.Transport.RemovePeer(hostname)
 
 	// Verify the node card disappears from SSE events
-	require.Eventually(t, func() bool {
-		events := h.GetSSEEvents(2 * time.Second)
-		return strings.Contains(events, "No active nodes")
-	}, 10*time.Second, 500*time.Millisecond, "Expected no active nodes after deletion")
+	h.WaitForSSEEvent(10*time.Second, "No active nodes")
 }
 
 // TestScenario_PeerDisappears tests that when a running peer disappears
@@ -65,19 +57,13 @@ func TestScenario_PeerDisappears(t *testing.T) {
 	h.CreateInstance("fake", "fake-us-east")
 
 	// Wait for it to be running
-	require.Eventually(t, func() bool {
-		events := h.GetSSEEvents(2 * time.Second)
-		return strings.Contains(events, "node-card") && strings.Contains(events, "Fake US East")
-	}, 15*time.Second, 500*time.Millisecond, "Expected node to be running")
+	h.WaitForSSEEvent(15*time.Second, "node-card-running")
 
 	// Remove the peer — simulating the instance disappearing from Tailscale
 	h.Transport.RemovePeer(hostname)
 
 	// Health check should detect the peer is gone. Node card should disappear.
-	require.Eventually(t, func() bool {
-		events := h.GetSSEEvents(2 * time.Second)
-		return strings.Contains(events, "No active nodes")
-	}, 10*time.Second, 500*time.Millisecond, "Expected node card to disappear after peer removed")
+	h.WaitForSSEEvent(10*time.Second, "No active nodes")
 }
 
 // TestScenario_SlowRegistration tests that a node shows "launching" state
@@ -92,10 +78,7 @@ func TestScenario_SlowRegistration(t *testing.T) {
 	h.CreateInstance("fake", "fake-us-east")
 
 	// Should show as launching in SSE events
-	require.Eventually(t, func() bool {
-		events := h.GetSSEEvents(2 * time.Second)
-		return strings.Contains(events, "launching")
-	}, 5*time.Second, 500*time.Millisecond, "Expected launching state while waiting for registration")
+	h.WaitForSSEEvent(5*time.Second, "launching")
 
 	// Simulate the device registering
 	h.ControlAPI.AddDevice(controlapi.Device{
@@ -105,8 +88,5 @@ func TestScenario_SlowRegistration(t *testing.T) {
 	h.Transport.AddPeer(hostname, netip.MustParseAddr("100.64.0.2"))
 
 	// Should transition to running
-	require.Eventually(t, func() bool {
-		events := h.GetSSEEvents(2 * time.Second)
-		return strings.Contains(events, "node-card") && strings.Contains(events, "Fake US East")
-	}, 15*time.Second, 500*time.Millisecond, "Expected node to transition to running")
+	h.WaitForSSEEvent(15*time.Second, "node-card-running")
 }

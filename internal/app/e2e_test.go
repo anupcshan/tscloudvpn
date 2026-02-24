@@ -16,6 +16,7 @@
 package app_test
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -200,10 +201,11 @@ func (h *TestHarness) GetHomePage() string {
 	return string(body)
 }
 
-// GetSSEEvents connects to the SSE endpoint and collects events for the given duration
-func (h *TestHarness) GetSSEEvents(d time.Duration) string {
+// WaitForSSEEvent connects to the SSE endpoint and returns as soon as an event
+// line containing substr is received, or fails if the timeout is exceeded.
+func (h *TestHarness) WaitForSSEEvent(timeout time.Duration, substr string) {
 	h.t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), d)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", h.ServerURL+"/events", nil)
@@ -213,8 +215,14 @@ func (h *TestHarness) GetSSEEvents(d time.Duration) string {
 	require.NoError(h.t, err)
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
-	return string(body)
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		if strings.Contains(scanner.Text(), substr) {
+			return
+		}
+	}
+
+	require.Fail(h.t, "Timed out waiting for SSE event containing: "+substr)
 }
 
 // TestE2E_FullServerLifecycle tests the complete server lifecycle via HTTP API
@@ -258,8 +266,7 @@ func TestE2E_FullServerLifecycle(t *testing.T) {
 
 	// Test 3: Test Server-Sent Events endpoint
 	t.Run("ServerSentEvents", func(t *testing.T) {
-		events := h.GetSSEEvents(2 * time.Second)
-		t.Logf("SSE events received: %d bytes", len(events))
+		h.WaitForSSEEvent(5*time.Second, "active-nodes")
 	})
 
 	// Test 4: Delete instance
