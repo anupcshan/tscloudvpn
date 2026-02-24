@@ -338,7 +338,7 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 		return providers.InstanceID{}, err
 	}
 
-	_, err = compute.NewInstancesService(g.service).Insert(g.projectId, zone, &compute.Instance{
+	op, err := compute.NewInstancesService(g.service).Insert(g.projectId, zone, &compute.Instance{
 		Name:        name,
 		MachineType: prefix + "/zones/" + zone + "/machineTypes/" + regionMachineType.MachineType,
 		Disks: []*compute.AttachedDisk{
@@ -383,6 +383,19 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 	}).Context(ctx).Do()
 	if err != nil {
 		return providers.InstanceID{}, err
+	}
+
+	// Wait for the operation to complete
+	op, err = compute.NewZoneOperationsService(g.service).Wait(g.projectId, zone, op.Name).Context(ctx).Do()
+	if err != nil {
+		return providers.InstanceID{}, fmt.Errorf("failed waiting for instance creation: %w", err)
+	}
+	if op.Error != nil {
+		var msgs []string
+		for _, e := range op.Error.Errors {
+			msgs = append(msgs, fmt.Sprintf("%s: %s", e.Code, e.Message))
+		}
+		return providers.InstanceID{}, fmt.Errorf("instance creation failed: %s", strings.Join(msgs, "; "))
 	}
 
 	log.Printf("Launched instance %s", name)
