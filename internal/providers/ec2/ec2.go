@@ -246,7 +246,6 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 	hostname := ec2InstanceHostname(region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
 		Args   string
-		OnExit string
 		SSHKey string
 	}{
 		Args: fmt.Sprintf(
@@ -254,7 +253,6 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 			strings.Join(key.GetCLIArgs(), " "),
 			hostname,
 		),
-		OnExit: "sudo /sbin/poweroff",
 		SSHKey: e.sshKey,
 	}); err != nil {
 		return providers.InstanceID{}, err

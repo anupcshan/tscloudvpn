@@ -30,7 +30,6 @@ type regionServerType struct {
 
 type hetznerProvider struct {
 	client  *hcloud.Client
-	apiKey  string
 	sshKey  string
 	ownerID string // Unique identifier for this tscloudvpn instance
 
@@ -53,7 +52,6 @@ func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
 
 	return &hetznerProvider{
 		client:  client,
-		apiKey:  token,
 		sshKey:  cfg.SSH.PublicKey,
 		ownerID: ownerID,
 	}, nil
@@ -96,7 +94,6 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, region string, key
 	hostname := hetznerInstanceHostname(region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
 		Args   string
-		OnExit string
 		SSHKey string
 	}{
 		Args: fmt.Sprintf(
@@ -104,7 +101,6 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, region string, key
 			strings.Join(key.GetCLIArgs(), " "),
 			hostname,
 		),
-		OnExit: fmt.Sprintf("curl -X DELETE -H 'Authorization: Bearer %s' https://api.hetzner.cloud/v1/servers/$(curl -s http://169.254.169.254/hetzner/v1/metadata/instance-id)", h.apiKey),
 		SSHKey: h.sshKey,
 	}); err != nil {
 		return providers.InstanceID{}, err

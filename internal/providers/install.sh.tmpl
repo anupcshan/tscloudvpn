@@ -1,12 +1,6 @@
 #!/bin/bash -eux
 
-cat <<\EOF > /tmp/onexit.sh
-{{.OnExit}}
-EOF
-
-chmod +x /tmp/onexit.sh
-
-trap /tmp/onexit.sh ERR EXIT
+trap 'sudo /sbin/poweroff' ERR EXIT
 
 if [[ -n "{{.SSHKey}}" ]]; then
   mkdir -p /root/.ssh
@@ -30,44 +24,33 @@ timeout 5m sudo tailscale up --accept-routes --advertise-exit-node --advertise-c
 
 set +x
 
-# If instance is unable to check presence in Tailscale for 2m, shut it down
-lastGood=$(date "+%s")
-
-# Shut down if no traffic has been forwarded for 4 hours (14400 seconds).
+# Track forwarded traffic for last-active reporting.
 # ForwDatagrams in /proc/net/snmp counts only IP-forwarded packets (exit node
 # traffic), not locally-terminated control traffic or health-check pings.
-idleShutdownSeconds=14400
 lastForwarded=$(awk '/^Ip:/ && !/Forwarding/ {print $7}' /proc/net/snmp)
 lastForwardedTime=$(date "+%s")
 
-while sleep 1; do
-  now=$(date "+%s")
-  sinceLastGood=$(expr $now - $lastGood)
-  if [ $sinceLastGood -gt 120 ]; then
-    echo "No good result in 120 seconds, exiting"
-    exit 1
-  fi
+# Serve stats over HTTP for the control plane to poll.
+# We avoid `tailscale serve` here because it uses HTTPS, which registers
+# certificates in Certificate Transparency logs and leaks node hostnames.
+mkdir -p /tmp/stats
+echo "{\"forwarded_bytes\": 0, \"last_active\": $(date +%s)}" > /tmp/stats/stats.json
+(cd /tmp/stats && python3 -m http.server 80) &
 
-  if [ $sinceLastGood -gt 100 ]; then
-    echo "No good result in $sinceLastGood seconds ..."
-  fi
-
-  [[ $(tailscale status --json | jq .Self.Online) == "true" ]] && lastGood=$now
-
-  # Check for idle exit node (no forwarded traffic)
+# Update stats file every 30 seconds
+while sleep 30; do
   currentForwarded=$(awk '/^Ip:/ && !/Forwarding/ {print $7}' /proc/net/snmp)
+  now=$(date "+%s")
   if [ "$currentForwarded" != "$lastForwarded" ]; then
     lastForwarded=$currentForwarded
     lastForwardedTime=$now
   fi
 
-  idleSeconds=$(( now - lastForwardedTime ))
-  if [ $idleSeconds -gt $idleShutdownSeconds ]; then
-    echo "No forwarded traffic in $idleShutdownSeconds seconds, exiting"
-    exit 1
-  fi
+  # Forwarded bytes from the iptables ts-forward chain
+  fwdBytes=$(iptables -L FORWARD -v -n -x 2>/dev/null | awk '/ts-forward/ {print $2}')
+  fwdBytes=${fwdBytes:-0}
 
-  if [ $idleSeconds -gt 0 ] && [ $(( idleSeconds % 3600 )) -lt 2 ]; then
-    echo "No forwarded traffic in $idleSeconds seconds ..."
-  fi
+  # Atomic write via rename
+  echo "{\"forwarded_bytes\": $fwdBytes, \"last_active\": $lastForwardedTime}" > /tmp/stats/stats.json.tmp
+  mv /tmp/stats/stats.json.tmp /tmp/stats/stats.json
 done

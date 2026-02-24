@@ -305,6 +305,12 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 		return true
 	}, 10*time.Second, 100*time.Millisecond, "Expected 3 launching instances")
 
+	// Wait for all instances to be created in the provider
+	// (StateLaunching is set before provider.CreateInstance() completes)
+	require.Eventually(t, func() bool {
+		return len(fakeProvider.GetAllInstances()) == 3
+	}, 10*time.Second, 100*time.Millisecond, "Expected 3 instances in fake provider")
+
 	// Verify all instances were created
 	allInstances := fakeProvider.GetAllInstances()
 	if len(allInstances) != 3 {
@@ -439,6 +445,13 @@ func TestIntegration_RegistryWithFakeProvider_ProviderFailures(t *testing.T) {
 		status, err := registry.GetInstanceStatus("fake", "fake-us-east")
 		return err == nil && status.State == StateLaunching
 	}, 10*time.Second, 100*time.Millisecond, "Expected instance to be launching")
+
+	// Wait for the cloud instance to actually be created in the provider
+	// (StateLaunching is set before provider.CreateInstance() completes)
+	require.Eventually(t, func() bool {
+		_, exists := fakeProvider.GetInstance("fake-us-east")
+		return exists
+	}, 10*time.Second, 100*time.Millisecond, "Expected instance in fake provider")
 
 	// Now configure provider to fail instance creation
 	config := fake.DefaultConfig()

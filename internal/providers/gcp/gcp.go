@@ -326,7 +326,6 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 	hostname := gcpInstanceHostname(region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
 		Args   string
-		OnExit string
 		SSHKey string
 	}{
 		Args: fmt.Sprintf(
@@ -334,7 +333,6 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 			strings.Join(key.GetCLIArgs(), " "),
 			hostname,
 		),
-		OnExit: fmt.Sprintf(`gcloud compute instances delete %s --quiet --zone=%s`, name, zone),
 		SSHKey: g.sshKey,
 	}); err != nil {
 		return providers.InstanceID{}, err

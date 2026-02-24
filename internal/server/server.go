@@ -81,6 +81,11 @@ func (ts *TSNetServer) LocalClient() (*local.Client, error) {
 	return ts.server.LocalClient()
 }
 
+// HTTPClient returns an HTTP client that routes through the Tailscale network.
+func (ts *TSNetServer) HTTPClient() *http.Client {
+	return ts.server.HTTPClient()
+}
+
 // Close closes the tsnet server
 func (ts *TSNetServer) Close() error {
 	return ts.server.Close()

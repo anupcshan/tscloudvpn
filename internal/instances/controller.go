@@ -16,6 +16,7 @@ import (
 const (
 	historySize         = 250
 	healthCheckInterval = time.Second
+	statsFetchInterval = 30 // fetch stats every N health check ticks
 )
 
 // PingResult represents a single ping attempt result
@@ -132,6 +133,13 @@ func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration
 	return successRate, avgLatency, stddev, timeSinceFailure, connectionType
 }
 
+// NodeStats contains traffic statistics fetched from an exit node.
+type NodeStats struct {
+	ForwardedBytes int64     // Bytes forwarded through the exit node (from iptables ts-forward chain)
+	LastActive     time.Time // When IP-forwarded traffic was last observed
+	ReceivedAt     time.Time // When the control plane received this report
+}
+
 // InstanceState represents the lifecycle state of an instance
 type InstanceState int
 
@@ -157,7 +165,20 @@ type InstanceStatus struct {
 		TimeSinceFailure time.Duration
 		ConnectionType   string
 	}
+	NodeStats *NodeStats // nil if node has never reported stats
 }
+
+const (
+	// idleShutdownThreshold is how long a node can be idle (no forwarded traffic)
+	// before the control plane deletes it.
+	idleShutdownThreshold = 4 * time.Hour
+
+	// statsWatchdogThreshold is how long the control plane waits for a node to
+	// report stats before treating it as idle. This is measured from when the
+	// control plane started watching the node (not the node's age), so restarts
+	// give every node a fresh window.
+	statsWatchdogThreshold = 8 * time.Hour
+)
 
 // Controller manages the entire lifecycle of a single instance
 type Controller struct {
@@ -175,6 +196,11 @@ type Controller struct {
 	state             InstanceState
 	done              chan struct{}
 	healthCheckTicker *time.Ticker
+	nodeStats             *NodeStats // latest stats fetched from the node; nil if never fetched
+	watchingSince         time.Time  // when we started monitoring this node (for stats watchdog)
+	onIdleShutdown        func()     // callback when idle shutdown is triggered
+	idleShutdownTriggered bool       // prevents calling onIdleShutdown more than once
+	healthCheckCount      int        // counter for throttling stats fetches
 }
 
 // NewController creates a new instance controller
@@ -189,15 +215,16 @@ func NewController(
 	ctx, cancel := context.WithCancel(ctx)
 
 	c := &Controller{
-		ctx:        ctx,
-		cancel:     cancel,
-		logger:     logger,
-		provider:   provider,
-		region:     region,
-		controlApi: controlApi,
-		tsClient:   tsClient,
-		ping:       NewPingHistory(),
-		done:       make(chan struct{}),
+		ctx:           ctx,
+		cancel:        cancel,
+		logger:        logger,
+		provider:      provider,
+		region:        region,
+		controlApi:    controlApi,
+		tsClient:      tsClient,
+		ping:          NewPingHistory(),
+		done:          make(chan struct{}),
+		watchingSince: time.Now(),
 	}
 
 	// Start health monitoring in background
@@ -304,8 +331,47 @@ func (c *Controller) Status() InstanceStatus {
 	}
 
 	status.PingStats.SuccessRate, status.PingStats.AvgLatency, status.PingStats.StdDev, status.PingStats.TimeSinceFailure, status.PingStats.ConnectionType = c.ping.GetStats()
+	status.NodeStats = c.nodeStats
 
 	return status
+}
+
+// fetchStats fetches traffic stats from the node's HTTP stats endpoint.
+func (c *Controller) fetchStats(hostname providers.HostName) {
+	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
+	defer cancel()
+
+	result, err := c.tsClient.FetchNodeStats(ctx, string(hostname))
+	if err != nil {
+		c.logger.Printf("Stats fetch failed for %s: %v", hostname, err)
+		return
+	}
+
+	stats := &NodeStats{
+		ForwardedBytes: result.ForwardedBytes,
+		LastActive:     result.LastActive,
+		ReceivedAt:     time.Now(),
+	}
+
+	c.mu.Lock()
+	c.nodeStats = stats
+	c.mu.Unlock()
+}
+
+// shouldIdleShutdown returns true if the node should be terminated due to idleness.
+func (c *Controller) shouldIdleShutdown() bool {
+	// Only consider idle shutdown for running nodes
+	if c.state != StateRunning {
+		return false
+	}
+
+	if c.nodeStats != nil {
+		// Stats received: idle if no forwarded traffic for threshold duration
+		return time.Since(c.nodeStats.LastActive) > idleShutdownThreshold
+	}
+
+	// No stats ever received: watchdog timer
+	return time.Since(c.watchingSince) > statsWatchdogThreshold
 }
 
 // Stop stops the controller and cleans up resources
@@ -383,5 +449,24 @@ func (c *Controller) performHealthCheck(hostname providers.HostName) {
 		c.ping.AddResult(false, 0, "")
 	} else {
 		c.ping.AddResult(true, result.Latency, result.ConnectionType)
+	}
+
+	// Fetch stats from the node periodically (not every health check tick)
+	if c.healthCheckCount%statsFetchInterval == 0 {
+		c.fetchStats(hostname)
+	}
+	c.healthCheckCount++
+
+	// Check for idle shutdown (only trigger once)
+	c.mu.RLock()
+	shouldShutdown := c.shouldIdleShutdown() && !c.idleShutdownTriggered
+	c.mu.RUnlock()
+
+	if shouldShutdown && c.onIdleShutdown != nil {
+		c.mu.Lock()
+		c.idleShutdownTriggered = true
+		c.mu.Unlock()
+		c.logger.Printf("Idle shutdown triggered for %s", hostname)
+		c.onIdleShutdown()
 	}
 }

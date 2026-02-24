@@ -19,6 +19,12 @@ type PingResult struct {
 	ConnectionType string // "direct" or "relayed via <DERP region>"
 }
 
+// NodeStatsResult contains traffic statistics fetched from an exit node.
+type NodeStatsResult struct {
+	ForwardedBytes int64
+	LastActive     time.Time
+}
+
 // TailscaleClient abstracts the Tailscale local API client.
 type TailscaleClient interface {
 	// GetPeers returns all currently visible Tailscale peers.
@@ -26,4 +32,7 @@ type TailscaleClient interface {
 
 	// PingPeer sends a disco ping to the peer at the given Tailscale IP.
 	PingPeer(ctx context.Context, addr netip.Addr) (PingResult, error)
+
+	// FetchNodeStats fetches traffic statistics from an exit node via tailscale serve.
+	FetchNodeStats(ctx context.Context, hostname string) (NodeStatsResult, error)
 }

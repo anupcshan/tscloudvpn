@@ -20,7 +20,6 @@ import (
 
 type linodeProvider struct {
 	client   *linodego.Client
-	token    string
 	sshKey   string
 	ownerID  string // Unique identifier for this tscloudvpn instance
 	ownerTag string // Tag combining owner key and value for filtering
@@ -40,7 +39,6 @@ func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
 	return &linodeProvider{
 		client:   &client,
 		sshKey:   cfg.SSH.PublicKey,
-		token:    cfg.Providers.Linode.Token,
 		ownerID:  ownerID,
 		ownerTag: fmt.Sprintf("%s:%s", providers.OwnerTagKey, ownerID),
 	}, nil
@@ -70,7 +68,6 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key 
 	hostname := linodeInstanceHostname(region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
 		Args   string
-		OnExit string
 		SSHKey string
 	}{
 		Args: fmt.Sprintf(
@@ -78,10 +75,6 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key 
 			strings.Join(key.GetCLIArgs(), " "),
 			hostname,
 		),
-		OnExit: fmt.Sprintf(`
-		export TOKEN=$(curl -s -X PUT -H "Metadata-Token-Expiry-Seconds: 3600" http://169.254.169.254/v1/token)
-		export INSTANCE_ID=$(curl -s -H 'Accept: application/json' -H "Metadata-Token: $TOKEN" http://169.254.169.254/v1/instance | jq -r .id)
-		curl -H 'Authorization: Bearer %s' -X DELETE https://api.linode.com/v4/linode/instances/$INSTANCE_ID`, l.token),
 		SSHKey: l.sshKey,
 	}); err != nil {
 		return providers.InstanceID{}, err

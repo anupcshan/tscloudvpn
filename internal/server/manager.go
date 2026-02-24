@@ -79,6 +79,7 @@ type mappedRegion struct {
 	}
 	CreatedTS  time.Time
 	LaunchedTS time.Time
+	NodeStats  *instances.NodeStats
 }
 
 func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], error) {
@@ -120,6 +121,7 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 				ConnectionType   string
 			}
 
+			var nodeStats *instances.NodeStats
 			if hasInstance && instanceStatus.IsRunning {
 				createdTS = instanceStatus.CreatedAt
 				launchedTS = instanceStatus.LaunchedAt
@@ -130,6 +132,7 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 					sinceLaunched = durafmt.ParseShort(time.Since(launchedTS)).InternationalString()
 				}
 				pingStats = instanceStatus.PingStats
+				nodeStats = instanceStatus.NodeStats
 			}
 
 			mappedRegions = append(mappedRegions, mappedRegion{
@@ -144,6 +147,7 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 				SinceLaunched:     sinceLaunched,
 				PriceCentsPerHour: provider.GetRegionPrice(region.Code) * 100,
 				PingStats:         pingStats,
+				NodeStats:         nodeStats,
 			})
 		}
 	}
@@ -224,6 +228,17 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				runningCostDollars := node.PriceCentsPerHour / 100 * time.Since(node.CreatedTS).Hours()
 				fmt.Fprintf(&html, `<span>cost <span class="val">$%.2f</span> (%.2fc/hr)</span>`, runningCostDollars, node.PriceCentsPerHour)
 				fmt.Fprintf(&html, `<span>success <span class="val">%.0f%%</span></span>`, node.PingStats.SuccessRate*100)
+				if node.NodeStats != nil {
+					fmt.Fprintf(&html, `<span>traffic <span class="val">%s</span></span>`,
+						formatBytes(node.NodeStats.ForwardedBytes))
+					idleDuration := time.Since(node.NodeStats.LastActive)
+					if idleDuration < 5*time.Minute {
+						fmt.Fprintf(&html, `<span class="pill pill-green">active</span>`)
+					} else {
+						idle := durafmt.ParseShort(idleDuration).InternationalString()
+						fmt.Fprintf(&html, `<span class="pill pill-yellow">idle %s</span>`, idle)
+					}
+				}
 				html.WriteString(`</div>`)
 				html.WriteString(`</div>`)
 				fmt.Fprintf(&html, `<button class="btn btn-danger" hx-ext="disable-element" `+
@@ -363,6 +378,25 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 	}
 
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets.Assets))))
+}
+
+// formatBytes formats a byte count as a human-readable string.
+func formatBytes(b int64) string {
+	const (
+		kb = 1024
+		mb = kb * 1024
+		gb = mb * 1024
+	)
+	switch {
+	case b >= gb:
+		return fmt.Sprintf("%.1f GB", float64(b)/float64(gb))
+	case b >= mb:
+		return fmt.Sprintf("%.1f MB", float64(b)/float64(mb))
+	case b >= kb:
+		return fmt.Sprintf("%.1f KB", float64(b)/float64(kb))
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
 }
 
 // Shutdown stops all instance controllers and cleans up resources

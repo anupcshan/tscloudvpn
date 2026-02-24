@@ -45,9 +45,6 @@ type azureProvider struct {
 	subscriptionID string
 	resourceGroup  string
 	sshKey         string
-	tenantID       string
-	clientID       string
-	clientSecret   string
 	ownerID        string // Unique identifier for this tscloudvpn instance
 	computeClient  *armcompute.VirtualMachinesClient
 	networkClient  *armnetwork.VirtualNetworksClient
@@ -107,9 +104,6 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 	return &azureProvider{
 		subscriptionID: cfg.Providers.Azure.SubscriptionID,
 		resourceGroup:  cfg.Providers.Azure.ResourceGroup,
-		tenantID:       cfg.Providers.Azure.TenantID,
-		clientID:       cfg.Providers.Azure.ClientID,
-		clientSecret:   cfg.Providers.Azure.ClientSecret,
 		ownerID:        providers.GetOwnerID(cfg),
 		sshKey:         cfg.SSH.PublicKey,
 		computeClient:  computeClient,
@@ -132,7 +126,6 @@ func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *
 	tmplOut := new(bytes.Buffer)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
 		Args   string
-		OnExit string
 		SSHKey string
 	}{
 		Args: fmt.Sprintf(
@@ -140,7 +133,6 @@ func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *
 			strings.Join(key.GetCLIArgs(), " "),
 			hostname,
 		),
-		OnExit: a.generateOnExitScript(),
 		SSHKey: a.sshKey,
 	}); err != nil {
 		return providers.InstanceID{}, fmt.Errorf("failed to generate cloud-init: %w", err)
@@ -500,53 +492,6 @@ func (a *azureProvider) fetchAzureLocations(ctx context.Context) ([]providers.Re
 	})
 
 	return locations, nil
-}
-
-func (a *azureProvider) generateOnExitScript() string {
-	script := `#!/bin/bash
-set -e
-
-# Get Azure instance metadata
-IMDS_URL="http://169.254.169.254/metadata/instance?api-version=2021-02-01"
-METADATA=$(curl -s -H "Metadata: true" "$IMDS_URL")
-VM_NAME=$(echo "$METADATA" | jq -r '.compute.name')
-RESOURCE_GROUP=$(echo "$METADATA" | jq -r '.compute.resourceGroupName')
-SUBSCRIPTION_ID=$(echo "$METADATA" | jq -r '.compute.subscriptionId')
-
-# Get access token for Azure API
-TOKEN_URL="https://login.microsoftonline.com/TENANT_ID/oauth2/v2.0/token"
-TOKEN_RESPONSE=$(curl -s -X POST "$TOKEN_URL" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=client_credentials" \
-  -d "client_id=CLIENT_ID" \
-  -d "client_secret=CLIENT_SECRET" \
-  -d "scope=https://management.azure.com/.default")
-ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token')
-
-if [ "$ACCESS_TOKEN" = "null" ] || [ -z "$ACCESS_TOKEN" ]; then
-  echo "Failed to get access token, falling back to poweroff"
-  sudo /sbin/poweroff
-  exit 0
-fi
-
-# Delete VM (this automatically deletes OS disk, NIC, and Public IP)
-echo "Deleting VM: $VM_NAME (will cascade to associated resources)"
-AZURE_API="https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP"
-curl -s -X DELETE "$AZURE_API/providers/Microsoft.Compute/virtualMachines/$VM_NAME?api-version=2023-03-01" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" || {
-  echo "Failed to delete VM, falling back to poweroff"
-  sudo /sbin/poweroff
-  exit 0
-}
-
-echo "VM deletion initiated - OS disk, NIC, and Public IP will be automatically cleaned up"
-`
-	// Replace placeholders with actual values
-	script = strings.ReplaceAll(script, "TENANT_ID", a.tenantID)
-	script = strings.ReplaceAll(script, "CLIENT_ID", a.clientID)
-	script = strings.ReplaceAll(script, "CLIENT_SECRET", a.clientSecret)
-	return script
 }
 
 func (a *azureProvider) estimateRegionPrice(region string) float64 {

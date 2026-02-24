@@ -82,7 +82,7 @@ func (a *App) Initialize(ctx context.Context) error {
 
 	a.server = server.New(&server.Config{
 		CloudProviders: cloudProviders,
-		TSLocalClient:  tsclient.NewLocalClient(tsLocalClient),
+		TSLocalClient:  tsclient.NewLocalClient(tsLocalClient, a.tsnetServer.HTTPClient()),
 		Controller:     controller,
 	})
 

@@ -74,18 +74,23 @@ func NewWithConfig(config *ProviderConfig) *FakeProvider {
 
 // CreateInstance simulates creating a cloud instance
 func (f *FakeProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
+	f.mu.RLock()
+	createDelay := f.config.CreateDelay
+	createFailure := f.config.CreateFailure
+	f.mu.RUnlock()
+
 	// Simulate creation delay
-	if f.config.CreateDelay > 0 {
+	if createDelay > 0 {
 		select {
-		case <-time.After(f.config.CreateDelay):
+		case <-time.After(createDelay):
 		case <-ctx.Done():
 			return providers.InstanceID{}, ctx.Err()
 		}
 	}
 
 	// Check for configured failure
-	if f.config.CreateFailure != nil {
-		return providers.InstanceID{}, f.config.CreateFailure
+	if createFailure != nil {
+		return providers.InstanceID{}, createFailure
 	}
 
 	f.mu.Lock()
@@ -125,18 +130,23 @@ func (f *FakeProvider) CreateInstance(ctx context.Context, region string, key *c
 
 // GetInstanceStatus returns the status of an instance in a region
 func (f *FakeProvider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {
+	f.mu.RLock()
+	statusCheckDelay := f.config.StatusCheckDelay
+	statusFailure := f.config.StatusFailure
+	f.mu.RUnlock()
+
 	// Simulate status check delay
-	if f.config.StatusCheckDelay > 0 {
+	if statusCheckDelay > 0 {
 		select {
-		case <-time.After(f.config.StatusCheckDelay):
+		case <-time.After(statusCheckDelay):
 		case <-ctx.Done():
 			return providers.InstanceStatusMissing, ctx.Err()
 		}
 	}
 
 	// Check for configured failure
-	if f.config.StatusFailure != nil {
-		return providers.InstanceStatusMissing, f.config.StatusFailure
+	if statusFailure != nil {
+		return providers.InstanceStatusMissing, statusFailure
 	}
 
 	f.mu.RLock()
@@ -152,18 +162,23 @@ func (f *FakeProvider) GetInstanceStatus(ctx context.Context, region string) (pr
 
 // ListRegions returns a fixed list of fake regions
 func (f *FakeProvider) ListRegions(ctx context.Context) ([]providers.Region, error) {
+	f.mu.RLock()
+	regionListDelay := f.config.RegionListDelay
+	regionListFailure := f.config.RegionListFailure
+	f.mu.RUnlock()
+
 	// Simulate region list delay
-	if f.config.RegionListDelay > 0 {
+	if regionListDelay > 0 {
 		select {
-		case <-time.After(f.config.RegionListDelay):
+		case <-time.After(regionListDelay):
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
 	}
 
 	// Check for configured failure
-	if f.config.RegionListFailure != nil {
-		return nil, f.config.RegionListFailure
+	if regionListFailure != nil {
+		return nil, regionListFailure
 	}
 
 	return []providers.Region{
@@ -181,23 +196,30 @@ func (f *FakeProvider) Hostname(region string) providers.HostName {
 
 // GetRegionPrice returns the configured price for any region
 func (f *FakeProvider) GetRegionPrice(region string) float64 {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	return f.config.PricePerHour
 }
 
 // ListInstances returns all instances in a specific region
 func (f *FakeProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+	f.mu.RLock()
+	statusCheckDelay := f.config.StatusCheckDelay
+	statusFailure := f.config.StatusFailure
+	f.mu.RUnlock()
+
 	// Simulate list delay
-	if f.config.StatusCheckDelay > 0 {
+	if statusCheckDelay > 0 {
 		select {
-		case <-time.After(f.config.StatusCheckDelay):
+		case <-time.After(statusCheckDelay):
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
 	}
 
 	// Check for configured failure
-	if f.config.StatusFailure != nil {
-		return nil, f.config.StatusFailure
+	if statusFailure != nil {
+		return nil, statusFailure
 	}
 
 	f.mu.RLock()

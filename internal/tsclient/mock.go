@@ -2,6 +2,7 @@ package tsclient
 
 import (
 	"context"
+	"fmt"
 	"net/netip"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ type MockClient struct {
 	mu          sync.RWMutex
 	peers       map[string]PeerInfo
 	pingLatency time.Duration
+	nodeStats   *NodeStatsResult // if set, FetchNodeStats returns this
 }
 
 // NewMockClient creates a MockClient with no peers and 10ms default ping latency.
@@ -67,4 +69,21 @@ func (m *MockClient) PingPeer(ctx context.Context, addr netip.Addr) (PingResult,
 		Latency:        latency,
 		ConnectionType: "direct",
 	}, nil
+}
+
+// SetNodeStats sets the stats that FetchNodeStats will return.
+func (m *MockClient) SetNodeStats(stats *NodeStatsResult) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nodeStats = stats
+}
+
+func (m *MockClient) FetchNodeStats(ctx context.Context, hostname string) (NodeStatsResult, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.nodeStats != nil {
+		return *m.nodeStats, nil
+	}
+	return NodeStatsResult{}, fmt.Errorf("no stats available")
 }

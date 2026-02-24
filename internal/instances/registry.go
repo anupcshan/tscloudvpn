@@ -73,6 +73,7 @@ func (r *Registry) CreateInstance(ctx context.Context, providerName, region stri
 		// Create controller with a background context that won't be canceled
 		// when the HTTP request ends
 		controller := NewController(context.Background(), r.logger, provider, region, r.controlApi, r.tsClient)
+		controller.onIdleShutdown = r.makeIdleShutdownCallback(providerName, region)
 		r.controllers[key] = controller
 	}
 	controller := r.controllers[key]
@@ -150,6 +151,19 @@ func (r *Registry) GetAllInstanceStatuses() map[string]InstanceStatus {
 	return statuses
 }
 
+// makeIdleShutdownCallback returns a function that deletes the given instance
+// when called. It runs the deletion in a separate goroutine to avoid blocking
+// the health check loop.
+func (r *Registry) makeIdleShutdownCallback(providerName, region string) func() {
+	return func() {
+		go func() {
+			if err := r.DeleteInstance(providerName, region); err != nil {
+				r.logger.Printf("Idle shutdown delete failed for %s-%s: %v", providerName, region, err)
+			}
+		}()
+	}
+}
+
 // Shutdown stops all controllers
 func (r *Registry) Shutdown() {
 	r.mu.Lock()
@@ -205,6 +219,7 @@ func (r *Registry) discoverExistingInstances(ctx context.Context) {
 
 					// Create controller for existing instance with background context
 					controller := NewController(context.Background(), r.logger, provider, region.Code, r.controlApi, r.tsClient)
+					controller.onIdleShutdown = r.makeIdleShutdownCallback(providerName, region.Code)
 
 					// Mark as running and set creation time
 					controller.mu.Lock()

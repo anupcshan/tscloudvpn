@@ -30,7 +30,6 @@ type regionSize struct {
 
 type digitaloceanProvider struct {
 	client   *godo.Client
-	token    string
 	sshKey   string
 	ownerID  string // Unique identifier for this tscloudvpn instance
 	ownerTag string // Tag combining owner key and value for filtering
@@ -53,7 +52,6 @@ func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
 	return &digitaloceanProvider{
 		client:   client,
 		sshKey:   cfg.SSH.PublicKey,
-		token:    token,
 		ownerID:  ownerID,
 		ownerTag: fmt.Sprintf("%s:%s", providers.OwnerTagKey, ownerID),
 	}, nil
@@ -81,7 +79,6 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 	hostname := doInstanceHostname(region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
 		Args   string
-		OnExit string
 		SSHKey string
 	}{
 		Args: fmt.Sprintf(
@@ -89,7 +86,6 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 			strings.Join(key.GetCLIArgs(), " "),
 			hostname,
 		),
-		OnExit: fmt.Sprintf("curl https://api.digitalocean.com/v2/droplets/$(curl -s http://169.254.169.254/metadata/v1/id) -X DELETE -H 'Authorization: Bearer %s'", d.token),
 		SSHKey: d.sshKey,
 	}); err != nil {
 		return providers.InstanceID{}, err

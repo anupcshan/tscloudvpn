@@ -34,7 +34,6 @@ type vultrSize struct {
 
 type vultrProvider struct {
 	vultrClient         *govultr.Client
-	apiKey              string
 	sshKey              string
 	ownerID             string // Unique identifier for this tscloudvpn instance
 	ownerTag            string // Tag combining owner key and value for filtering
@@ -55,7 +54,6 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 
 	return &vultrProvider{
 		vultrClient:     vultrClient,
-		apiKey:          cfg.Providers.Vultr.APIKey,
 		sshKey:          cfg.SSH.PublicKey,
 		ownerID:         ownerID,
 		ownerTag:        fmt.Sprintf("%s:%s", providers.OwnerTagKey, ownerID),
@@ -151,7 +149,6 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 	hostname := vultrInstanceHostname(region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
 		Args   string
-		OnExit string
 		SSHKey string
 	}{
 		Args: fmt.Sprintf(
@@ -159,7 +156,6 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 			strings.Join(key.GetCLIArgs(), " "),
 			hostname,
 		),
-		OnExit: fmt.Sprintf("curl https://api.vultr.com/v2/instances/$(curl -s http://169.254.169.254/v1.json | jq -r '.\"instance-v2-id\"') -X DELETE -H 'Authorization: Bearer %s'", v.apiKey),
 		SSHKey: v.sshKey,
 	}); err != nil {
 		return providers.InstanceID{}, err

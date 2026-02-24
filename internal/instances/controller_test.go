@@ -295,6 +295,155 @@ func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 	}
 }
 
+func TestController_IdleShutdown_StatsIdle(t *testing.T) {
+	ctx := context.Background()
+	logger := log.Default()
+	provider := &MockProvider{hostname: "test-instance"}
+	controlApi := &MockControlApi{}
+
+	controller := NewController(ctx, logger, provider, "test-region", controlApi, nil)
+	defer controller.Stop()
+
+	controller.state = StateRunning
+	controller.nodeStats = &NodeStats{
+		ForwardedBytes: 3000,
+		LastActive:     time.Now().Add(-5 * time.Hour),
+	}
+
+	require.True(t, controller.shouldIdleShutdown(), "Should trigger idle shutdown when stats show idle > 4h")
+}
+
+func TestController_IdleShutdown_StatsActive(t *testing.T) {
+	ctx := context.Background()
+	logger := log.Default()
+	provider := &MockProvider{hostname: "test-instance"}
+	controlApi := &MockControlApi{}
+
+	controller := NewController(ctx, logger, provider, "test-region", controlApi, nil)
+	defer controller.Stop()
+
+	controller.state = StateRunning
+	controller.nodeStats = &NodeStats{
+		ForwardedBytes: 3000,
+		LastActive:     time.Now().Add(-10 * time.Minute),
+	}
+
+	require.False(t, controller.shouldIdleShutdown(), "Should not idle shutdown when stats show recent activity")
+}
+
+func TestController_IdleShutdown_NoStatsWatchdogExpired(t *testing.T) {
+	ctx := context.Background()
+	logger := log.Default()
+	provider := &MockProvider{hostname: "test-instance"}
+	controlApi := &MockControlApi{}
+
+	controller := NewController(ctx, logger, provider, "test-region", controlApi, nil)
+	defer controller.Stop()
+
+	controller.state = StateRunning
+	controller.watchingSince = time.Now().Add(-9 * time.Hour) // watching for > 8h
+
+	require.True(t, controller.shouldIdleShutdown(), "Should trigger idle shutdown when no stats and watched > 8h")
+}
+
+func TestController_IdleShutdown_NoStatsWatchdogNotExpired(t *testing.T) {
+	ctx := context.Background()
+	logger := log.Default()
+	provider := &MockProvider{hostname: "test-instance"}
+	controlApi := &MockControlApi{}
+
+	controller := NewController(ctx, logger, provider, "test-region", controlApi, nil)
+	defer controller.Stop()
+
+	controller.state = StateRunning
+	// watchingSince defaults to time.Now() in NewController, so < 8h
+
+	require.False(t, controller.shouldIdleShutdown(), "Should not idle shutdown when no stats and watched < 8h")
+}
+
+func TestController_IdleShutdown_NotRunning(t *testing.T) {
+	ctx := context.Background()
+	logger := log.Default()
+	provider := &MockProvider{hostname: "test-instance"}
+	controlApi := &MockControlApi{}
+
+	controller := NewController(ctx, logger, provider, "test-region", controlApi, nil)
+	defer controller.Stop()
+
+	// State is StateIdle (default)
+	controller.nodeStats = &NodeStats{
+		LastActive: time.Now().Add(-5 * time.Hour),
+	}
+
+	require.False(t, controller.shouldIdleShutdown(), "Should not idle shutdown when not in StateRunning")
+}
+
+func TestController_NodeStats(t *testing.T) {
+	ctx := context.Background()
+	logger := log.Default()
+	provider := &MockProvider{hostname: "test-instance"}
+	controlApi := &MockControlApi{}
+
+	controller := NewController(ctx, logger, provider, "test-region", controlApi, nil)
+	defer controller.Stop()
+
+	// Initially no stats
+	status := controller.Status()
+	require.Nil(t, status.NodeStats, "NodeStats should be nil initially")
+
+	lastActive := time.Now().Add(-5 * time.Minute)
+	controller.nodeStats = &NodeStats{
+		ForwardedBytes: 3000,
+		LastActive:     lastActive,
+		ReceivedAt:     time.Now(),
+	}
+
+	status = controller.Status()
+	require.NotNil(t, status.NodeStats, "NodeStats should be set after reporting")
+	require.Equal(t, int64(3000), status.NodeStats.ForwardedBytes)
+	require.Equal(t, lastActive.Unix(), status.NodeStats.LastActive.Unix())
+	require.False(t, status.NodeStats.ReceivedAt.IsZero(), "ReceivedAt should be set")
+}
+
+func TestRegistry_IdleShutdownCallback(t *testing.T) {
+	logger := log.Default()
+	controlApi := &MockControlApi{}
+
+	shutdownCalled := make(chan struct{}, 1)
+	provider := &MockProvider{
+		hostname: "mock-test-region",
+	}
+	providerMap := map[string]providers.Provider{
+		"mock": provider,
+	}
+
+	registry := NewRegistry(logger, controlApi, nil, providerMap)
+	defer registry.Shutdown()
+
+	ctx := context.Background()
+	err := registry.CreateInstance(ctx, "mock", "test-region")
+	require.NoError(t, err)
+
+	// Manually set the callback to a test channel to verify it's wired
+	registry.mu.RLock()
+	controller := registry.controllers["mock-test-region"]
+	registry.mu.RUnlock()
+
+	controller.mu.Lock()
+	controller.onIdleShutdown = func() {
+		shutdownCalled <- struct{}{}
+	}
+	controller.state = StateRunning
+	controller.nodeStats = &NodeStats{
+		LastActive: time.Now().Add(-5 * time.Hour),
+	}
+	controller.mu.Unlock()
+
+	controller.mu.RLock()
+	require.True(t, controller.shouldIdleShutdown())
+	controller.mu.RUnlock()
+}
+
 func TestRegistry_CreateInstance_ContextCancellation(t *testing.T) {
 	logger := log.Default()
 	controlApi := &MockControlApi{}
