@@ -478,6 +478,50 @@ func (g *gcpProvider) ListInstances(ctx context.Context, region string) ([]provi
 	return instanceIDs, nil
 }
 
+func zoneToRegion(zone string) string {
+	// "us-central1-a" -> "us-central1"
+	lastDash := strings.LastIndex(zone, "-")
+	if lastDash < 0 {
+		return zone
+	}
+	return zone[:lastDash]
+}
+
+func (g *gcpProvider) ListAllInstances(ctx context.Context) ([]providers.InstanceID, error) {
+	sanitizedOwnerID := g.sanitizeLabelValue(g.ownerID)
+	filter := fmt.Sprintf("labels.tscloudvpn:* AND labels.tscloudvpn-owner=%s", sanitizedOwnerID)
+
+	resp, err := compute.NewInstancesService(g.service).
+		AggregatedList(g.projectId).
+		Filter(filter).
+		ReturnPartialSuccess(true).
+		Context(ctx).
+		Do()
+	if err != nil {
+		return nil, err
+	}
+
+	var instanceIDs []providers.InstanceID
+	for zonePath, scopedList := range resp.Items {
+		for _, instance := range scopedList.Instances {
+			if instance.Status != "TERMINATED" {
+				// zonePath is "zones/us-central1-a"
+				zone := strings.TrimPrefix(zonePath, "zones/")
+				region := zoneToRegion(zone)
+				createdAt, _ := time.Parse(time.RFC3339, instance.CreationTimestamp)
+				instanceIDs = append(instanceIDs, providers.InstanceID{
+					Hostname:     gcpInstanceHostname(region),
+					ProviderID:   instance.Name,
+					ProviderName: providerName,
+					CreatedAt:    createdAt,
+				})
+			}
+		}
+	}
+
+	return instanceIDs, nil
+}
+
 func (g *gcpProvider) Hostname(region string) providers.HostName {
 	return providers.HostName(gcpInstanceHostname(region))
 }

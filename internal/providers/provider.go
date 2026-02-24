@@ -43,6 +43,13 @@ type Provider interface {
 	GetRegionPrice(region string) float64 // Get hourly price for a region
 }
 
+// AllInstanceLister is an optional interface that providers can implement
+// to list all instances across all regions in a single API call.
+// The GC will use this when available instead of iterating per-region.
+type AllInstanceLister interface {
+	ListAllInstances(ctx context.Context) ([]InstanceID, error)
+}
+
 type ProviderFactory func(ctx context.Context, cfg *config.Config) (Provider, error)
 
 func Register(name string, label string, providerFactory ProviderFactory) {

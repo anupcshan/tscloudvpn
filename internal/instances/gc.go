@@ -11,7 +11,7 @@ import (
 
 const (
 	// gcInterval is how often the garbage collector runs
-	gcInterval = 5 * time.Minute
+	gcInterval = 30 * time.Minute
 
 	// gcGracePeriod is how long to wait before deleting an orphaned instance
 	// This prevents deleting instances that are still booting up
@@ -60,10 +60,33 @@ func (gc *GarbageCollector) Run(ctx context.Context) {
 	}
 }
 
+// listAllInstances returns all instances for a provider. If the provider
+// implements AllInstanceLister, it uses a single bulk API call. Otherwise,
+// it falls back to listing regions and querying each one.
+func (gc *GarbageCollector) listAllInstances(ctx context.Context, provider providers.Provider) ([]providers.InstanceID, error) {
+	if lister, ok := provider.(providers.AllInstanceLister); ok {
+		return lister.ListAllInstances(ctx)
+	}
+
+	regions, err := provider.ListRegions(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var allInstances []providers.InstanceID
+	for _, region := range regions {
+		instances, err := provider.ListInstances(ctx, region.Code)
+		if err != nil {
+			return nil, err
+		}
+		allInstances = append(allInstances, instances...)
+	}
+
+	return allInstances, nil
+}
+
 // collect performs a single garbage collection cycle
 func (gc *GarbageCollector) collect(ctx context.Context) {
-	gc.logger.Printf("Running garbage collection...")
-
 	// Step 1: Get all devices from Tailscale/Headscale
 	devices, err := gc.controlApi.ListDevices(ctx)
 	if err != nil {
@@ -77,61 +100,49 @@ func (gc *GarbageCollector) collect(ctx context.Context) {
 		tailscaleHostnames[device.Hostname] = true
 	}
 
-	gc.logger.Printf("GC: found %d devices in control plane", len(tailscaleHostnames))
-
 	// Step 2: Check each provider/region for orphaned instances
 	totalOrphaned := 0
 	totalDeleted := 0
 
 	for providerName, provider := range gc.providers {
-		regions, err := provider.ListRegions(ctx)
+		instances, err := gc.listAllInstances(ctx, provider)
 		if err != nil {
-			gc.logger.Printf("GC: failed to list regions for %s: %v", providerName, err)
+			gc.logger.Printf("GC: failed to list instances for %s: %v", providerName, err)
 			continue
 		}
 
-		for _, region := range regions {
-			instances, err := provider.ListInstances(ctx, region.Code)
-			if err != nil {
-				gc.logger.Printf("GC: failed to list instances for %s/%s: %v", providerName, region.Code, err)
+		for _, instance := range instances {
+			// Check if this instance exists in Tailscale
+			if tailscaleHostnames[instance.Hostname] {
+				// Instance exists in both cloud and Tailscale - all good
 				continue
 			}
 
-			for _, instance := range instances {
-				// Check if this instance exists in Tailscale
-				if tailscaleHostnames[instance.Hostname] {
-					// Instance exists in both cloud and Tailscale - all good
-					continue
-				}
+			// Instance is orphaned (exists in cloud but not in Tailscale)
+			totalOrphaned++
 
-				// Instance is orphaned (exists in cloud but not in Tailscale)
-				totalOrphaned++
+			// Check grace period - don't delete young instances that might still be booting
+			instanceAge := time.Since(instance.CreatedAt)
+			if instanceAge < gcGracePeriod {
+				gc.logger.Printf("GC: skipping young orphaned instance %s/%s (age: %v, grace period: %v)",
+					providerName, instance.Hostname, instanceAge.Round(time.Second), gcGracePeriod)
+				continue
+			}
 
-				// Check grace period - don't delete young instances that might still be booting
-				instanceAge := time.Since(instance.CreatedAt)
-				if instanceAge < gcGracePeriod {
-					gc.logger.Printf("GC: skipping young orphaned instance %s/%s (age: %v, grace period: %v)",
-						providerName, instance.Hostname, instanceAge.Round(time.Second), gcGracePeriod)
-					continue
-				}
+			// Delete the orphaned instance
+			gc.logger.Printf("GC: deleting orphaned instance %s/%s (provider ID: %s, age: %v)",
+				providerName, instance.Hostname, instance.ProviderID, instanceAge.Round(time.Second))
 
-				// Delete the orphaned instance
-				gc.logger.Printf("GC: deleting orphaned instance %s/%s (provider ID: %s, age: %v)",
-					providerName, instance.Hostname, instance.ProviderID, instanceAge.Round(time.Second))
-
-				if err := provider.DeleteInstance(ctx, instance); err != nil {
-					gc.logger.Printf("GC: failed to delete instance %s/%s: %v", providerName, instance.Hostname, err)
-				} else {
-					totalDeleted++
-					gc.logger.Printf("GC: successfully deleted orphaned instance %s/%s", providerName, instance.Hostname)
-				}
+			if err := provider.DeleteInstance(ctx, instance); err != nil {
+				gc.logger.Printf("GC: failed to delete instance %s/%s: %v", providerName, instance.Hostname, err)
+			} else {
+				totalDeleted++
+				gc.logger.Printf("GC: successfully deleted orphaned instance %s/%s", providerName, instance.Hostname)
 			}
 		}
 	}
 
 	if totalOrphaned > 0 {
 		gc.logger.Printf("GC: found %d orphaned instances, deleted %d", totalOrphaned, totalDeleted)
-	} else {
-		gc.logger.Printf("GC: no orphaned instances found")
 	}
 }
