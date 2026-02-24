@@ -50,6 +50,7 @@ func NewManager(
 	}
 
 	instanceRegistry := instances.NewRegistry(logger, controlApi, tsLocalClient, cloudProviders)
+	instanceRegistry.Start(ctx)
 
 	m := &Manager{
 		cloudProviders:     cloudProviders,

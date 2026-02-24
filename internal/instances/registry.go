@@ -21,29 +21,29 @@ type Registry struct {
 	providers   map[string]providers.Provider
 }
 
-// NewRegistry creates a new instance registry
+// NewRegistry creates a new instance registry. Call Start() to begin
+// discovery of existing instances and garbage collection.
 func NewRegistry(
 	logger *log.Logger,
 	controlApi controlapi.ControlApi,
 	tsClient tsclient.TailscaleClient,
 	providers map[string]providers.Provider,
 ) *Registry {
-	r := &Registry{
+	return &Registry{
 		controllers: make(map[string]*Controller),
 		logger:      logger,
 		controlApi:  controlApi,
 		tsClient:    tsClient,
 		providers:   providers,
 	}
+}
 
-	// Discover existing instances on startup
-	go r.discoverExistingInstances(context.Background())
+// Start begins background discovery of existing instances and garbage collection.
+func (r *Registry) Start(ctx context.Context) {
+	go r.discoverExistingInstances(ctx)
 
-	// Start garbage collector to clean up orphaned cloud instances
-	gc := NewGarbageCollector(logger, controlApi, providers)
-	go gc.Run(context.Background())
-
-	return r
+	gc := NewGarbageCollector(r.logger, r.controlApi, r.providers)
+	go gc.Run(ctx)
 }
 
 // CreateInstance creates a new instance with its controller

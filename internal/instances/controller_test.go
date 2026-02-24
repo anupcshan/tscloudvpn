@@ -263,6 +263,7 @@ func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 
 	registry := NewRegistry(logger, controlApi, nil, providers)
 	defer registry.Shutdown()
+	registry.Start(context.Background())
 
 	// Wait for discovery to complete - use Eventually since discovery is async
 	require.Eventually(t, func() bool {

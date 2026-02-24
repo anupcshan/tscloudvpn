@@ -509,9 +509,9 @@ func TestIntegration_RegistryWithFakeProvider_DiscoverExistingInstances(t *testi
 		"fake": fakeProvider,
 	}
 
-	// Create registry - this should trigger discovery
 	registry := NewRegistry(logger, controlApi, nil, providers)
 	defer registry.Shutdown()
+	registry.Start(context.Background())
 
 	// Wait for discovery to complete
 	require.Eventually(t, func() bool {
