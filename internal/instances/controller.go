@@ -147,6 +147,7 @@ const (
 	StateIdle      InstanceState = iota // No activity or instance gone
 	StateLaunching                      // Create() called, cloud API in progress
 	StateRunning                        // Instance is up, peer visible in Tailscale
+	StateFailed                         // Create() failed
 )
 
 // InstanceStatus represents the current state of an instance
@@ -166,6 +167,7 @@ type InstanceStatus struct {
 		ConnectionType   string
 	}
 	NodeStats *NodeStats // nil if node has never reported stats
+	LastError string     // error message if State == StateFailed
 }
 
 const (
@@ -201,6 +203,7 @@ type Controller struct {
 	onIdleShutdown        func()     // callback when idle shutdown is triggered
 	idleShutdownTriggered bool       // prevents calling onIdleShutdown more than once
 	healthCheckCount      int        // counter for throttling stats fetches
+	lastError             string     // error message when state is StateFailed
 }
 
 // NewController creates a new instance controller
@@ -328,6 +331,7 @@ func (c *Controller) Status() InstanceStatus {
 		IsRunning:  c.state == StateRunning,
 		CreatedAt:  c.createdAt,
 		LaunchedAt: c.launchedAt,
+		LastError:  c.lastError,
 	}
 
 	status.PingStats.SuccessRate, status.PingStats.AvgLatency, status.PingStats.StdDev, status.PingStats.TimeSinceFailure, status.PingStats.ConnectionType = c.ping.GetStats()
@@ -372,6 +376,16 @@ func (c *Controller) shouldIdleShutdown() bool {
 
 	// No stats ever received: watchdog timer
 	return time.Since(c.watchingSince) > statsWatchdogThreshold
+}
+
+// SetFailed transitions the controller to the failed state with an error message
+// and stops the health check goroutine.
+func (c *Controller) SetFailed(err error) {
+	c.mu.Lock()
+	c.state = StateFailed
+	c.lastError = err.Error()
+	c.mu.Unlock()
+	c.Stop()
 }
 
 // Stop stops the controller and cleans up resources

@@ -114,6 +114,15 @@
       border-left-color: var(--info);
     }
 
+    .node-card-failed {
+      border-left-color: var(--danger);
+    }
+
+    .node-card-failed .node-meta span {
+      white-space: normal;
+      overflow-wrap: break-word;
+    }
+
     .node-main {
       display: flex;
       align-items: center;
@@ -160,6 +169,7 @@
     .pill-green { background: var(--accent-dim); color: var(--accent); }
     .pill-yellow { background: rgba(251,191,36,0.1); color: var(--warning); }
     .pill-blue { background: var(--info-dim); color: var(--info); }
+    .pill-red { background: var(--danger-dim); color: var(--danger); }
 
     /* -- Buttons -- */
     .btn {

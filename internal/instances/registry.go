@@ -52,42 +52,47 @@ func (r *Registry) CreateInstance(ctx context.Context, providerName, region stri
 
 	r.mu.Lock()
 	// Check if controller already exists
-	if controller, exists := r.controllers[key]; exists {
-		r.mu.Unlock()
-		// If instance already exists and is running, just return success
-		status := controller.Status()
+	if existing, exists := r.controllers[key]; exists {
+		status := existing.Status()
 		if status.IsRunning {
+			r.mu.Unlock()
 			r.logger.Printf("Instance %s already running, no action needed", key)
 			return nil
 		}
-		// If controller exists but instance isn't running, proceed with creation
-		r.mu.Lock()
-	} else {
-		// Create new controller if it doesn't exist
-		provider, exists := r.providers[providerName]
-		if !exists {
+		if status.State == StateFailed {
+			// Clean up failed controller before creating a new one
+			delete(r.controllers, key)
+		} else {
+			// Controller exists but instance isn't running, proceed with creation
+			controller := r.controllers[key]
 			r.mu.Unlock()
-			return fmt.Errorf("unknown provider: %s", providerName)
+			go func() {
+				if err := controller.Create(); err != nil {
+					r.logger.Printf("Failed to create instance %s: %s", key, err)
+					controller.SetFailed(err)
+				}
+			}()
+			return nil
 		}
-
-		// Create controller with a background context that won't be canceled
-		// when the HTTP request ends
-		controller := NewController(context.Background(), r.logger, provider, region, r.controlApi, r.tsClient)
-		controller.onIdleShutdown = r.makeIdleShutdownCallback(providerName, region)
-		r.controllers[key] = controller
 	}
-	controller := r.controllers[key]
+
+	// Create new controller
+	provider, exists := r.providers[providerName]
+	if !exists {
+		r.mu.Unlock()
+		return fmt.Errorf("unknown provider: %s", providerName)
+	}
+
+	controller := NewController(context.Background(), r.logger, provider, region, r.controlApi, r.tsClient)
+	controller.onIdleShutdown = r.makeIdleShutdownCallback(providerName, region)
+	r.controllers[key] = controller
 	r.mu.Unlock()
 
 	// Start instance creation
 	go func() {
 		if err := controller.Create(); err != nil {
 			r.logger.Printf("Failed to create instance %s: %s", key, err)
-			// Remove failed controller
-			r.mu.Lock()
-			delete(r.controllers, key)
-			r.mu.Unlock()
-			controller.Stop()
+			controller.SetFailed(err)
 		}
 	}()
 
@@ -106,6 +111,11 @@ func (r *Registry) DeleteInstance(providerName, region string) error {
 	}
 	delete(r.controllers, key)
 	r.mu.Unlock()
+
+	// If the controller failed, no cloud resources to clean up
+	if controller.Status().State == StateFailed {
+		return nil
+	}
 
 	// Delete the instance
 	err := controller.Delete()

@@ -470,20 +470,20 @@ func TestIntegration_RegistryWithFakeProvider_ProviderFailures(t *testing.T) {
 		t.Fatalf("Registry creation shouldn't fail immediately: %v", err)
 	}
 
-	// Wait for failed creation to be cleaned up (controller removed from registry)
+	// Wait for failed creation to transition to StateFailed
 	require.Eventually(t, func() bool {
-		statuses := registry.GetAllInstanceStatuses()
-		return len(statuses) == 1
-	}, 5*time.Second, 100*time.Millisecond, "Expected only 1 instance after failed creation")
+		status, err := registry.GetInstanceStatus("fake", "fake-us-west")
+		return err == nil && status.State == StateFailed
+	}, 5*time.Second, 100*time.Millisecond, "Expected failed instance to be in StateFailed")
 
-	// Verify only the first instance remains
-	statuses := registry.GetAllInstanceStatuses()
-	if len(statuses) != 1 {
-		t.Errorf("Expected 1 instance after failed creation, got %d", len(statuses))
-		for key := range statuses {
-			t.Logf("Found instance: %s", key)
-		}
-	}
+	// Verify the failed instance has an error message
+	failedStatus, err := registry.GetInstanceStatus("fake", "fake-us-west")
+	require.NoError(t, err)
+	require.Contains(t, failedStatus.LastError, "simulated creation failure")
+
+	// Verify the first instance is still tracked
+	_, err = registry.GetInstanceStatus("fake", "fake-us-east")
+	require.NoError(t, err)
 }
 
 func TestIntegration_RegistryWithFakeProvider_DiscoverExistingInstances(t *testing.T) {

@@ -202,6 +202,34 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				html.WriteString(`</div>`)
 			}
 
+			// Failed nodes
+			for _, region := range detail {
+				if region.HasNode {
+					continue
+				}
+				instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Provider, region.Region)
+				if err != nil || instanceStatus.State != instances.StateFailed {
+					continue
+				}
+				hasCards = true
+
+				html.WriteString(`<div class="node-card node-card-failed">`)
+				html.WriteString(`<div>`)
+				html.WriteString(`<div class="node-main">`)
+				fmt.Fprintf(&html, `<span class="node-location">%s</span>`, region.LongName)
+				fmt.Fprintf(&html, `<span class="node-provider">%s</span>`, region.ProviderLabel)
+				html.WriteString(`<span class="pill pill-red">failed</span>`)
+				html.WriteString(`</div>`)
+				html.WriteString(`<div class="node-meta" style="margin-top:6px">`)
+				fmt.Fprintf(&html, `<span>%s</span>`, instanceStatus.LastError)
+				html.WriteString(`</div>`)
+				html.WriteString(`</div>`)
+				fmt.Fprintf(&html, `<button class="btn btn-danger" hx-ext="disable-element" `+
+					`hx-disable-element="self" hx-delete="/providers/%s/regions/%s">Dismiss</button>`,
+					region.Provider, region.Region)
+				html.WriteString(`</div>`)
+			}
+
 			// Running nodes
 			for _, node := range detail {
 				if !node.HasNode {
@@ -290,12 +318,14 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 					data[hasNodeKey] = fmt.Sprintf(`<span class="pill %s">running %s</span>`, pillClass, region.SinceCreated)
 					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, opURL)
 				} else {
-					// Check if instance is being launched
+					// Check if instance is being launched or failed
 					instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Provider, region.Region)
 					disabledFragment := ""
 					if err == nil && instanceStatus.State == instances.StateLaunching {
 						data[hasNodeKey] = fmt.Sprintf(`<span class="pill pill-blue">launching %s...</span>`, durafmt.ParseShort(time.Since(instanceStatus.LaunchedAt)).InternationalString())
 						disabledFragment = "disabled"
+					} else if err == nil && instanceStatus.State == instances.StateFailed {
+						data[hasNodeKey] = `<span class="pill pill-red">failed</span>`
 					} else {
 						data[hasNodeKey] = ""
 					}
