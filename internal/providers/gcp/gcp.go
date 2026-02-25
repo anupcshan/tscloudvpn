@@ -100,9 +100,9 @@ type gcpProvider struct {
 	// machineType -> region -> hourly price
 	priceCache map[string]map[string]float64
 
-	// Cache for machine types per region
+	// Cache for machine types per region, sorted by price (cheapest first)
 	regionMachineTypeCacheLock sync.RWMutex
-	regionMachineTypeCache     map[string]regionMachineType
+	regionMachineTypeCache     map[string][]regionMachineType
 	regionMachineTypeCacheTime time.Time
 }
 
@@ -181,12 +181,12 @@ func (g *gcpProvider) ListRegions(ctx context.Context) ([]providers.Region, erro
 }
 
 // loadRegionMachineTypes queries GCP for available machine types in each region
-// and picks the cheapest one based on prices from the Cloud Billing API.
-func (g *gcpProvider) loadRegionMachineTypes() (map[string]regionMachineType, error) {
+// and returns them sorted by price (cheapest first) based on the Cloud Billing API.
+func (g *gcpProvider) loadRegionMachineTypes() (map[string][]regionMachineType, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result := make(map[string]regionMachineType)
+	result := make(map[string][]regionMachineType)
 	var resultLock sync.Mutex
 	var wg sync.WaitGroup
 
@@ -224,8 +224,8 @@ func (g *gcpProvider) loadRegionMachineTypes() (map[string]regionMachineType, er
 				return
 			}
 
-			// Find the cheapest x86_64 machine type we can price
-			var cheapest *regionMachineType
+			// Collect all priceable x86_64 machine types
+			var available []regionMachineType
 			for _, mt := range mtList.Items {
 				if mt.Architecture != "" && mt.Architecture != "X86_64" {
 					continue
@@ -234,17 +234,20 @@ func (g *gcpProvider) loadRegionMachineTypes() (map[string]regionMachineType, er
 				if price == 0 {
 					continue // Can't price this machine family
 				}
-				if cheapest == nil || price < cheapest.HourlyCost {
-					cheapest = &regionMachineType{
-						MachineType: mt.Name,
-						HourlyCost:  price,
-					}
-				}
+				available = append(available, regionMachineType{
+					MachineType: mt.Name,
+					HourlyCost:  price,
+				})
 			}
 
-			if cheapest != nil {
+			// Sort by price, cheapest first
+			sort.Slice(available, func(i, j int) bool {
+				return available[i].HourlyCost < available[j].HourlyCost
+			})
+
+			if len(available) > 0 {
 				resultLock.Lock()
-				result[region.Name] = *cheapest
+				result[region.Name] = available
 				resultLock.Unlock()
 			}
 		}()
@@ -543,12 +546,12 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 		return providers.InstanceID{}, fmt.Errorf("failed to ensure machine type cache: %w", err)
 	}
 
-	// Get the appropriate machine type for this region
+	// Get available machine types for this region (sorted cheapest first)
 	g.regionMachineTypeCacheLock.RLock()
-	regionMachineType, ok := g.regionMachineTypeCache[region]
+	machineTypes, ok := g.regionMachineTypeCache[region]
 	g.regionMachineTypeCacheLock.RUnlock()
 
-	if !ok {
+	if !ok || len(machineTypes) == 0 {
 		return providers.InstanceID{}, fmt.Errorf("no suitable machine type found for region %s", region)
 	}
 
@@ -557,11 +560,6 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 	if err != nil {
 		return providers.InstanceID{}, err
 	}
-
-	zone := zones.Items[rand.Intn(len(zones.Items))].Name
-	log.Printf("Creating instance in zone %s using machine type %s", zone, regionMachineType.MachineType)
-
-	name := "tscloudvpn-" + zone
 
 	tmplOut := new(bytes.Buffer)
 	hostname := gcpInstanceHostname(region)
@@ -584,76 +582,93 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 		return providers.InstanceID{}, fmt.Errorf("failed to setup firewall rule: %w", err)
 	}
 
-	op, err := compute.NewInstancesService(g.service).Insert(g.projectId, zone, &compute.Instance{
-		Name:        name,
-		MachineType: prefix + "/zones/" + zone + "/machineTypes/" + regionMachineType.MachineType,
-		Tags: &compute.Tags{
-			Items: []string{networkTag},
-		},
-		Disks: []*compute.AttachedDisk{
-			{
-				AutoDelete: true,
-				Boot:       true,
-				InitializeParams: &compute.AttachedDiskInitializeParams{
-					SourceImage: debianLatestImage,
-				},
+	zone := zones.Items[rand.Intn(len(zones.Items))].Name
+	name := "tscloudvpn-" + zone
+
+	// Try machine types in order of price (cheapest first), falling back on capacity errors
+	var lastErr error
+	for _, mt := range machineTypes {
+		log.Printf("Creating instance in zone %s using machine type %s", zone, mt.MachineType)
+
+		op, err := compute.NewInstancesService(g.service).Insert(g.projectId, zone, &compute.Instance{
+			Name:        name,
+			MachineType: prefix + "/zones/" + zone + "/machineTypes/" + mt.MachineType,
+			Tags: &compute.Tags{
+				Items: []string{networkTag},
 			},
-		},
-		Labels: map[string]string{
-			"tscloudvpn":       "true",
-			"tscloudvpn-owner": g.sanitizeLabelValue(g.ownerID),
-		},
-		NetworkInterfaces: []*compute.NetworkInterface{
-			{
-				AccessConfigs: []*compute.AccessConfig{
-					{
-						Name:        "External NAT",
-						NetworkTier: "PREMIUM",
+			Disks: []*compute.AttachedDisk{
+				{
+					AutoDelete: true,
+					Boot:       true,
+					InitializeParams: &compute.AttachedDiskInitializeParams{
+						SourceImage: debianLatestImage,
 					},
 				},
-				StackType:  "IPV4_ONLY",
-				Subnetwork: fmt.Sprintf("projects/%s/regions/%s/subnetworks/default", g.projectId, region),
 			},
-		},
-		ServiceAccounts: []*compute.ServiceAccount{
-			{
-				Email:  g.serviceAccount,
-				Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
+			Labels: map[string]string{
+				"tscloudvpn":       "true",
+				"tscloudvpn-owner": g.sanitizeLabelValue(g.ownerID),
 			},
-		},
-		Metadata: &compute.Metadata{
-			Items: []*compute.MetadataItems{
+			NetworkInterfaces: []*compute.NetworkInterface{
 				{
-					Key:   "startup-script",
-					Value: aws.String(tmplOut.String()),
+					AccessConfigs: []*compute.AccessConfig{
+						{
+							Name:        "External NAT",
+							NetworkTier: "PREMIUM",
+						},
+					},
+					StackType:  "IPV4_ONLY",
+					Subnetwork: fmt.Sprintf("projects/%s/regions/%s/subnetworks/default", g.projectId, region),
 				},
 			},
-		},
-	}).Context(ctx).Do()
-	if err != nil {
-		return providers.InstanceID{}, err
-	}
-
-	// Wait for the operation to complete
-	op, err = compute.NewZoneOperationsService(g.service).Wait(g.projectId, zone, op.Name).Context(ctx).Do()
-	if err != nil {
-		return providers.InstanceID{}, fmt.Errorf("failed waiting for instance creation: %w", err)
-	}
-	if op.Error != nil {
-		var msgs []string
-		for _, e := range op.Error.Errors {
-			msgs = append(msgs, fmt.Sprintf("%s: %s", e.Code, e.Message))
+			ServiceAccounts: []*compute.ServiceAccount{
+				{
+					Email:  g.serviceAccount,
+					Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
+				},
+			},
+			Metadata: &compute.Metadata{
+				Items: []*compute.MetadataItems{
+					{
+						Key:   "startup-script",
+						Value: aws.String(tmplOut.String()),
+					},
+				},
+			},
+		}).Context(ctx).Do()
+		if err != nil {
+			lastErr = err
+			log.Printf("Insert failed in %s with %s: %v, trying next machine type", zone, mt.MachineType, err)
+			continue
 		}
-		return providers.InstanceID{}, fmt.Errorf("instance creation failed: %s", strings.Join(msgs, "; "))
+
+		// Wait for the operation to complete
+		op, err = compute.NewZoneOperationsService(g.service).Wait(g.projectId, zone, op.Name).Context(ctx).Do()
+		if err != nil {
+			lastErr = fmt.Errorf("failed waiting for instance creation in %s with %s: %w", zone, mt.MachineType, err)
+			log.Printf("%v, trying next machine type", lastErr)
+			continue
+		}
+		if op.Error != nil {
+			var msgs []string
+			for _, e := range op.Error.Errors {
+				msgs = append(msgs, fmt.Sprintf("%s: %s", e.Code, e.Message))
+			}
+			lastErr = fmt.Errorf("instance creation failed in %s with %s: %s", zone, mt.MachineType, strings.Join(msgs, "; "))
+			log.Printf("%v, trying next machine type", lastErr)
+			continue
+		}
+
+		// Success
+		log.Printf("Launched instance %s (machine type: %s)", name, mt.MachineType)
+		return providers.InstanceID{
+			Hostname:     hostname,
+			ProviderID:   name,
+			ProviderName: providerName,
+		}, nil
 	}
 
-	log.Printf("Launched instance %s", name)
-
-	return providers.InstanceID{
-		Hostname:     hostname,
-		ProviderID:   name,
-		ProviderName: providerName,
-	}, nil
+	return providers.InstanceID{}, fmt.Errorf("all machine types exhausted in %s: %w", zone, lastErr)
 }
 
 func (g *gcpProvider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {
@@ -786,12 +801,12 @@ func (g *gcpProvider) GetRegionPrice(region string) float64 {
 	g.regionMachineTypeCacheLock.RLock()
 	defer g.regionMachineTypeCacheLock.RUnlock()
 
-	if regionMachineType, ok := g.regionMachineTypeCache[region]; ok {
-		return regionMachineType.HourlyCost
+	if types, ok := g.regionMachineTypeCache[region]; ok && len(types) > 0 {
+		return types[0].HourlyCost
 	}
 
 	// Default price if region not found in cache
-	return 0.0084 // e2-micro default price
+	return 0
 }
 
 func init() {
