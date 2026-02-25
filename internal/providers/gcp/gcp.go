@@ -18,6 +18,7 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	cloudbilling "google.golang.org/api/cloudbilling/v1"
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/api/option"
 )
@@ -90,8 +91,14 @@ type gcpProvider struct {
 	projectId      string
 	serviceAccount string
 	service        *compute.Service
+	billingService *cloudbilling.APIService
 	sshKey         string
 	ownerID        string // Unique identifier for this tscloudvpn instance
+
+	// Cache for per-machine-type per-region pricing from Cloud Billing API
+	priceCacheOnce sync.Once
+	// machineType -> region -> hourly price
+	priceCache map[string]map[string]float64
 
 	// Cache for machine types per region
 	regionMachineTypeCacheLock sync.RWMutex
@@ -104,7 +111,13 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 		return nil, nil
 	}
 
-	service, err := compute.NewService(ctx, option.WithCredentialsJSON([]byte(cfg.Providers.GCP.CredentialsJSON)))
+	credOpt := option.WithCredentialsJSON([]byte(cfg.Providers.GCP.CredentialsJSON))
+	service, err := compute.NewService(ctx, credOpt)
+	if err != nil {
+		return nil, err
+	}
+
+	billingService, err := cloudbilling.NewService(ctx, credOpt)
 	if err != nil {
 		return nil, err
 	}
@@ -113,10 +126,12 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 		projectId:      cfg.Providers.GCP.ProjectID,
 		serviceAccount: cfg.Providers.GCP.ServiceAccount,
 		service:        service,
+		billingService: billingService,
 		sshKey:         cfg.SSH.PublicKey,
 		ownerID:        providers.GetOwnerID(cfg),
 	}
 
+	go prov.populatePriceCache()
 	go prov.ensureMachineTypeCache()
 	return prov, nil
 }
@@ -166,9 +181,9 @@ func (g *gcpProvider) ListRegions(ctx context.Context) ([]providers.Region, erro
 }
 
 // loadRegionMachineTypes queries GCP for available machine types in each region
-// and determines the cheapest option. This replaces the hardcoded f1-micro.
+// and picks the cheapest one based on prices from the Cloud Billing API.
 func (g *gcpProvider) loadRegionMachineTypes() (map[string]regionMachineType, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	result := make(map[string]regionMachineType)
@@ -181,25 +196,8 @@ func (g *gcpProvider) loadRegionMachineTypes() (map[string]regionMachineType, er
 		return nil, fmt.Errorf("failed to list regions: %w", err)
 	}
 
-	// Common cheap machine types to try, in order of preference (cheapest first)
-	// These are the typical low-cost options available across GCP regions
-	cheapMachineTypes := []string{
-		"f1-micro",      // Legacy option, not available in all regions
-		"e2-micro",      // Cheapest, non-legacy shared-core option
-		"g1-small",      // Legacy option
-		"e2-small",      // Slightly more expensive but widely available
-		"n1-standard-1", // Fallback option
-	}
-
-	// Hardcoded pricing map as GCP Billing API requires special setup
-	// In production, consider using the Cloud Billing API for real-time pricing
-	// https://cloud.google.com/billing/v1/how-tos/catalog-api
-	machineTypePricing := map[string]float64{
-		"f1-micro":      0.0076, // Legacy pricing
-		"e2-micro":      0.0084, // Cheapest non-legacy option
-		"e2-small":      0.0134, // Small but reliable
-		"n1-standard-1": 0.0475, // Standard fallback
-	}
+	// Ensure price cache is populated
+	g.populatePriceCache()
 
 	for _, region := range regionsList.Items {
 		wg.Add(1)
@@ -218,33 +216,35 @@ func (g *gcpProvider) loadRegionMachineTypes() (map[string]regionMachineType, er
 				return
 			}
 
-			// Use the first zone to check machine type availability
+			// List all machine types available in the first zone
 			zone := zones.Items[0].Name
+			mtList, err := compute.NewMachineTypesService(g.service).List(g.projectId, zone).Context(ctx).Do()
+			if err != nil {
+				log.Printf("Failed to list machine types for zone %s: %v", zone, err)
+				return
+			}
 
-			// Try each cheap machine type until we find one that's available
-			for _, machineType := range cheapMachineTypes {
-				_, err := compute.NewMachineTypesService(g.service).Get(g.projectId, zone, machineType).Context(ctx).Do()
-				if err == nil {
-					// This machine type is available in this region
-					price := machineTypePricing[machineType]
-					resultLock.Lock()
-					result[region.Name] = regionMachineType{
-						MachineType: machineType,
+			// Find the cheapest x86_64 machine type we can price
+			var cheapest *regionMachineType
+			for _, mt := range mtList.Items {
+				if mt.Architecture != "" && mt.Architecture != "X86_64" {
+					continue
+				}
+				price := g.computeInstancePrice(mt, region.Name)
+				if price == 0 {
+					continue // Can't price this machine family
+				}
+				if cheapest == nil || price < cheapest.HourlyCost {
+					cheapest = &regionMachineType{
+						MachineType: mt.Name,
 						HourlyCost:  price,
 					}
-					resultLock.Unlock()
-					break
 				}
 			}
 
-			// If no machine type was found, log a warning and use a default
-			if _, ok := result[region.Name]; !ok {
-				log.Printf("Warning: No preferred machine type available in region %s, using e2-micro as fallback", region.Name)
+			if cheapest != nil {
 				resultLock.Lock()
-				result[region.Name] = regionMachineType{
-					MachineType: "e2-micro",
-					HourlyCost:  0.0086,
-				}
+				result[region.Name] = *cheapest
 				resultLock.Unlock()
 			}
 		}()
@@ -253,6 +253,198 @@ func (g *gcpProvider) loadRegionMachineTypes() (map[string]regionMachineType, er
 	wg.Wait()
 
 	return result, nil
+}
+
+// computeEngineServiceID is the well-known Cloud Billing service ID for Compute Engine.
+const computeEngineServiceID = "services/6F81-5844-456A"
+
+// perInstanceGroups maps Billing API ResourceGroup values to machine family
+// prefixes for legacy types that have per-instance-hour pricing.
+var perInstanceGroups = map[string]string{
+	"F1Micro": "f1",
+	"G1Small": "g1",
+}
+
+// skuDescriptionExclusions filters out non-standard VM SKUs that share the
+// generic CPU/RAM ResourceGroups but represent different pricing models.
+var skuDescriptionExclusions = []string{
+	"Sole Tenancy",
+	"Custom",
+	"DWS",
+	"Committed",
+	"Reserved",
+}
+
+// moneyToFloat64 converts a Cloud Billing Money value to float64.
+func moneyToFloat64(m *cloudbilling.Money) float64 {
+	if m == nil {
+		return 0
+	}
+	return float64(m.Units) + float64(m.Nanos)/1e9
+}
+
+// machineFamily returns the family prefix for a machine type (e.g., "e2" from "e2-micro").
+func machineFamily(machineType string) string {
+	if idx := strings.Index(machineType, "-"); idx >= 0 {
+		return machineType[:idx]
+	}
+	return machineType
+}
+
+// skuFamily extracts a normalized machine family from a Billing API SKU description.
+// Examples:
+//
+//	"E2 Instance Core running in Iowa" → "e2"
+//	"N2D AMD Instance Core running in Israel" → "n2d"
+//	"N1 Predefined Instance Core running in Doha" → "n1"
+//	"C3D Instance Ram running in Singapore" → "c3d"
+//
+// Returns empty string if the description doesn't match the expected pattern.
+func skuFamily(description string) string {
+	idx := strings.Index(description, " Instance ")
+	if idx < 0 {
+		return ""
+	}
+	// The family is always the first word in the prefix
+	parts := strings.Fields(description[:idx])
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.ToLower(parts[0])
+}
+
+// populatePriceCache fetches per-unit rates from the Cloud Billing Catalog API.
+// Prices are stored keyed by "<family>-cpu", "<family>-ram" for CPU+RAM families,
+// or "<family>" for per-instance legacy types (f1-micro, g1-small).
+func (g *gcpProvider) populatePriceCache() {
+	g.priceCacheOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		// priceKey -> region -> hourly rate
+		prices := make(map[string]map[string]float64)
+
+		err := cloudbilling.NewServicesSkusService(g.billingService).
+			List(computeEngineServiceID).
+			CurrencyCode("USD").
+			Context(ctx).
+			Pages(ctx, func(resp *cloudbilling.ListSkusResponse) error {
+				for _, sku := range resp.Skus {
+					if sku.Category == nil ||
+						sku.Category.ResourceFamily != "Compute" ||
+						sku.Category.UsageType != "OnDemand" {
+						continue
+					}
+
+					// Extract price from tiered rates
+					if len(sku.PricingInfo) == 0 ||
+						sku.PricingInfo[0].PricingExpression == nil ||
+						len(sku.PricingInfo[0].PricingExpression.TieredRates) == 0 {
+						continue
+					}
+
+					rates := sku.PricingInfo[0].PricingExpression.TieredRates
+					unitPrice := moneyToFloat64(rates[len(rates)-1].UnitPrice)
+					if unitPrice == 0 {
+						continue
+					}
+
+					group := sku.Category.ResourceGroup
+					var priceKey string
+
+					switch {
+					case perInstanceGroups[group] != "":
+						// Per-instance legacy types (F1Micro, G1Small)
+						priceKey = perInstanceGroups[group]
+
+					case group == "N1Standard":
+						// N1 has its own ResourceGroup but uses CPU+RAM pricing
+						if strings.Contains(sku.Description, " Core ") {
+							priceKey = "n1-cpu"
+						} else if strings.Contains(sku.Description, " Ram ") {
+							priceKey = "n1-ram"
+						} else {
+							continue
+						}
+
+					case group == "CPU" || group == "RAM":
+						// Generic CPU/RAM groups — extract family from Description
+						excluded := false
+						for _, excl := range skuDescriptionExclusions {
+							if strings.Contains(sku.Description, excl) {
+								excluded = true
+								break
+							}
+						}
+						if excluded {
+							continue
+						}
+
+						family := skuFamily(sku.Description)
+						if family == "" {
+							continue
+						}
+						if group == "CPU" {
+							priceKey = family + "-cpu"
+						} else {
+							priceKey = family + "-ram"
+						}
+
+					default:
+						continue
+					}
+
+					if prices[priceKey] == nil {
+						prices[priceKey] = make(map[string]float64)
+					}
+					for _, region := range sku.ServiceRegions {
+						prices[priceKey][region] = unitPrice
+					}
+				}
+				return nil
+			})
+
+		if err != nil {
+			log.Printf("Failed to fetch GCP pricing: %v", err)
+			return
+		}
+
+		g.priceCache = prices
+		log.Printf("GCP price cache populated with %d price keys", len(g.priceCache))
+	})
+}
+
+// computeInstancePrice calculates the hourly price for a machine type in a region
+// by combining per-unit rates from the Billing API with specs from the Compute API.
+func (g *gcpProvider) computeInstancePrice(mt *compute.MachineType, region string) float64 {
+	if g.priceCache == nil {
+		return 0
+	}
+
+	family := machineFamily(mt.Name)
+
+	// Per-instance pricing (f1-micro, g1-small)
+	if regions, ok := g.priceCache[family]; ok {
+		if price, ok := regions[region]; ok {
+			return price
+		}
+	}
+
+	// CPU+RAM pricing: rates from Billing API, specs from Compute API
+	var cpuRate, ramRate float64
+	if regions, ok := g.priceCache[family+"-cpu"]; ok {
+		cpuRate = regions[region]
+	}
+	if regions, ok := g.priceCache[family+"-ram"]; ok {
+		ramRate = regions[region]
+	}
+	if cpuRate == 0 && ramRate == 0 {
+		return 0
+	}
+
+	cpus := float64(mt.GuestCpus)
+	ramGB := float64(mt.MemoryMb) / 1024.0
+	return cpuRate*cpus + ramRate*ramGB
 }
 
 // ensureMachineTypeCache ensures the machine type cache is populated and fresh
