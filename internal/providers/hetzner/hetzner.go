@@ -76,7 +76,7 @@ func hetznerInstanceHostname(region string) string {
 	return fmt.Sprintf("hetzner-%s", region)
 }
 
-func (h *hetznerProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
+func (h *hetznerProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
 	// Ensure region server type cache is populated
 	h.regionServerTypeCacheLock.Lock()
 	if time.Since(h.regionServerTypeCacheTime) >= cacheDuration || h.regionServerTypeCache == nil {
@@ -84,7 +84,7 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, region string, key
 		h.regionServerTypeCache, err = h.loadRegionServerTypes(ctx)
 		if err != nil {
 			h.regionServerTypeCacheLock.Unlock()
-			return providers.InstanceID{}, fmt.Errorf("failed to load region server types: %w", err)
+			return providers.Instance{}, fmt.Errorf("failed to load region server types: %w", err)
 		}
 		h.regionServerTypeCacheTime = time.Now()
 	}
@@ -103,13 +103,13 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, region string, key
 		),
 		SSHKey: h.sshKey,
 	}); err != nil {
-		return providers.InstanceID{}, err
+		return providers.Instance{}, err
 	}
 
 	// Get the cheapest server type for this region
 	regionST, ok := h.regionServerTypeCache[region]
 	if !ok {
-		return providers.InstanceID{}, fmt.Errorf("no server types available for region %s", region)
+		return providers.Instance{}, fmt.Errorf("no server types available for region %s", region)
 	}
 
 	// Create server
@@ -127,19 +127,20 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, region string, key
 
 	result, _, err := h.client.Server.Create(ctx, createOpts)
 	if err != nil {
-		return providers.InstanceID{}, fmt.Errorf("failed to create server: %w", err)
+		return providers.Instance{}, fmt.Errorf("failed to create server: %w", err)
 	}
 
 	log.Printf("Launched instance %d", result.Server.ID)
 
-	return providers.InstanceID{
+	return providers.Instance{
 		Hostname:     hostname,
 		ProviderID:   strconv.FormatInt(result.Server.ID, 10),
 		ProviderName: "hetzner",
+		HourlyCost:   regionST.HourlyCost,
 	}, nil
 }
 
-func (h *hetznerProvider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+func (h *hetznerProvider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	serverID, err := strconv.ParseInt(instanceID.ProviderID, 10, 64)
 	if err != nil {
 		return fmt.Errorf("invalid server ID: %w", err)
@@ -174,7 +175,7 @@ func (h *hetznerProvider) GetInstanceStatus(ctx context.Context, region string) 
 	return providers.InstanceStatusMissing, nil
 }
 
-func (h *hetznerProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+func (h *hetznerProvider) ListInstances(ctx context.Context, region string) ([]providers.Instance, error) {
 	// Filter servers by our owner label
 	servers, err := h.client.Server.AllWithOpts(ctx, hcloud.ServerListOpts{
 		ListOpts: hcloud.ListOpts{
@@ -185,14 +186,15 @@ func (h *hetznerProvider) ListInstances(ctx context.Context, region string) ([]p
 		return nil, err
 	}
 
-	var instances []providers.InstanceID
+	var instances []providers.Instance
 	for _, server := range servers {
 		if server.Datacenter.Location.Name == region {
-			instances = append(instances, providers.InstanceID{
+			instances = append(instances, providers.Instance{
 				Hostname:     hetznerInstanceHostname(region),
 				ProviderID:   strconv.FormatInt(server.ID, 10),
 				ProviderName: "hetzner",
 				CreatedAt:    server.Created,
+				HourlyCost:   h.GetRegionHourlyEstimate(region),
 			})
 		}
 	}
@@ -274,8 +276,8 @@ func (h *hetznerProvider) loadRegionServerTypes(ctx context.Context) (map[string
 	return result, nil
 }
 
-// GetRegionPrice returns the hourly price for the cheapest server in the region
-func (h *hetznerProvider) GetRegionPrice(region string) float64 {
+// GetRegionHourlyEstimate returns the hourly price for the cheapest server in the region
+func (h *hetznerProvider) GetRegionHourlyEstimate(region string) float64 {
 	h.regionServerTypeCacheLock.Lock()
 	defer h.regionServerTypeCacheLock.Unlock()
 

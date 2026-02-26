@@ -251,7 +251,7 @@ func testProviderConnectivity(t *testing.T, ctx context.Context, cfg *config.Con
 	// Test 2: Region pricing (validates region data)
 	priceValidRegions := 0
 	for _, region := range regions {
-		price := provider.GetRegionPrice(region.Code)
+		price := provider.GetRegionHourlyEstimate(region.Code)
 		if price > 0 {
 			priceValidRegions++
 			t.Logf("  Region %s (%s): $%.4f/hour", region.Code, region.LongName, price)
@@ -501,7 +501,7 @@ func findCheapestRegion(ctx context.Context, app AppWithProviders) (providerName
 		}
 
 		for _, region := range regions {
-			price := provider.GetRegionPrice(region.Code)
+			price := provider.GetRegionHourlyEstimate(region.Code)
 			if price <= 0 {
 				continue // Skip regions with no pricing info
 			}

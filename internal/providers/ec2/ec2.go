@@ -207,7 +207,7 @@ func (e *ec2Provider) addVPNPortRule(ctx context.Context, client *ec2.Client, gr
 	return err
 }
 
-func (e *ec2Provider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+func (e *ec2Provider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	e.mu.Lock()
 	// Extract region from hostname (e.g., "ec2-us-west-2" -> "us-west-2")
 	region := strings.TrimPrefix(instanceID.Hostname, "ec2-")
@@ -226,7 +226,7 @@ func (e *ec2Provider) DeleteInstance(ctx context.Context, instanceID providers.I
 	return nil
 }
 
-func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
+func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
 	e.mu.Lock()
 	e.cfg.Region = region
 	client := ec2.NewFromConfig(e.cfg)
@@ -237,7 +237,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 		Name: aws.String(debianLatestImageSSMPath),
 	})
 	if err != nil {
-		return providers.InstanceID{}, err
+		return providers.Instance{}, err
 	}
 
 	log.Printf("Found image id %s in region %s", aws.ToString(imageParam.Parameter.Value), region)
@@ -255,13 +255,13 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 		),
 		SSHKey: e.sshKey,
 	}); err != nil {
-		return providers.InstanceID{}, err
+		return providers.Instance{}, err
 	}
 
 	// Get or create security group
 	sgID, err := e.getOrCreateSecurityGroup(ctx, client)
 	if err != nil {
-		return providers.InstanceID{}, fmt.Errorf("failed to setup security group: %v", err)
+		return providers.Instance{}, fmt.Errorf("failed to setup security group: %v", err)
 	}
 
 	input := &ec2.RunInstancesInput{
@@ -285,14 +285,15 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 
 	output, err := client.RunInstances(ctx, input)
 	if err != nil {
-		return providers.InstanceID{}, err
+		return providers.Instance{}, err
 	}
 	log.Printf("Launched instance %s", aws.ToString(output.Instances[0].InstanceId))
 
-	return providers.InstanceID{
+	return providers.Instance{
 		Hostname:     hostname,
 		ProviderID:   aws.ToString(output.Instances[0].InstanceId),
 		ProviderName: "ec2",
+		HourlyCost:   e.GetRegionHourlyEstimate(region),
 	}, nil
 }
 
@@ -337,7 +338,7 @@ func (e *ec2Provider) GetInstanceStatus(ctx context.Context, region string) (pro
 	return providers.InstanceStatusMissing, err
 }
 
-func (e *ec2Provider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+func (e *ec2Provider) ListInstances(ctx context.Context, region string) ([]providers.Instance, error) {
 	e.mu.Lock()
 	e.cfg.Region = region
 	client := ec2.NewFromConfig(e.cfg)
@@ -360,15 +361,16 @@ func (e *ec2Provider) ListInstances(ctx context.Context, region string) ([]provi
 		return nil, err
 	}
 
-	var instanceIDs []providers.InstanceID
+	var instanceIDs []providers.Instance
 	for _, reservation := range listInstances.Reservations {
 		for _, instance := range reservation.Instances {
 			if instance.State.Name != types.InstanceStateNameTerminated {
-				instanceIDs = append(instanceIDs, providers.InstanceID{
+				instanceIDs = append(instanceIDs, providers.Instance{
 					Hostname:     ec2InstanceHostname(region),
 					ProviderID:   aws.ToString(instance.InstanceId),
 					ProviderName: providerName,
 					CreatedAt:    aws.ToTime(instance.LaunchTime),
+					HourlyCost:   e.GetRegionHourlyEstimate(region),
 				})
 			}
 		}
@@ -457,8 +459,8 @@ func (e *ec2Provider) populatePriceCache() {
 	})
 }
 
-// GetRegionPrice returns the hourly price for the t4g.nano instance in the specified region
-func (e *ec2Provider) GetRegionPrice(region string) float64 {
+// GetRegionHourlyEstimate returns the hourly price for the t4g.nano instance in the specified region
+func (e *ec2Provider) GetRegionHourlyEstimate(region string) float64 {
 	e.populatePriceCache()
 
 	return e.regionPriceMap[region]

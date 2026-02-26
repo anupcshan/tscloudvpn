@@ -26,18 +26,18 @@ func (c *Creator) Create(
 	controller controlapi.ControlApi,
 	provider providers.Provider,
 	region string,
-) error {
+) (providers.Instance, error) {
 	authKey, err := controller.CreateKey(ctx)
 	if err != nil {
-		return err
+		return providers.Instance{}, err
 	}
 
 	createdInstance, err := provider.CreateInstance(ctx, region, authKey)
 	if err != nil {
 		logger.Printf("Failed to launch instance %s: %s", provider.Hostname(region), err)
-		return err
+		return providers.Instance{}, err
 	}
 
 	logger.Printf("Launched instance %s", createdInstance.Hostname)
-	return nil
+	return createdInstance, nil
 }

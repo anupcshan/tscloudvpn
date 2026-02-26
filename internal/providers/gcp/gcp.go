@@ -470,7 +470,7 @@ func (g *gcpProvider) ensureMachineTypeCache() error {
 	return nil
 }
 
-func (g *gcpProvider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+func (g *gcpProvider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	// Extract region from hostname (e.g., "gcp-us-central1" -> "us-central1")
 	region := strings.TrimPrefix(instanceID.Hostname, "gcp-")
 	zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, region)).Do()
@@ -540,10 +540,10 @@ func (g *gcpProvider) getOrCreateFirewallRule(ctx context.Context) error {
 	return nil
 }
 
-func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
+func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
 	// Ensure machine type cache is populated
 	if err := g.ensureMachineTypeCache(); err != nil {
-		return providers.InstanceID{}, fmt.Errorf("failed to ensure machine type cache: %w", err)
+		return providers.Instance{}, fmt.Errorf("failed to ensure machine type cache: %w", err)
 	}
 
 	// Get available machine types for this region (sorted cheapest first)
@@ -552,13 +552,13 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 	g.regionMachineTypeCacheLock.RUnlock()
 
 	if !ok || len(machineTypes) == 0 {
-		return providers.InstanceID{}, fmt.Errorf("no suitable machine type found for region %s", region)
+		return providers.Instance{}, fmt.Errorf("no suitable machine type found for region %s", region)
 	}
 
 	prefix := "https://www.googleapis.com/compute/v1/projects/" + g.projectId
 	zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, region)).Do()
 	if err != nil {
-		return providers.InstanceID{}, err
+		return providers.Instance{}, err
 	}
 
 	tmplOut := new(bytes.Buffer)
@@ -574,12 +574,12 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 		),
 		SSHKey: g.sshKey,
 	}); err != nil {
-		return providers.InstanceID{}, err
+		return providers.Instance{}, err
 	}
 
 	// Ensure firewall rule exists for Tailscale inbound port
 	if err := g.getOrCreateFirewallRule(ctx); err != nil {
-		return providers.InstanceID{}, fmt.Errorf("failed to setup firewall rule: %w", err)
+		return providers.Instance{}, fmt.Errorf("failed to setup firewall rule: %w", err)
 	}
 
 	zone := zones.Items[rand.Intn(len(zones.Items))].Name
@@ -661,14 +661,15 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 
 		// Success
 		log.Printf("Launched instance %s (machine type: %s)", name, mt.MachineType)
-		return providers.InstanceID{
+		return providers.Instance{
 			Hostname:     hostname,
 			ProviderID:   name,
 			ProviderName: providerName,
+			HourlyCost:   mt.HourlyCost,
 		}, nil
 	}
 
-	return providers.InstanceID{}, fmt.Errorf("all machine types exhausted in %s: %w", zone, lastErr)
+	return providers.Instance{}, fmt.Errorf("all machine types exhausted in %s: %w", zone, lastErr)
 }
 
 func (g *gcpProvider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {
@@ -710,14 +711,17 @@ func (g *gcpProvider) GetInstanceStatus(ctx context.Context, region string) (pro
 	return providers.InstanceStatusMissing, err
 }
 
-func (g *gcpProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+func (g *gcpProvider) ListInstances(ctx context.Context, region string) ([]providers.Instance, error) {
+	// Ensure price cache is available for HourlyCost lookups
+	g.ensureMachineTypeCache()
+
 	zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, region)).Do()
 	if err != nil {
 		return nil, err
 	}
 
 	sanitizedOwnerID := g.sanitizeLabelValue(g.ownerID)
-	var instanceIDs []providers.InstanceID
+	var instanceIDs []providers.Instance
 	for _, zone := range zones.Items {
 		// Filter by both tscloudvpn label and owner label
 		filter := fmt.Sprintf("labels.tscloudvpn:* AND labels.tscloudvpn-owner=%s", sanitizedOwnerID)
@@ -729,11 +733,12 @@ func (g *gcpProvider) ListInstances(ctx context.Context, region string) ([]provi
 		for _, instance := range instanceList.Items {
 			if instance.Status != "TERMINATED" {
 				createdAt, _ := time.Parse(time.RFC3339, instance.CreationTimestamp)
-				instanceIDs = append(instanceIDs, providers.InstanceID{
+				instanceIDs = append(instanceIDs, providers.Instance{
 					Hostname:     gcpInstanceHostname(region),
 					ProviderID:   instance.Name,
 					ProviderName: providerName,
 					CreatedAt:    createdAt,
+					HourlyCost:   g.lookupMachineTypeCost(instance.MachineType, region),
 				})
 			}
 		}
@@ -751,7 +756,31 @@ func zoneToRegion(zone string) string {
 	return zone[:lastDash]
 }
 
-func (g *gcpProvider) ListAllInstances(ctx context.Context) ([]providers.InstanceID, error) {
+// lookupMachineTypeCost returns the hourly cost for a machine type URL in a region.
+// machineTypeURL is a full URL like ".../zones/us-central1-a/machineTypes/e2-small".
+func (g *gcpProvider) lookupMachineTypeCost(machineTypeURL, region string) float64 {
+	// Extract machine type name from URL (last path segment)
+	idx := strings.LastIndex(machineTypeURL, "/")
+	if idx < 0 {
+		return 0
+	}
+	mtName := machineTypeURL[idx+1:]
+
+	g.regionMachineTypeCacheLock.RLock()
+	defer g.regionMachineTypeCacheLock.RUnlock()
+
+	for _, mt := range g.regionMachineTypeCache[region] {
+		if mt.MachineType == mtName {
+			return mt.HourlyCost
+		}
+	}
+	return 0
+}
+
+func (g *gcpProvider) ListAllInstances(ctx context.Context) ([]providers.Instance, error) {
+	// Ensure price cache is available for HourlyCost lookups
+	g.ensureMachineTypeCache()
+
 	sanitizedOwnerID := g.sanitizeLabelValue(g.ownerID)
 	filter := fmt.Sprintf("labels.tscloudvpn:* AND labels.tscloudvpn-owner=%s", sanitizedOwnerID)
 
@@ -765,7 +794,7 @@ func (g *gcpProvider) ListAllInstances(ctx context.Context) ([]providers.Instanc
 		return nil, err
 	}
 
-	var instanceIDs []providers.InstanceID
+	var instanceIDs []providers.Instance
 	for zonePath, scopedList := range resp.Items {
 		for _, instance := range scopedList.Instances {
 			if instance.Status != "TERMINATED" {
@@ -773,11 +802,12 @@ func (g *gcpProvider) ListAllInstances(ctx context.Context) ([]providers.Instanc
 				zone := strings.TrimPrefix(zonePath, "zones/")
 				region := zoneToRegion(zone)
 				createdAt, _ := time.Parse(time.RFC3339, instance.CreationTimestamp)
-				instanceIDs = append(instanceIDs, providers.InstanceID{
+				instanceIDs = append(instanceIDs, providers.Instance{
 					Hostname:     gcpInstanceHostname(region),
 					ProviderID:   instance.Name,
 					ProviderName: providerName,
 					CreatedAt:    createdAt,
+					HourlyCost:   g.lookupMachineTypeCost(instance.MachineType, region),
 				})
 			}
 		}
@@ -790,8 +820,8 @@ func (g *gcpProvider) Hostname(region string) providers.HostName {
 	return providers.HostName(gcpInstanceHostname(region))
 }
 
-// GetRegionPrice returns the hourly price for the cheapest available instance in the specified region
-func (g *gcpProvider) GetRegionPrice(region string) float64 {
+// GetRegionHourlyEstimate returns the hourly price for the cheapest available instance in the specified region
+func (g *gcpProvider) GetRegionHourlyEstimate(region string) float64 {
 	// Ensure machine type cache is populated
 	if err := g.ensureMachineTypeCache(); err != nil {
 		log.Printf("Failed to ensure machine type cache: %v", err)

@@ -118,7 +118,7 @@ func azureInstanceHostname(region string) string {
 	return fmt.Sprintf("azure-%s", region)
 }
 
-func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
+func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
 	hostname := azureInstanceHostname(region)
 	vmName := fmt.Sprintf("tscloudvpn-%s", region)
 
@@ -135,7 +135,7 @@ func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *
 		),
 		SSHKey: a.sshKey,
 	}); err != nil {
-		return providers.InstanceID{}, fmt.Errorf("failed to generate cloud-init: %w", err)
+		return providers.Instance{}, fmt.Errorf("failed to generate cloud-init: %w", err)
 	}
 
 	// Base64 encode the cloud-init data
@@ -143,7 +143,7 @@ func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *
 
 	// First, ensure we have the necessary network resources
 	if err := a.ensureNetworkResources(ctx, region, vmName); err != nil {
-		return providers.InstanceID{}, fmt.Errorf("failed to create network resources: %w", err)
+		return providers.Instance{}, fmt.Errorf("failed to create network resources: %w", err)
 	}
 
 	// Create VM
@@ -206,21 +206,22 @@ func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *
 	// Create the VM
 	poller, err := a.computeClient.BeginCreateOrUpdate(ctx, a.resourceGroup, vmName, vmParams, nil)
 	if err != nil {
-		return providers.InstanceID{}, fmt.Errorf("failed to create VM: %w", err)
+		return providers.Instance{}, fmt.Errorf("failed to create VM: %w", err)
 	}
 
 	// Wait for completion
 	_, err = poller.PollUntilDone(ctx, nil)
 	if err != nil {
-		return providers.InstanceID{}, fmt.Errorf("failed to complete VM creation: %w", err)
+		return providers.Instance{}, fmt.Errorf("failed to complete VM creation: %w", err)
 	}
 
 	log.Printf("Created Azure VM %s in region %s", vmName, region)
 
-	return providers.InstanceID{
+	return providers.Instance{
 		Hostname:     hostname,
 		ProviderID:   vmName,
 		ProviderName: providerName,
+		HourlyCost:   a.GetRegionHourlyEstimate(region),
 	}, nil
 }
 
@@ -314,7 +315,7 @@ func (a *azureProvider) ensureNetworkResources(ctx context.Context, region, vmNa
 	return nil
 }
 
-func (a *azureProvider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+func (a *azureProvider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	vmName := instanceID.ProviderID
 
 	// Delete VM
@@ -347,14 +348,14 @@ func (a *azureProvider) GetInstanceStatus(ctx context.Context, region string) (p
 	return providers.InstanceStatusRunning, nil
 }
 
-func (a *azureProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+func (a *azureProvider) ListInstances(ctx context.Context, region string) ([]providers.Instance, error) {
 	vmName := fmt.Sprintf("tscloudvpn-%s", region)
 
 	vm, err := a.computeClient.Get(ctx, a.resourceGroup, vmName, nil)
 	if err != nil {
 		var responseError *azcore.ResponseError
 		if errors.As(err, &responseError) && responseError.StatusCode == 404 {
-			return []providers.InstanceID{}, nil
+			return []providers.Instance{}, nil
 		}
 		return nil, err
 	}
@@ -363,7 +364,7 @@ func (a *azureProvider) ListInstances(ctx context.Context, region string) ([]pro
 	if vm.Tags != nil {
 		if owner, ok := vm.Tags[providers.OwnerTagKey]; ok && owner != nil && *owner != a.ownerID {
 			// VM exists but belongs to different owner
-			return []providers.InstanceID{}, nil
+			return []providers.Instance{}, nil
 		}
 	}
 
@@ -372,12 +373,13 @@ func (a *azureProvider) ListInstances(ctx context.Context, region string) ([]pro
 		createdAt = *vm.Properties.TimeCreated
 	}
 
-	return []providers.InstanceID{
+	return []providers.Instance{
 		{
 			Hostname:     azureInstanceHostname(region),
 			ProviderID:   vmName,
 			ProviderName: providerName,
 			CreatedAt:    createdAt,
+			HourlyCost:   a.GetRegionHourlyEstimate(region),
 		},
 	}, nil
 }
@@ -407,7 +409,7 @@ func (a *azureProvider) Hostname(region string) providers.HostName {
 	return providers.HostName(azureInstanceHostname(region))
 }
 
-func (a *azureProvider) GetRegionPrice(region string) float64 {
+func (a *azureProvider) GetRegionHourlyEstimate(region string) float64 {
 	// If no Azure client available, use estimation
 	if a.subsClient == nil {
 		return a.estimateRegionPrice(region)

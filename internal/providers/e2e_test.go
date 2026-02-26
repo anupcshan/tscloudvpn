@@ -238,7 +238,7 @@ func testProviderLifecycle(t *testing.T, testConfig *E2ETestConfig, providerName
 	})
 
 	// Test 3: Create instance
-	var instanceID providers.InstanceID
+	var instanceID providers.Instance
 	t.Run("CreateInstance", func(t *testing.T) {
 		// Create preauth key
 		key, err := testConfig.ControlAPI.CreateKey(ctx)
@@ -354,7 +354,7 @@ func testProviderLifecycle(t *testing.T, testConfig *E2ETestConfig, providerName
 
 	// Test 7: Verify pricing information
 	t.Run("PricingInfo", func(t *testing.T) {
-		price := provider.GetRegionPrice(region)
+		price := provider.GetRegionHourlyEstimate(region)
 		if price <= 0 {
 			t.Errorf("Region price should be positive, got %f", price)
 		}
@@ -395,7 +395,7 @@ func testProviderLifecycle(t *testing.T, testConfig *E2ETestConfig, providerName
 
 		t.Logf("Instance deletion verified")
 		// Clear instanceID to prevent duplicate cleanup
-		instanceID = providers.InstanceID{}
+		instanceID = providers.Instance{}
 	})
 
 	// Test 9: Verify instance is gone via cloud provider API

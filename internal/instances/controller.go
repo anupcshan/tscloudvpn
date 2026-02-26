@@ -16,7 +16,7 @@ import (
 const (
 	historySize         = 250
 	healthCheckInterval = time.Second
-	statsFetchInterval = 30 // fetch stats every N health check ticks
+	statsFetchInterval  = 30 // fetch stats every N health check ticks
 )
 
 // PingResult represents a single ping attempt result
@@ -166,8 +166,9 @@ type InstanceStatus struct {
 		TimeSinceFailure time.Duration
 		ConnectionType   string
 	}
-	NodeStats *NodeStats // nil if node has never reported stats
-	LastError string     // error message if State == StateFailed
+	NodeStats  *NodeStats // nil if node has never reported stats
+	LastError  string     // error message if State == StateFailed
+	HourlyCost float64    // actual hourly cost of the instance
 }
 
 const (
@@ -184,26 +185,27 @@ const (
 
 // Controller manages the entire lifecycle of a single instance
 type Controller struct {
-	mu                sync.RWMutex
-	ctx               context.Context
-	cancel            context.CancelFunc
-	logger            *log.Logger
-	provider          providers.Provider
-	region            string
-	controlApi        controlapi.ControlApi
-	tsClient          tsclient.TailscaleClient
-	ping              *PingHistory
-	launchedAt        time.Time
-	createdAt         time.Time
-	state             InstanceState
-	done              chan struct{}
-	healthCheckTicker *time.Ticker
+	mu                    sync.RWMutex
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	logger                *log.Logger
+	provider              providers.Provider
+	region                string
+	controlApi            controlapi.ControlApi
+	tsClient              tsclient.TailscaleClient
+	ping                  *PingHistory
+	launchedAt            time.Time
+	createdAt             time.Time
+	state                 InstanceState
+	done                  chan struct{}
+	healthCheckTicker     *time.Ticker
 	nodeStats             *NodeStats // latest stats fetched from the node; nil if never fetched
 	watchingSince         time.Time  // when we started monitoring this node (for stats watchdog)
 	onIdleShutdown        func()     // callback when idle shutdown is triggered
 	idleShutdownTriggered bool       // prevents calling onIdleShutdown more than once
 	healthCheckCount      int        // counter for throttling stats fetches
 	lastError             string     // error message when state is StateFailed
+	hourlyCost            float64    // actual hourly cost of the instance
 }
 
 // NewController creates a new instance controller
@@ -250,7 +252,7 @@ func (c *Controller) Create() error {
 	c.mu.Unlock()
 
 	creator := NewCreator()
-	err := creator.Create(c.ctx, c.logger, c.controlApi, c.provider, c.region)
+	instanceID, err := creator.Create(c.ctx, c.logger, c.controlApi, c.provider, c.region)
 	if err != nil {
 		c.mu.Lock()
 		c.state = StateIdle
@@ -258,6 +260,10 @@ func (c *Controller) Create() error {
 		c.mu.Unlock()
 		return err
 	}
+
+	c.mu.Lock()
+	c.hourlyCost = instanceID.HourlyCost
+	c.mu.Unlock()
 
 	// Stay in StateLaunching — the health check will transition to
 	// StateRunning when the peer appears in Tailscale.
@@ -332,6 +338,7 @@ func (c *Controller) Status() InstanceStatus {
 		CreatedAt:  c.createdAt,
 		LaunchedAt: c.launchedAt,
 		LastError:  c.lastError,
+		HourlyCost: c.hourlyCost,
 	}
 
 	status.PingStats.SuccessRate, status.PingStats.AvgLatency, status.PingStats.StdDev, status.PingStats.TimeSinceFailure, status.PingStats.ConnectionType = c.ping.GetStats()

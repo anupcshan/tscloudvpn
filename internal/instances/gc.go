@@ -63,7 +63,7 @@ func (gc *GarbageCollector) Run(ctx context.Context) {
 // listAllInstances returns all instances for a provider. If the provider
 // implements AllInstanceLister, it uses a single bulk API call. Otherwise,
 // it falls back to listing regions and querying each one.
-func (gc *GarbageCollector) listAllInstances(ctx context.Context, provider providers.Provider) ([]providers.InstanceID, error) {
+func (gc *GarbageCollector) listAllInstances(ctx context.Context, provider providers.Provider) ([]providers.Instance, error) {
 	if lister, ok := provider.(providers.AllInstanceLister); ok {
 		return lister.ListAllInstances(ctx)
 	}
@@ -73,7 +73,7 @@ func (gc *GarbageCollector) listAllInstances(ctx context.Context, provider provi
 		return nil, err
 	}
 
-	var allInstances []providers.InstanceID
+	var allInstances []providers.Instance
 	for _, region := range regions {
 		instances, err := provider.ListInstances(ctx, region.Code)
 		if err != nil {

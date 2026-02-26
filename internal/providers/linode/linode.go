@@ -48,7 +48,7 @@ func linodeInstanceHostname(region string) string {
 	return fmt.Sprintf("linode-%s", region)
 }
 
-func (l *linodeProvider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+func (l *linodeProvider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	linodeID, err := strconv.Atoi(instanceID.ProviderID)
 	if err != nil {
 		return fmt.Errorf("invalid Linode ID: %w", err)
@@ -63,7 +63,7 @@ func (l *linodeProvider) DeleteInstance(ctx context.Context, instanceID provider
 	return nil
 }
 
-func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
+func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
 	tmplOut := new(bytes.Buffer)
 	hostname := linodeInstanceHostname(region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
@@ -77,7 +77,7 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key 
 		),
 		SSHKey: l.sshKey,
 	}); err != nil {
-		return providers.InstanceID{}, err
+		return providers.Instance{}, err
 	}
 
 	createOpts := linodego.InstanceCreateOptions{
@@ -94,15 +94,16 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key 
 
 	instance, err := l.client.CreateInstance(ctx, createOpts)
 	if err != nil {
-		return providers.InstanceID{}, fmt.Errorf("failed to create Linode instance: %w", err)
+		return providers.Instance{}, fmt.Errorf("failed to create Linode instance: %w", err)
 	}
 
 	log.Printf("Launched Linode instance %d", instance.ID)
 
-	return providers.InstanceID{
+	return providers.Instance{
 		Hostname:     hostname,
 		ProviderID:   strconv.Itoa(instance.ID),
 		ProviderName: "linode",
+		HourlyCost:   l.GetRegionHourlyEstimate(region),
 	}, nil
 }
 
@@ -123,7 +124,7 @@ func (l *linodeProvider) GetInstanceStatus(ctx context.Context, region string) (
 	return providers.InstanceStatusMissing, nil
 }
 
-func (l *linodeProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+func (l *linodeProvider) ListInstances(ctx context.Context, region string) ([]providers.Instance, error) {
 	// Filter instances by our owner tag
 	filter := fmt.Sprintf(`{"tags": "%s"}`, l.ownerTag)
 	instances, err := l.client.ListInstances(ctx, linodego.NewListOptions(0, filter))
@@ -131,14 +132,15 @@ func (l *linodeProvider) ListInstances(ctx context.Context, region string) ([]pr
 		return nil, err
 	}
 
-	var instanceIDs []providers.InstanceID
+	var instanceIDs []providers.Instance
 	for _, instance := range instances {
 		if instance.Region == region {
-			instanceIDs = append(instanceIDs, providers.InstanceID{
+			instanceIDs = append(instanceIDs, providers.Instance{
 				Hostname:     linodeInstanceHostname(region),
 				ProviderID:   strconv.Itoa(instance.ID),
 				ProviderName: "linode",
 				CreatedAt:    *instance.Created,
+				HourlyCost:   l.GetRegionHourlyEstimate(region),
 			})
 		}
 	}
@@ -169,8 +171,8 @@ func (l *linodeProvider) Hostname(region string) providers.HostName {
 	return providers.HostName(linodeInstanceHostname(region))
 }
 
-// GetRegionPrice returns the hourly price for the g6-nanode-1 instance
-func (l *linodeProvider) GetRegionPrice(region string) float64 {
+// GetRegionHourlyEstimate returns the hourly price for the g6-nanode-1 instance
+func (l *linodeProvider) GetRegionHourlyEstimate(region string) float64 {
 	typeInfo, err := l.client.GetType(context.Background(), "g6-nanode-1")
 	if err != nil {
 		// Log error but return the hardcoded price as fallback

@@ -76,9 +76,9 @@ func TestGarbageCollector_OrphanedInstance_OlderThanGracePeriod(t *testing.T) {
 	// Use a mock provider that allows setting CreatedAt timestamp
 	mockProvider := &MockProviderWithTimestamp{
 		hostname:  "fake-fake-us-east",
-		instances: make(map[string]providers.InstanceID),
+		instances: make(map[string]providers.Instance),
 	}
-	mockProvider.instances["fake-us-east"] = providers.InstanceID{
+	mockProvider.instances["fake-us-east"] = providers.Instance{
 		Hostname:     "fake-fake-us-east",
 		ProviderID:   "mock-123",
 		ProviderName: "mock",
@@ -113,9 +113,9 @@ func TestGarbageCollector_OrphanedInstance_WithinGracePeriod(t *testing.T) {
 
 	mockProvider := &MockProviderWithTimestamp{
 		hostname:  "fake-fake-us-east",
-		instances: make(map[string]providers.InstanceID),
+		instances: make(map[string]providers.Instance),
 	}
-	mockProvider.instances["fake-us-east"] = providers.InstanceID{
+	mockProvider.instances["fake-us-east"] = providers.Instance{
 		Hostname:     "fake-fake-us-east",
 		ProviderID:   "mock-123",
 		ProviderName: "mock",
@@ -150,9 +150,9 @@ func TestGarbageCollector_MultipleProvidersMultipleRegions(t *testing.T) {
 	// Provider 1: has orphaned instance
 	mockProvider1 := &MockProviderWithTimestamp{
 		hostname:  "mock1-us-east",
-		instances: make(map[string]providers.InstanceID),
+		instances: make(map[string]providers.Instance),
 	}
-	mockProvider1.instances["us-east"] = providers.InstanceID{
+	mockProvider1.instances["us-east"] = providers.Instance{
 		Hostname:     "mock1-us-east",
 		ProviderID:   "mock1-123",
 		ProviderName: "mock1",
@@ -162,9 +162,9 @@ func TestGarbageCollector_MultipleProvidersMultipleRegions(t *testing.T) {
 	// Provider 2: has non-orphaned instance
 	mockProvider2 := &MockProviderWithTimestamp{
 		hostname:  "mock2-eu-west",
-		instances: make(map[string]providers.InstanceID),
+		instances: make(map[string]providers.Instance),
 	}
-	mockProvider2.instances["eu-west"] = providers.InstanceID{
+	mockProvider2.instances["eu-west"] = providers.Instance{
 		Hostname:     "mock2-eu-west",
 		ProviderID:   "mock2-456",
 		ProviderName: "mock2",
@@ -208,10 +208,10 @@ func TestGarbageCollector_DeleteFailure(t *testing.T) {
 	// Mock provider that fails on delete
 	mockProvider := &MockProviderWithTimestamp{
 		hostname:    "fake-fake-us-east",
-		instances:   make(map[string]providers.InstanceID),
+		instances:   make(map[string]providers.Instance),
 		deleteError: true,
 	}
-	mockProvider.instances["fake-us-east"] = providers.InstanceID{
+	mockProvider.instances["fake-us-east"] = providers.Instance{
 		Hostname:     "fake-fake-us-east",
 		ProviderID:   "mock-123",
 		ProviderName: "mock",
@@ -236,14 +236,14 @@ func TestGarbageCollector_DeleteFailure(t *testing.T) {
 // MockProviderWithTimestamp is a test helper that allows setting CreatedAt times
 type MockProviderWithTimestamp struct {
 	hostname        providers.HostName
-	instances       map[string]providers.InstanceID
+	instances       map[string]providers.Instance
 	deleted         bool
 	deleteAttempted bool
 	deleteError     bool
 }
 
-func (m *MockProviderWithTimestamp) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
-	return providers.InstanceID{
+func (m *MockProviderWithTimestamp) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
+	return providers.Instance{
 		Hostname:     string(m.hostname),
 		ProviderID:   "mock-123",
 		ProviderName: "mock",
@@ -270,11 +270,11 @@ func (m *MockProviderWithTimestamp) Hostname(region string) providers.HostName {
 	return m.hostname
 }
 
-func (m *MockProviderWithTimestamp) GetRegionPrice(region string) float64 {
+func (m *MockProviderWithTimestamp) GetRegionHourlyEstimate(region string) float64 {
 	return 0.05
 }
 
-func (m *MockProviderWithTimestamp) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+func (m *MockProviderWithTimestamp) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	m.deleteAttempted = true
 	if m.deleteError {
 		return context.DeadlineExceeded
@@ -284,8 +284,8 @@ func (m *MockProviderWithTimestamp) DeleteInstance(ctx context.Context, instance
 	return nil
 }
 
-func (m *MockProviderWithTimestamp) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
-	var result []providers.InstanceID
+func (m *MockProviderWithTimestamp) ListInstances(ctx context.Context, region string) ([]providers.Instance, error) {
+	var result []providers.Instance
 	if instance, exists := m.instances[region]; exists {
 		result = append(result, instance)
 	}

@@ -136,6 +136,11 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 				nodeStats = instanceStatus.NodeStats
 			}
 
+			priceCentsPerHour := provider.GetRegionHourlyEstimate(region.Code) * 100
+			if hasInstance && instanceStatus.HourlyCost > 0 {
+				priceCentsPerHour = instanceStatus.HourlyCost * 100
+			}
+
 			mappedRegions = append(mappedRegions, mappedRegion{
 				Provider:          providerName,
 				ProviderLabel:     providers.ProviderLabels[providerName],
@@ -146,7 +151,7 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 				LaunchedTS:        launchedTS,
 				SinceCreated:      sinceCreated,
 				SinceLaunched:     sinceLaunched,
-				PriceCentsPerHour: provider.GetRegionPrice(region.Code) * 100,
+				PriceCentsPerHour: priceCentsPerHour,
 				PingStats:         pingStats,
 				NodeStats:         nodeStats,
 			})

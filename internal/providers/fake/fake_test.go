@@ -115,10 +115,10 @@ func TestFakeProvider_Hostname(t *testing.T) {
 	}
 }
 
-func TestFakeProvider_GetRegionPrice(t *testing.T) {
+func TestFakeProvider_GetRegionHourlyEstimate(t *testing.T) {
 	fakeProvider := NewWithConfig(DefaultConfig())
 
-	price := fakeProvider.GetRegionPrice("fake-us-east")
+	price := fakeProvider.GetRegionHourlyEstimate("fake-us-east")
 	expected := 0.001
 	if price != expected {
 		t.Errorf("Expected price %f, got %f", expected, price)
@@ -129,7 +129,7 @@ func TestFakeProvider_GetRegionPrice(t *testing.T) {
 	config.PricePerHour = 0.05
 	fakeProvider.UpdateConfig(config)
 
-	price = fakeProvider.GetRegionPrice("fake-us-east")
+	price = fakeProvider.GetRegionHourlyEstimate("fake-us-east")
 	expected = 0.05
 	if price != expected {
 		t.Errorf("Expected price %f, got %f", expected, price)

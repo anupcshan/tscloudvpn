@@ -61,7 +61,7 @@ func doInstanceHostname(region string) string {
 	return fmt.Sprintf("do-%s", region)
 }
 
-func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
+func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
 	// Ensure region size cache is populated
 	d.regionSizeCacheLock.Lock()
 	if time.Since(d.regionSizeCacheTime) >= cacheDuration || d.regionSizeCache == nil {
@@ -69,7 +69,7 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 		d.regionSizeCache, err = d.loadRegionSizes()
 		if err != nil {
 			d.regionSizeCacheLock.Unlock()
-			return providers.InstanceID{}, fmt.Errorf("failed to load region sizes: %w", err)
+			return providers.Instance{}, fmt.Errorf("failed to load region sizes: %w", err)
 		}
 		d.regionSizeCacheTime = time.Now()
 	}
@@ -88,7 +88,7 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 		),
 		SSHKey: d.sshKey,
 	}); err != nil {
-		return providers.InstanceID{}, err
+		return providers.Instance{}, err
 	}
 
 	createRequest := &godo.DropletCreateRequest{
@@ -104,19 +104,20 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 
 	droplet, _, err := d.client.Droplets.Create(ctx, createRequest)
 	if err != nil {
-		return providers.InstanceID{}, fmt.Errorf("failed to create droplet: %w", err)
+		return providers.Instance{}, fmt.Errorf("failed to create droplet: %w", err)
 	}
 
 	log.Printf("Launched instance %d", droplet.ID)
 
-	return providers.InstanceID{
+	return providers.Instance{
 		Hostname:     hostname,
 		ProviderID:   strconv.Itoa(droplet.ID),
 		ProviderName: "do",
+		HourlyCost:   d.GetRegionHourlyEstimate(region),
 	}, nil
 }
 
-func (d *digitaloceanProvider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+func (d *digitaloceanProvider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	dropletID, err := strconv.Atoi(instanceID.ProviderID)
 	if err != nil {
 		return fmt.Errorf("invalid droplet ID: %w", err)
@@ -147,22 +148,23 @@ func (d *digitaloceanProvider) GetInstanceStatus(ctx context.Context, region str
 	return providers.InstanceStatusMissing, nil
 }
 
-func (d *digitaloceanProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+func (d *digitaloceanProvider) ListInstances(ctx context.Context, region string) ([]providers.Instance, error) {
 	// List droplets filtered by our owner tag
 	droplets, _, err := d.client.Droplets.ListByTag(ctx, d.ownerTag, &godo.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	var instances []providers.InstanceID
+	var instances []providers.Instance
 	for _, droplet := range droplets {
 		if droplet.Region.Slug == region {
 			createdAt, _ := time.Parse(time.RFC3339, droplet.Created)
-			instances = append(instances, providers.InstanceID{
+			instances = append(instances, providers.Instance{
 				Hostname:     doInstanceHostname(region),
 				ProviderID:   strconv.Itoa(droplet.ID),
 				ProviderName: "do",
 				CreatedAt:    createdAt,
+				HourlyCost:   d.GetRegionHourlyEstimate(region),
 			})
 		}
 	}
@@ -224,8 +226,8 @@ func (d *digitaloceanProvider) loadRegionSizes() (map[string]regionSize, error) 
 	return result, nil
 }
 
-// GetRegionPrice returns the hourly price for the cheapest instance
-func (d *digitaloceanProvider) GetRegionPrice(region string) float64 {
+// GetRegionHourlyEstimate returns the hourly price for the cheapest instance
+func (d *digitaloceanProvider) GetRegionHourlyEstimate(region string) float64 {
 	d.regionSizeCacheLock.Lock()
 	defer d.regionSizeCacheLock.Unlock()
 

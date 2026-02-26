@@ -19,8 +19,8 @@ type MockProvider struct {
 	status   providers.InstanceStatus
 }
 
-func (m *MockProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
-	return providers.InstanceID{
+func (m *MockProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
+	return providers.Instance{
 		Hostname:     string(m.hostname),
 		ProviderID:   "mock-123",
 		ProviderName: "mock",
@@ -39,23 +39,23 @@ func (m *MockProvider) Hostname(region string) providers.HostName {
 	return m.hostname
 }
 
-func (m *MockProvider) GetRegionPrice(region string) float64 {
+func (m *MockProvider) GetRegionHourlyEstimate(region string) float64 {
 	return 0.05
 }
 
-func (m *MockProvider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+func (m *MockProvider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	return nil
 }
 
-func (m *MockProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+func (m *MockProvider) ListInstances(ctx context.Context, region string) ([]providers.Instance, error) {
 	if m.status == providers.InstanceStatusRunning {
-		return []providers.InstanceID{{
+		return []providers.Instance{{
 			Hostname:     string(m.hostname),
 			ProviderID:   "mock-123",
 			ProviderName: "mock",
 		}}, nil
 	}
-	return []providers.InstanceID{}, nil
+	return []providers.Instance{}, nil
 }
 
 // MockControlApi implements a simple mock control API for testing

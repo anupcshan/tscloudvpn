@@ -710,9 +710,9 @@ type MockProviderWithDeleteFailure struct {
 	deleteAttempted bool
 }
 
-func (m *MockProviderWithDeleteFailure) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
+func (m *MockProviderWithDeleteFailure) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
 	m.instances[region] = true
-	return providers.InstanceID{
+	return providers.Instance{
 		Hostname:     string(m.hostname),
 		ProviderID:   "mock-123",
 		ProviderName: "mock",
@@ -734,22 +734,22 @@ func (m *MockProviderWithDeleteFailure) Hostname(region string) providers.HostNa
 	return m.hostname
 }
 
-func (m *MockProviderWithDeleteFailure) GetRegionPrice(region string) float64 {
+func (m *MockProviderWithDeleteFailure) GetRegionHourlyEstimate(region string) float64 {
 	return 0.05
 }
 
-func (m *MockProviderWithDeleteFailure) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+func (m *MockProviderWithDeleteFailure) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	m.deleteAttempted = true
 	return errors.New("simulated cloud deletion failure")
 }
 
-func (m *MockProviderWithDeleteFailure) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+func (m *MockProviderWithDeleteFailure) ListInstances(ctx context.Context, region string) ([]providers.Instance, error) {
 	if m.instances[region] {
-		return []providers.InstanceID{{
+		return []providers.Instance{{
 			Hostname:     string(m.hostname),
 			ProviderID:   "mock-123",
 			ProviderName: "mock",
 		}}, nil
 	}
-	return []providers.InstanceID{}, nil
+	return []providers.Instance{}, nil
 }

@@ -19,11 +19,12 @@ type InstanceStatus int
 
 type HostName string
 
-type InstanceID struct {
+type Instance struct {
 	Hostname     string    // e.g., "ec2-us-west-2", "do-nyc1"
 	ProviderID   string    // e.g., "i-1234567890abcdef0", "123456789"
 	ProviderName string    // e.g., "ec2", "do", "linode", "gcp", "vultr", "hetzner"
 	CreatedAt    time.Time // Instance creation time from cloud provider (for GC grace period)
+	HourlyCost   float64   // Actual hourly cost of the instance
 }
 
 const (
@@ -34,20 +35,20 @@ const (
 )
 
 type Provider interface {
-	CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (InstanceID, error)
-	DeleteInstance(ctx context.Context, instanceID InstanceID) error
+	CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (Instance, error)
+	DeleteInstance(ctx context.Context, instanceID Instance) error
 	GetInstanceStatus(ctx context.Context, region string) (InstanceStatus, error)
-	ListInstances(ctx context.Context, region string) ([]InstanceID, error)
+	ListInstances(ctx context.Context, region string) ([]Instance, error)
 	ListRegions(ctx context.Context) ([]Region, error)
 	Hostname(region string) HostName
-	GetRegionPrice(region string) float64 // Get hourly price for a region
+	GetRegionHourlyEstimate(region string) float64 // Get hourly price for a region
 }
 
 // AllInstanceLister is an optional interface that providers can implement
 // to list all instances across all regions in a single API call.
 // The GC will use this when available instead of iterating per-region.
 type AllInstanceLister interface {
-	ListAllInstances(ctx context.Context) ([]InstanceID, error)
+	ListAllInstances(ctx context.Context) ([]Instance, error)
 }
 
 type ProviderFactory func(ctx context.Context, cfg *config.Config) (Provider, error)

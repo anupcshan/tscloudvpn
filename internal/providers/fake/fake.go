@@ -73,7 +73,7 @@ func NewWithConfig(config *ProviderConfig) *FakeProvider {
 }
 
 // CreateInstance simulates creating a cloud instance
-func (f *FakeProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
+func (f *FakeProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
 	f.mu.RLock()
 	createDelay := f.config.CreateDelay
 	createFailure := f.config.CreateFailure
@@ -84,13 +84,13 @@ func (f *FakeProvider) CreateInstance(ctx context.Context, region string, key *c
 		select {
 		case <-time.After(createDelay):
 		case <-ctx.Done():
-			return providers.InstanceID{}, ctx.Err()
+			return providers.Instance{}, ctx.Err()
 		}
 	}
 
 	// Check for configured failure
 	if createFailure != nil {
-		return providers.InstanceID{}, createFailure
+		return providers.Instance{}, createFailure
 	}
 
 	f.mu.Lock()
@@ -99,10 +99,11 @@ func (f *FakeProvider) CreateInstance(ctx context.Context, region string, key *c
 	// Check if instance already exists
 	if existing, exists := f.instances[region]; exists {
 		if existing.Status == providers.InstanceStatusRunning {
-			return providers.InstanceID{
+			return providers.Instance{
 				Hostname:     string(f.Hostname(region)),
 				ProviderID:   existing.ID,
 				ProviderName: "fake",
+				HourlyCost:   f.config.PricePerHour,
 			}, nil
 		}
 	}
@@ -121,10 +122,11 @@ func (f *FakeProvider) CreateInstance(ctx context.Context, region string, key *c
 
 	f.instances[region] = instance
 
-	return providers.InstanceID{
+	return providers.Instance{
 		Hostname:     string(f.Hostname(region)),
 		ProviderID:   instanceID,
 		ProviderName: "fake",
+		HourlyCost:   f.config.PricePerHour,
 	}, nil
 }
 
@@ -194,15 +196,15 @@ func (f *FakeProvider) Hostname(region string) providers.HostName {
 	return providers.HostName(fmt.Sprintf("fake-%s", region))
 }
 
-// GetRegionPrice returns the configured price for any region
-func (f *FakeProvider) GetRegionPrice(region string) float64 {
+// GetRegionHourlyEstimate returns the configured price for any region
+func (f *FakeProvider) GetRegionHourlyEstimate(region string) float64 {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	return f.config.PricePerHour
 }
 
 // ListInstances returns all instances in a specific region
-func (f *FakeProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+func (f *FakeProvider) ListInstances(ctx context.Context, region string) ([]providers.Instance, error) {
 	f.mu.RLock()
 	statusCheckDelay := f.config.StatusCheckDelay
 	statusFailure := f.config.StatusFailure
@@ -225,14 +227,15 @@ func (f *FakeProvider) ListInstances(ctx context.Context, region string) ([]prov
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
-	var instances []providers.InstanceID
+	var instances []providers.Instance
 	for instanceRegion, instance := range f.instances {
 		if instanceRegion == region && instance.Status == providers.InstanceStatusRunning {
-			instances = append(instances, providers.InstanceID{
+			instances = append(instances, providers.Instance{
 				Hostname:     string(f.Hostname(region)),
 				ProviderID:   instance.ID,
 				ProviderName: "fake",
 				CreatedAt:    instance.CreatedAt,
+				HourlyCost:   f.config.PricePerHour,
 			})
 		}
 	}
@@ -251,7 +254,7 @@ func (f *FakeProvider) SetInstanceStatus(region string, status providers.Instanc
 }
 
 // DeleteInstance removes an instance by InstanceID
-func (f *FakeProvider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+func (f *FakeProvider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	// Simulate deletion delay
 	if f.config.CreateDelay > 0 {
 		select {

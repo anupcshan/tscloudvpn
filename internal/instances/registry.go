@@ -227,14 +227,26 @@ func (r *Registry) discoverExistingInstances(ctx context.Context) {
 				if _, alreadyExists := r.controllers[key]; !alreadyExists {
 					r.logger.Printf("Discovered existing instance: %s", hostname)
 
+					// Look up actual instance cost from the cloud provider
+					var hourlyCost float64
+					if cloudInstances, err := provider.ListInstances(ctx, region.Code); err == nil {
+						for _, inst := range cloudInstances {
+							if inst.Hostname == string(hostname) {
+								hourlyCost = inst.HourlyCost
+								break
+							}
+						}
+					}
+
 					// Create controller for existing instance with background context
 					controller := NewController(context.Background(), r.logger, provider, region.Code, r.controlApi, r.tsClient)
 					controller.onIdleShutdown = r.makeIdleShutdownCallback(providerName, region.Code)
 
-					// Mark as running and set creation time
+					// Mark as running and set creation time and actual cost
 					controller.mu.Lock()
 					controller.state = StateRunning
 					controller.createdAt = device.Created
+					controller.hourlyCost = hourlyCost
 					controller.mu.Unlock()
 
 					r.controllers[key] = controller

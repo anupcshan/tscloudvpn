@@ -134,7 +134,7 @@ func vultrInstanceHostname(region string) string {
 	return fmt.Sprintf("vultr-%s", region)
 }
 
-func (v *vultrProvider) DeleteInstance(ctx context.Context, instanceID providers.InstanceID) error {
+func (v *vultrProvider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	err := v.vultrClient.Instance.Delete(ctx, instanceID.ProviderID)
 	if err != nil {
 		return fmt.Errorf("failed to delete Vultr instance: %w", err)
@@ -144,7 +144,7 @@ func (v *vultrProvider) DeleteInstance(ctx context.Context, instanceID providers
 	return nil
 }
 
-func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.InstanceID, error) {
+func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
 	tmplOut := new(bytes.Buffer)
 	hostname := vultrInstanceHostname(region)
 	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
@@ -158,7 +158,7 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 		),
 		SSHKey: v.sshKey,
 	}); err != nil {
-		return providers.InstanceID{}, err
+		return providers.Instance{}, err
 	}
 
 	// Get cached plan ID for the region
@@ -175,14 +175,14 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 	v.regionSizeCacheLock.RUnlock()
 
 	if !ok || regionSize.PlanID == "" {
-		return providers.InstanceID{}, fmt.Errorf("no plans available in region %s", region)
+		return providers.Instance{}, fmt.Errorf("no plans available in region %s", region)
 	}
 
 	log.Printf("Using cached plan ID %s for region %s", regionSize.PlanID, region)
 
 	oses, _, _, err := v.vultrClient.OS.List(ctx, nil)
 	if err != nil {
-		return providers.InstanceID{}, err
+		return providers.Instance{}, err
 	}
 
 	oses = xslices.Filter(oses, func(os govultr.OS) bool {
@@ -190,7 +190,7 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 	})
 
 	if len(oses) == 0 {
-		return providers.InstanceID{}, fmt.Errorf("no OSes available")
+		return providers.Instance{}, fmt.Errorf("no OSes available")
 	}
 
 	log.Printf("Selected OS: %+v", oses[0])
@@ -206,13 +206,14 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 		EnableVPC2: govultr.BoolToBoolPtr(true),
 	})
 	if err != nil {
-		return providers.InstanceID{}, err
+		return providers.Instance{}, err
 	}
 
-	return providers.InstanceID{
+	return providers.Instance{
 		Hostname:     hostname,
 		ProviderID:   instance.ID,
 		ProviderName: "vultr",
+		HourlyCost:   regionSize.HourlyCost,
 	}, nil
 }
 
@@ -238,7 +239,7 @@ func (v *vultrProvider) GetInstanceStatus(ctx context.Context, region string) (p
 	return providers.InstanceStatusMissing, nil
 }
 
-func (v *vultrProvider) ListInstances(ctx context.Context, region string) ([]providers.InstanceID, error) {
+func (v *vultrProvider) ListInstances(ctx context.Context, region string) ([]providers.Instance, error) {
 	instances, _, _, err := v.vultrClient.Instance.List(ctx, &govultr.ListOptions{
 		Region: region,
 		Label:  "tscloudvpn",
@@ -249,14 +250,15 @@ func (v *vultrProvider) ListInstances(ctx context.Context, region string) ([]pro
 		return nil, err
 	}
 
-	var instanceIDs []providers.InstanceID
+	var instanceIDs []providers.Instance
 	for _, instance := range instances {
 		createdAt, _ := time.Parse(time.RFC3339, instance.DateCreated)
-		instanceIDs = append(instanceIDs, providers.InstanceID{
+		instanceIDs = append(instanceIDs, providers.Instance{
 			Hostname:     vultrInstanceHostname(region),
 			ProviderID:   instance.ID,
 			ProviderName: providerName,
 			CreatedAt:    createdAt,
+			HourlyCost:   v.GetRegionHourlyEstimate(region),
 		})
 	}
 
@@ -267,8 +269,8 @@ func (v *vultrProvider) Hostname(region string) providers.HostName {
 	return providers.HostName(vultrInstanceHostname(region))
 }
 
-// GetRegionPrice returns the hourly price for the cheapest plan in the region
-func (v *vultrProvider) GetRegionPrice(region string) float64 {
+// GetRegionHourlyEstimate returns the hourly price for the cheapest plan in the region
+func (v *vultrProvider) GetRegionHourlyEstimate(region string) float64 {
 	v.prefetchPrices()
 
 	// Check cache first
