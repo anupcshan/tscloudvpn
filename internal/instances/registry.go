@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/anupcshan/tscloudvpn/internal/tsclient"
 )
+
+const discoveryInterval = time.Second
 
 // Registry manages all instance controllers
 type Registry struct {
@@ -38,12 +41,30 @@ func NewRegistry(
 	}
 }
 
-// Start begins background discovery of existing instances and garbage collection.
+// Start begins background discovery of instances and garbage collection.
 func (r *Registry) Start(ctx context.Context) {
-	go r.discoverExistingInstances(ctx)
+	go r.runDiscoveryLoop(ctx)
 
 	gc := NewGarbageCollector(r.logger, r.controlApi, r.providers)
 	go gc.Run(ctx)
+}
+
+// runDiscoveryLoop periodically discovers instances created by other
+// tscloudvpn instances on the same tailnet.
+func (r *Registry) runDiscoveryLoop(ctx context.Context) {
+	r.discoverInstances(ctx)
+
+	ticker := time.NewTicker(discoveryInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.discoverInstances(ctx)
+		}
+	}
 }
 
 // CreateInstance creates a new instance with its controller
@@ -190,10 +211,8 @@ func (r *Registry) Shutdown() {
 	}
 }
 
-// discoverExistingInstances finds and registers existing instances on startup
-func (r *Registry) discoverExistingInstances(ctx context.Context) {
-	r.logger.Printf("Discovering existing instances...")
-
+// discoverInstances finds and registers instances not yet tracked by this registry.
+func (r *Registry) discoverInstances(ctx context.Context) {
 	// Get all devices from control API
 	devices, err := r.controlApi.ListDevices(ctx)
 	if err != nil {
@@ -208,7 +227,6 @@ func (r *Registry) discoverExistingInstances(ctx context.Context) {
 	}
 
 	// Check each provider-region combination
-	discoveredCount := 0
 	for providerName, provider := range r.providers {
 		regions, err := provider.ListRegions(ctx)
 		if err != nil {
@@ -225,7 +243,7 @@ func (r *Registry) discoverExistingInstances(ctx context.Context) {
 				r.mu.Lock()
 				// Only create controller if one doesn't already exist
 				if _, alreadyExists := r.controllers[key]; !alreadyExists {
-					r.logger.Printf("Discovered existing instance: %s", hostname)
+					r.logger.Printf("Discovered instance: %s", hostname)
 
 					// Look up actual instance cost from the cloud provider
 					var hourlyCost float64
@@ -250,12 +268,9 @@ func (r *Registry) discoverExistingInstances(ctx context.Context) {
 					controller.mu.Unlock()
 
 					r.controllers[key] = controller
-					discoveredCount++
 				}
 				r.mu.Unlock()
 			}
 		}
 	}
-
-	r.logger.Printf("Instance discovery completed. Found %d existing instances.", discoveredCount)
 }

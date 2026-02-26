@@ -296,6 +296,76 @@ func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 	}
 }
 
+func TestRegistry_PeriodicDiscovery(t *testing.T) {
+	logger := log.Default()
+	controlApi := &MockControlApi{
+		devices: []controlapi.Device{},
+	}
+
+	providerMap := map[string]providers.Provider{
+		"mock": &MockProvider{
+			hostname: "mock-test-region",
+			status:   providers.InstanceStatusRunning,
+		},
+	}
+
+	registry := NewRegistry(logger, controlApi, nil, providerMap)
+	defer registry.Shutdown()
+
+	ctx := context.Background()
+
+	// Initial discovery finds nothing
+	registry.discoverInstances(ctx)
+	require.Equal(t, 0, len(registry.GetAllInstanceStatuses()))
+
+	// Simulate another tscloudvpn instance creating a node
+	controlApi.AddDevice(controlapi.Device{
+		Hostname: "mock-test-region",
+		Created:  time.Now().Add(-time.Minute),
+	})
+
+	// Next discovery finds the new instance
+	registry.discoverInstances(ctx)
+	require.Equal(t, 1, len(registry.GetAllInstanceStatuses()))
+
+	status, err := registry.GetInstanceStatus("mock", "test-region")
+	require.NoError(t, err)
+	require.Equal(t, StateRunning, status.State)
+	require.False(t, status.CreatedAt.IsZero())
+}
+
+func TestRegistry_PeriodicDiscovery_Idempotent(t *testing.T) {
+	logger := log.Default()
+	controlApi := &MockControlApi{
+		devices: []controlapi.Device{
+			{
+				Hostname: "mock-test-region",
+				Created:  time.Now().Add(-time.Hour),
+			},
+		},
+	}
+
+	providerMap := map[string]providers.Provider{
+		"mock": &MockProvider{
+			hostname: "mock-test-region",
+			status:   providers.InstanceStatusRunning,
+		},
+	}
+
+	registry := NewRegistry(logger, controlApi, nil, providerMap)
+	defer registry.Shutdown()
+
+	ctx := context.Background()
+
+	// Run discovery 3 times
+	registry.discoverInstances(ctx)
+	registry.discoverInstances(ctx)
+	registry.discoverInstances(ctx)
+
+	// Should still have exactly 1 instance
+	require.Equal(t, 1, len(registry.GetAllInstanceStatuses()))
+}
+
 func TestController_IdleShutdown_StatsIdle(t *testing.T) {
 	ctx := context.Background()
 	logger := log.Default()
