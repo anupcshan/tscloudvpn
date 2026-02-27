@@ -203,6 +203,7 @@ type Controller struct {
 	watchingSince         time.Time  // when we started monitoring this node (for stats watchdog)
 	onIdleShutdown        func()     // callback when idle shutdown is triggered
 	idleShutdownTriggered bool       // prevents calling onIdleShutdown more than once
+	onPeerGone            func()     // callback when peer disappears (discovered controllers only)
 	healthCheckCount      int        // counter for throttling stats fetches
 	lastError             string     // error message when state is StateFailed
 	hourlyCost            float64    // actual hourly cost of the instance
@@ -448,11 +449,19 @@ func (c *Controller) performHealthCheck(hostname providers.HostName) {
 	if peer == nil {
 		// Instance not registered yet or removed
 		c.mu.Lock()
-		if c.state == StateRunning {
+		wasRunning := c.state == StateRunning
+		if wasRunning {
 			c.state = StateIdle
 			c.launchedAt = time.Time{}
 		}
 		c.mu.Unlock()
+
+		// For discovered controllers: peer gone means instance is gone,
+		// stop watching and let discovery create a fresh controller if it returns.
+		if wasRunning && c.onPeerGone != nil {
+			c.logger.Printf("Peer gone for %s, stopping controller", hostname)
+			c.onPeerGone()
+		}
 		return
 	}
 

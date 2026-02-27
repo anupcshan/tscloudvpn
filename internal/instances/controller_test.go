@@ -3,6 +3,7 @@ package instances
 import (
 	"context"
 	"log"
+	"net/netip"
 	"slices"
 	"sync"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/anupcshan/tscloudvpn/internal/tsclient"
 	"github.com/stretchr/testify/require"
 )
 
@@ -513,6 +515,158 @@ func TestRegistry_IdleShutdownCallback(t *testing.T) {
 	controller.mu.RLock()
 	require.True(t, controller.shouldIdleShutdown())
 	controller.mu.RUnlock()
+}
+
+func TestDiscoveredController_RemovedWhenPeerDisappears(t *testing.T) {
+	t.Parallel()
+	logger := log.Default()
+	tsClient := tsclient.NewMockClient()
+	controlApi := &MockControlApi{}
+	provider := &MockProvider{
+		hostname: "mock-test-region",
+		status:   providers.InstanceStatusRunning,
+	}
+	providerMap := map[string]providers.Provider{"mock": provider}
+
+	registry := NewRegistry(logger, controlApi, tsClient, providerMap)
+	defer registry.Shutdown()
+
+	// Simulate a device in the control plane and a visible peer
+	controlApi.AddDevice(controlapi.Device{
+		Hostname: "mock-test-region",
+		Created:  time.Now().Add(-time.Minute),
+	})
+	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
+
+	// Discovery creates a controller
+	registry.discoverInstances(context.Background())
+	require.Equal(t, 1, len(registry.GetAllInstanceStatuses()))
+
+	// Peer disappears
+	tsClient.RemovePeer("mock-test-region")
+
+	// Wait for the health check to notice and remove the controller
+	require.Eventually(t, func() bool {
+		return len(registry.GetAllInstanceStatuses()) == 0
+	}, 5*time.Second, 50*time.Millisecond,
+		"Controller should be removed when peer disappears")
+}
+
+func TestDiscoveredController_StaleStatsNotAppliedToNewInstance(t *testing.T) {
+	t.Parallel()
+	logger := log.Default()
+	tsClient := tsclient.NewMockClient()
+	controlApi := &MockControlApi{}
+	provider := &MockProvider{
+		hostname: "mock-test-region",
+		status:   providers.InstanceStatusRunning,
+	}
+	providerMap := map[string]providers.Provider{"mock": provider}
+
+	registry := NewRegistry(logger, controlApi, tsClient, providerMap)
+	defer registry.Shutdown()
+
+	// Phase 1: First instance appears and gets stats
+	controlApi.AddDevice(controlapi.Device{
+		Hostname: "mock-test-region",
+		Created:  time.Now().Add(-time.Minute),
+	})
+	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
+	tsClient.SetNodeStats(&tsclient.NodeStatsResult{
+		ForwardedBytes: 100,
+		LastActive:     time.Now(), // Recently active
+	})
+
+	registry.discoverInstances(context.Background())
+	require.Equal(t, 1, len(registry.GetAllInstanceStatuses()))
+
+	// Wait for health check to fetch stats
+	require.Eventually(t, func() bool {
+		status, err := registry.GetInstanceStatus("mock", "test-region")
+		return err == nil && status.NodeStats != nil
+	}, 5*time.Second, 50*time.Millisecond,
+		"Stats should be fetched")
+
+	// First instance disappears
+	tsClient.RemovePeer("mock-test-region")
+
+	// Wait for controller to be removed
+	require.Eventually(t, func() bool {
+		return len(registry.GetAllInstanceStatuses()) == 0
+	}, 5*time.Second, 50*time.Millisecond,
+		"Controller should be removed when peer disappears")
+
+	// Phase 2: New instance appears with fresh stats
+	tsClient.SetNodeStats(&tsclient.NodeStatsResult{
+		ForwardedBytes: 0,
+		LastActive:     time.Now(), // Just booted
+	})
+	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
+
+	// Discovery creates a fresh controller
+	registry.discoverInstances(context.Background())
+	require.Equal(t, 1, len(registry.GetAllInstanceStatuses()))
+
+	// The new controller should NOT trigger idle shutdown — it has no stale stats
+	time.Sleep(2 * time.Second)
+
+	// Controller should still exist (not idle-shutdown)
+	require.Equal(t, 1, len(registry.GetAllInstanceStatuses()),
+		"New instance should not be killed by stale stats from old instance")
+}
+
+func TestDiscoveredController_IdleShutdownCallbackNotFiredAfterPeerGone(t *testing.T) {
+	t.Parallel()
+	logger := log.Default()
+	tsClient := tsclient.NewMockClient()
+	controlApi := &MockControlApi{}
+	provider := &MockProvider{
+		hostname: "mock-test-region",
+		status:   providers.InstanceStatusRunning,
+	}
+	providerMap := map[string]providers.Provider{"mock": provider}
+
+	registry := NewRegistry(logger, controlApi, tsClient, providerMap)
+	defer registry.Shutdown()
+
+	// Set up a discovered instance with stats that would trigger idle shutdown
+	controlApi.AddDevice(controlapi.Device{
+		Hostname: "mock-test-region",
+		Created:  time.Now().Add(-time.Minute),
+	})
+	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
+	tsClient.SetNodeStats(&tsclient.NodeStatsResult{
+		ForwardedBytes: 100,
+		LastActive:     time.Now().Add(-5 * time.Hour), // Would trigger idle shutdown
+	})
+
+	idleShutdownCalled := make(chan struct{}, 1)
+	registry.discoverInstances(context.Background())
+
+	// Override the idle shutdown callback to track if it fires
+	registry.mu.Lock()
+	controller := registry.controllers["mock-test-region"]
+	controller.mu.Lock()
+	controller.onIdleShutdown = func() { idleShutdownCalled <- struct{}{} }
+	controller.mu.Unlock()
+	registry.mu.Unlock()
+
+	// Peer disappears before idle shutdown fires
+	tsClient.RemovePeer("mock-test-region")
+
+	// Wait for controller removal
+	require.Eventually(t, func() bool {
+		return len(registry.GetAllInstanceStatuses()) == 0
+	}, 5*time.Second, 50*time.Millisecond,
+		"Controller should be removed when peer disappears")
+
+	// Idle shutdown should NOT have been called — controller was removed first
+	select {
+	case <-idleShutdownCalled:
+		t.Fatal("Idle shutdown should not fire after peer is gone and controller is removed")
+	case <-time.After(2 * time.Second):
+		// Good — no idle shutdown fired
+	}
 }
 
 func TestRegistry_CreateInstance_ContextCancellation(t *testing.T) {

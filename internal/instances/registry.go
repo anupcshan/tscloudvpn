@@ -195,6 +195,29 @@ func (r *Registry) makeIdleShutdownCallback(providerName, region string) func() 
 	}
 }
 
+// makePeerGoneCallback returns a function that stops and removes the controller
+// when the peer disappears. Used for discovered controllers only — they have no
+// attachment to the VM and should stop watching when the peer is gone.
+func (r *Registry) makePeerGoneCallback(providerName, region string) func() {
+	key := fmt.Sprintf("%s-%s", providerName, region)
+	return func() {
+		// Run in a goroutine to avoid deadlocking the health check loop
+		// (Stop waits for the goroutine that's calling this callback).
+		go func() {
+			r.mu.Lock()
+			controller, exists := r.controllers[key]
+			if exists {
+				delete(r.controllers, key)
+			}
+			r.mu.Unlock()
+
+			if exists {
+				controller.Stop()
+			}
+		}()
+	}
+}
+
 // Shutdown stops all controllers
 func (r *Registry) Shutdown() {
 	r.mu.Lock()
@@ -259,6 +282,7 @@ func (r *Registry) discoverInstances(ctx context.Context) {
 					// Create controller for existing instance with background context
 					controller := NewController(context.Background(), r.logger, provider, region.Code, r.controlApi, r.tsClient)
 					controller.onIdleShutdown = r.makeIdleShutdownCallback(providerName, region.Code)
+					controller.onPeerGone = r.makePeerGoneCallback(providerName, region.Code)
 
 					// Mark as running and set creation time and actual cost
 					controller.mu.Lock()
