@@ -146,7 +146,7 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 		return nil, fmt.Errorf("failed to create resource SKUs client: %w", err)
 	}
 
-	return &azureProvider{
+	prov := &azureProvider{
 		subscriptionID: cfg.Providers.Azure.SubscriptionID,
 		resourceGroup:  cfg.Providers.Azure.ResourceGroup,
 		ownerID:        providers.GetOwnerID(cfg),
@@ -157,7 +157,11 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 		nicClient:      nicClient,
 		subsClient:     subsClient,
 		skuClient:      skuClient,
-	}, nil
+	}
+
+	go prov.ensureVMTypeCache()
+
+	return prov, nil
 }
 
 func azureInstanceHostname(region string) string {
@@ -567,7 +571,10 @@ func (a *azureProvider) fetchAzureLocations(ctx context.Context) ([]providers.Re
 // fetchResourceSKUs fetches VM SKU metadata from the Azure Resource SKUs API.
 // Returns a map of SKU name (e.g. "Standard_B1s") -> vmSKUInfo.
 func (a *azureProvider) fetchResourceSKUs(ctx context.Context) (map[string]vmSKUInfo, error) {
-	filter := "resourceType eq 'virtualMachines'"
+	// Filter to a single location to avoid downloading 63K+ SKU entries globally.
+	// SKU names and architectures are the same across regions.
+	// Note: the Resource SKUs API only supports location filtering.
+	filter := "location eq 'eastus'"
 	pager := a.skuClient.NewListPager(&armcompute.ResourceSKUsClientListOptions{
 		Filter: &filter,
 	})
