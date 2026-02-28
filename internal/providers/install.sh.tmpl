@@ -35,7 +35,7 @@ lastForwardedTime=$(date "+%s")
 # certificates in Certificate Transparency logs and leaks node hostnames.
 mkdir -p /tmp/stats
 echo "{\"forwarded_bytes\": 0, \"last_active\": $(date +%s)}" > /tmp/stats/stats.json
-(cd /tmp/stats && python3 -m http.server 80) &
+(cd /tmp/stats && python3 -m http.server 80 --bind "$(tailscale ip -4)") &
 
 # Update stats file every 30 seconds
 while sleep 30; do
