@@ -1,7 +1,6 @@
 package ec2
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"encoding/base64"
@@ -11,10 +10,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"text/template"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
-	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -39,7 +36,6 @@ type ec2Provider struct {
 	listPricesOnce sync.Once
 	regionPriceMap map[string]float64
 	cfg            aws.Config
-	sshKey         string
 	ownerID        string // Unique identifier for this tscloudvpn instance
 }
 
@@ -82,7 +78,6 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 
 	e := &ec2Provider{
 		cfg:     awsCfg,
-		sshKey:  cfg.SSH.PublicKey,
 		ownerID: providers.GetOwnerID(cfg),
 	}
 
@@ -226,9 +221,9 @@ func (e *ec2Provider) DeleteInstance(ctx context.Context, instanceID providers.I
 	return nil
 }
 
-func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
+func (e *ec2Provider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
 	e.mu.Lock()
-	e.cfg.Region = region
+	e.cfg.Region = req.Region
 	client := ec2.NewFromConfig(e.cfg)
 	ssmClient := ssm.NewFromConfig(e.cfg)
 	e.mu.Unlock()
@@ -240,23 +235,9 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 		return providers.Instance{}, err
 	}
 
-	log.Printf("Found image id %s in region %s", aws.ToString(imageParam.Parameter.Value), region)
+	log.Printf("Found image id %s in region %s", aws.ToString(imageParam.Parameter.Value), req.Region)
 
-	tmplOut := new(bytes.Buffer)
-	hostname := ec2InstanceHostname(region)
-	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
-		Args   string
-		SSHKey string
-	}{
-		Args: fmt.Sprintf(
-			`%s --hostname=%s`,
-			strings.Join(key.GetCLIArgs(), " "),
-			hostname,
-		),
-		SSHKey: e.sshKey,
-	}); err != nil {
-		return providers.Instance{}, err
-	}
+	hostname := ec2InstanceHostname(req.Region)
 
 	// Get or create security group
 	sgID, err := e.getOrCreateSecurityGroup(ctx, client)
@@ -280,7 +261,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 				},
 			},
 		},
-		UserData: aws.String(base64.StdEncoding.EncodeToString(tmplOut.Bytes())),
+		UserData: aws.String(base64.StdEncoding.EncodeToString([]byte(req.UserData))),
 	}
 
 	output, err := client.RunInstances(ctx, input)
@@ -293,7 +274,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, region string, key *co
 		Hostname:     hostname,
 		ProviderID:   aws.ToString(output.Instances[0].InstanceId),
 		ProviderName: "ec2",
-		HourlyCost:   e.GetRegionHourlyEstimate(region),
+		HourlyCost:   e.GetRegionHourlyEstimate(req.Region),
 	}, nil
 }
 

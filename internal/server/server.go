@@ -19,6 +19,7 @@ type Config struct {
 	CloudProviders map[string]providers.Provider
 	TSLocalClient  tsclient.TailscaleClient
 	Controller     controlapi.ControlApi
+	SSHKey         string
 }
 
 // Server handles HTTP requests for the application
@@ -32,7 +33,7 @@ func New(config *Config) *Server {
 	logger := log.New(log.Writer(), "[server] ", log.Flags())
 	return &Server{
 		config:  config,
-		manager: NewManager(context.Background(), logger, config.CloudProviders, config.TSLocalClient, config.Controller),
+		manager: NewManager(context.Background(), logger, config.SSHKey, config.CloudProviders, config.TSLocalClient, config.Controller),
 	}
 }
 

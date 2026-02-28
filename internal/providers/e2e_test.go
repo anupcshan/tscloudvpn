@@ -246,8 +246,15 @@ func testProviderLifecycle(t *testing.T, testConfig *E2ETestConfig, providerName
 			t.Fatalf("Failed to create preauth key: %v", err)
 		}
 
+		// Render user data
+		hostname := string(provider.Hostname(region))
+		userData, err := providers.RenderUserData(hostname, key, "")
+		if err != nil {
+			t.Fatalf("Failed to render user data: %v", err)
+		}
+
 		// Create instance
-		instanceID, err = provider.CreateInstance(ctx, region, key)
+		instanceID, err = provider.CreateInstance(ctx, providers.CreateRequest{Region: region, UserData: userData})
 		if err != nil {
 			t.Fatalf("Failed to create instance: %v", err)
 		}

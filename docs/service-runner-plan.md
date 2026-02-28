@@ -432,43 +432,36 @@ CreateKey(ctx context.Context, tags []string) (*PreauthKey, error)
 - `RenderInitScript(svc ServiceType, hostname, tailscaleArgs, sshKey string) (string, error)`
   helper that templates the init script
 
-**internal/providers/provider.go**
-- Add `CreateRequest` struct (references `services.VMRequirements` or define
-  locally — TBD whether to avoid circular imports)
-- Update `Provider` interface signatures
-- `InitData` embed remains (ExitNode's InitScript field references it)
-- Providers no longer reference `InitData` directly
+**internal/providers/provider.go** ✅ done
+- `CreateRequest{Region, UserData, SSHKey}` struct added
+- `Provider.CreateInstance(ctx, req CreateRequest)` signature
+- `RenderUserData` helper added
+- `InitData` embed remains (will be referenced by ExitNode's InitScript field)
+- Remaining: `Hostname` and `GetRegionHourlyEstimate` signature changes (commits 4-5)
 
-**internal/providers/{do,ec2,gcp,azure,hetzner,linode,vultr}/**
-Per provider — mechanical changes:
-1. `CreateInstance(ctx, req CreateRequest)` — remove template execution block,
-   use `req.UserData`. Remove hostname generation, use `req.Hostname`.
-   VM size selection unchanged (cheapest). `req.Requirements` available but
-   ignored when zero-value.
-2. `Hostname(region, servicePrefix string)` — returns
-   `HostName(servicePrefix + "-" + providerShortName + "-" + region)`.
-3. `GetRegionHourlyEstimate(region, VMRequirements)` — ignores requirements,
-   returns cheapest (same behavior as today).
+**internal/providers/{do,ec2,gcp,azure,hetzner,linode,vultr}/** ✅ done
+- `CreateInstance(ctx, req CreateRequest)` — template execution removed,
+  uses `req.Region`, `req.UserData`, `req.SSHKey` (Azure only)
+- Dead `sshKey` struct fields removed from all providers
+- Remaining: `Hostname(region, servicePrefix)` and
+  `GetRegionHourlyEstimate(region, VMRequirements)` (commits 4-5)
 
-**internal/providers/fake/fake.go**
-Same interface changes. Uses `req.Hostname` directly. No template logic to remove.
+**internal/providers/fake/fake.go** ✅ done
 
-**internal/controlapi/controlapi.go**
+**internal/controlapi/controlapi.go** — commit 3
 `CreateKey(ctx, tags []string)` signature.
 
-**internal/controlapi/tailscale.go**
-Use `tags` parameter in `capabilities.Devices.Create.Tags` instead of
-hardcoded `tag:untrusted`.
+**internal/controlapi/tailscale.go** — commit 3
+Use `tags` parameter instead of hardcoded `tag:untrusted`.
 
-**internal/controlapi/headscale.go**
+**internal/controlapi/headscale.go** — commit 3
 Use `tags` parameter similarly.
 
-**internal/instances/instances.go** (Creator)
-`Create()` takes `*services.ServiceType` and `sshKey string`:
-1. `controlApi.CreateKey(ctx, svc.Tags)`
-2. `services.RenderInitScript(svc, hostname, key.GetCLIArgs(), sshKey)`
-3. Build `CreateRequest{Region, Hostname, UserData, Requirements}`
-4. `provider.CreateInstance(ctx, req)`
+**internal/instances/instances.go** (Creator) ✅ done (partially)
+- Creator renders init script via `providers.RenderUserData` and builds
+  `CreateRequest`. SSH key threaded through from Registry.
+- Remaining: use `svc.Tags` for CreateKey (commit 3), use ServiceType's
+  InitScript instead of global `InitData` (commit 6)
 
 **internal/instances/controller.go**
 - New field: `serviceType *services.ServiceType`
@@ -528,50 +521,41 @@ Use `tags` parameter similarly.
 
 Each commit is self-contained and passes all tests.
 
-- [ ] **Commit 1: Extract init script rendering into shared helper.**
-  Pure refactor. All 7 providers do identical template.Execute logic. Extract
-  into `providers.RenderInitScript(initScript, hostname, key, sshKey)`. Each
-  provider calls it instead of duplicating. No interface change.
+- [x] **Commit 1: Move init script rendering into Creator, introduce CreateRequest.**
+  `Provider.CreateInstance` now accepts `CreateRequest{Region, UserData, SSHKey}`
+  instead of raw parameters. Creator renders the init script via
+  `providers.RenderUserData` and builds the CreateRequest. SSH key threaded
+  through App → Server → Manager → Registry → Controller → Creator. Dead
+  `sshKey` fields removed from all providers (Azure now uses `req.SSHKey`).
 
-- [ ] **Commit 2: Extract hostname generation into shared helper.**
-  Pure refactor. Each provider has its own `fooInstanceHostname(region)` that
-  does `"{prefix}-" + region`. Replace with `providers.MakeHostname(prefix, region)`.
-  No interface change.
-
-- [ ] **Commit 3: Add `internal/services` package with ServiceType + ExitNode.**
+- [ ] **Commit 2: Add `internal/services` package with ServiceType + ExitNode.**
   Additive only — no existing code modified. Struct definitions, `var ExitNode`,
   `parseExitNodeStats`. No callers yet. Nothing can break.
 
-- [ ] **Commit 4: ControlApi.CreateKey accepts tags.**
+- [ ] **Commit 3: ControlApi.CreateKey accepts tags.**
   `CreateKey(ctx)` → `CreateKey(ctx, tags []string)`. Update tailscale.go,
   headscale.go, both mocks. All callers pass `[]string{"tag:untrusted"}` —
   identical behavior.
 
-- [ ] **Commit 5: Provider.CreateInstance takes CreateRequest.**
-  Payoff from commits 1-2. Per-provider diff is small: receive `req CreateRequest`
-  instead of `(region, key)`, use `req.UserData` and `req.Hostname` instead of
-  calling the shared helpers. Creator builds the CreateRequest. Fake provider +
-  mocks updated.
-
-- [ ] **Commit 6: Provider.Hostname takes servicePrefix.**
+- [ ] **Commit 4: Provider.Hostname takes servicePrefix.**
   `Hostname(region)` → `Hostname(region, servicePrefix)`. All callers pass
   `"exit"` for now. Hostnames change from `do-nyc1` to `exit-do-nyc1`. Tests
   updated to expect new format.
 
-- [ ] **Commit 7: Provider.GetRegionHourlyEstimate takes VMRequirements.**
+- [ ] **Commit 5: Provider.GetRegionHourlyEstimate takes VMRequirements.**
   Small signature change. All providers ignore the parameter and return cheapest.
   Callers pass zero value.
 
-- [ ] **Commit 8: Thread ServiceType through Controller.**
+- [ ] **Commit 6: Thread ServiceType through Controller.**
   Controller holds `*ServiceType`. Uses `svc.IdleTimeout` instead of hardcoded
   4h constant. Uses `svc.StatsPath` and `svc.ParseStats`. `NewController` takes
   the extra parameter. All callers pass `&services.ExitNode`.
 
-- [ ] **Commit 9: Thread ServiceType through Registry.**
+- [ ] **Commit 7: Thread ServiceType through Registry.**
   Registry key becomes `{service}-{provider}-{region}`. Method signatures take
   `*ServiceType`. Discovery matches hostname prefix. GC updated.
 
-- [ ] **Commit 10: Update Manager + API routes.**
+- [ ] **Commit 8: Update Manager + API routes.**
   Routes include service type. SSE events include service prefix. UI shows
   service label.
 

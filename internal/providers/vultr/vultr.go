@@ -1,7 +1,6 @@
 package vultr
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -10,11 +9,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"text/template"
 	"time"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
-	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/bradenaw/juniper/xmaps"
 	"github.com/bradenaw/juniper/xslices"
@@ -34,7 +31,6 @@ type vultrSize struct {
 
 type vultrProvider struct {
 	vultrClient         *govultr.Client
-	sshKey              string
 	ownerID             string // Unique identifier for this tscloudvpn instance
 	ownerTag            string // Tag combining owner key and value for filtering
 	regionSizeCacheLock sync.RWMutex
@@ -54,7 +50,6 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 
 	return &vultrProvider{
 		vultrClient:     vultrClient,
-		sshKey:          cfg.SSH.PublicKey,
 		ownerID:         ownerID,
 		ownerTag:        fmt.Sprintf("%s:%s", providers.OwnerTagKey, ownerID),
 		regionSizeCache: make(map[string]vultrSize),
@@ -144,22 +139,9 @@ func (v *vultrProvider) DeleteInstance(ctx context.Context, instanceID providers
 	return nil
 }
 
-func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
-	tmplOut := new(bytes.Buffer)
+func (v *vultrProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
+	region := req.Region
 	hostname := vultrInstanceHostname(region)
-	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
-		Args   string
-		SSHKey string
-	}{
-		Args: fmt.Sprintf(
-			`%s --hostname=%s`,
-			strings.Join(key.GetCLIArgs(), " "),
-			hostname,
-		),
-		SSHKey: v.sshKey,
-	}); err != nil {
-		return providers.Instance{}, err
-	}
 
 	// Get cached plan ID for the region
 	v.regionSizeCacheLock.RLock()
@@ -201,7 +183,7 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, region string, key *
 		Hostname:   hostname,
 		Tags:       []string{"tscloudvpn", v.ownerTag},
 		Plan:       regionSize.PlanID,
-		UserData:   base64.StdEncoding.EncodeToString(tmplOut.Bytes()),
+		UserData:   base64.StdEncoding.EncodeToString([]byte(req.UserData)),
 		OsID:       oses[0].ID,
 		EnableVPC2: govultr.BoolToBoolPtr(true),
 	})

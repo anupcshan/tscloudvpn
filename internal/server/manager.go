@@ -33,6 +33,7 @@ type Manager struct {
 func NewManager(
 	ctx context.Context,
 	logger *log.Logger,
+	sshKey string,
 	cloudProviders map[string]providers.Provider,
 	tsLocalClient tsclient.TailscaleClient,
 	controlApi controlapi.ControlApi,
@@ -49,7 +50,7 @@ func NewManager(
 		)
 	}
 
-	instanceRegistry := instances.NewRegistry(logger, controlApi, tsLocalClient, cloudProviders)
+	instanceRegistry := instances.NewRegistry(logger, sshKey, controlApi, tsLocalClient, cloudProviders)
 	instanceRegistry.Start(ctx)
 
 	m := &Manager{

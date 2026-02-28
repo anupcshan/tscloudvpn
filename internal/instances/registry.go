@@ -19,6 +19,7 @@ type Registry struct {
 	mu          sync.RWMutex
 	controllers map[string]*Controller // key: "provider-region"
 	logger      *log.Logger
+	sshKey      string
 	controlApi  controlapi.ControlApi
 	tsClient    tsclient.TailscaleClient
 	providers   map[string]providers.Provider
@@ -28,6 +29,7 @@ type Registry struct {
 // discovery of existing instances and garbage collection.
 func NewRegistry(
 	logger *log.Logger,
+	sshKey string,
 	controlApi controlapi.ControlApi,
 	tsClient tsclient.TailscaleClient,
 	providers map[string]providers.Provider,
@@ -35,6 +37,7 @@ func NewRegistry(
 	return &Registry{
 		controllers: make(map[string]*Controller),
 		logger:      logger,
+		sshKey:      sshKey,
 		controlApi:  controlApi,
 		tsClient:    tsClient,
 		providers:   providers,
@@ -104,7 +107,7 @@ func (r *Registry) CreateInstance(ctx context.Context, providerName, region stri
 		return fmt.Errorf("unknown provider: %s", providerName)
 	}
 
-	controller := NewController(context.Background(), r.logger, provider, region, r.controlApi, r.tsClient)
+	controller := NewController(context.Background(), r.logger, provider, region, r.sshKey, r.controlApi, r.tsClient)
 	controller.onIdleShutdown = r.makeIdleShutdownCallback(providerName, region)
 	r.controllers[key] = controller
 	r.mu.Unlock()
@@ -280,7 +283,7 @@ func (r *Registry) discoverInstances(ctx context.Context) {
 					}
 
 					// Create controller for existing instance with background context
-					controller := NewController(context.Background(), r.logger, provider, region.Code, r.controlApi, r.tsClient)
+					controller := NewController(context.Background(), r.logger, provider, region.Code, r.sshKey, r.controlApi, r.tsClient)
 					controller.onIdleShutdown = r.makeIdleShutdownCallback(providerName, region.Code)
 					controller.onPeerGone = r.makePeerGoneCallback(providerName, region.Code)
 

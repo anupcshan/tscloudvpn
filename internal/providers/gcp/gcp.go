@@ -1,7 +1,6 @@
 package gcp
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
@@ -11,11 +10,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"text/template"
 	"time"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
-	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	cloudbilling "google.golang.org/api/cloudbilling/v1"
@@ -92,7 +89,6 @@ type gcpProvider struct {
 	serviceAccount string
 	service        *compute.Service
 	billingService *cloudbilling.APIService
-	sshKey         string
 	ownerID        string // Unique identifier for this tscloudvpn instance
 
 	// Cache for per-machine-type per-region pricing from Cloud Billing API
@@ -127,7 +123,6 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 		serviceAccount: cfg.Providers.GCP.ServiceAccount,
 		service:        service,
 		billingService: billingService,
-		sshKey:         cfg.SSH.PublicKey,
 		ownerID:        providers.GetOwnerID(cfg),
 	}
 
@@ -540,7 +535,7 @@ func (g *gcpProvider) getOrCreateFirewallRule(ctx context.Context) error {
 	return nil
 }
 
-func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
+func (g *gcpProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
 	// Ensure machine type cache is populated
 	if err := g.ensureMachineTypeCache(); err != nil {
 		return providers.Instance{}, fmt.Errorf("failed to ensure machine type cache: %w", err)
@@ -548,34 +543,20 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 
 	// Get available machine types for this region (sorted cheapest first)
 	g.regionMachineTypeCacheLock.RLock()
-	machineTypes, ok := g.regionMachineTypeCache[region]
+	machineTypes, ok := g.regionMachineTypeCache[req.Region]
 	g.regionMachineTypeCacheLock.RUnlock()
 
 	if !ok || len(machineTypes) == 0 {
-		return providers.Instance{}, fmt.Errorf("no suitable machine type found for region %s", region)
+		return providers.Instance{}, fmt.Errorf("no suitable machine type found for region %s", req.Region)
 	}
 
 	prefix := "https://www.googleapis.com/compute/v1/projects/" + g.projectId
-	zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, region)).Do()
+	zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, req.Region)).Do()
 	if err != nil {
 		return providers.Instance{}, err
 	}
 
-	tmplOut := new(bytes.Buffer)
-	hostname := gcpInstanceHostname(region)
-	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
-		Args   string
-		SSHKey string
-	}{
-		Args: fmt.Sprintf(
-			`%s --hostname=%s`,
-			strings.Join(key.GetCLIArgs(), " "),
-			hostname,
-		),
-		SSHKey: g.sshKey,
-	}); err != nil {
-		return providers.Instance{}, err
-	}
+	hostname := gcpInstanceHostname(req.Region)
 
 	// Ensure firewall rule exists for Tailscale inbound port
 	if err := g.getOrCreateFirewallRule(ctx); err != nil {
@@ -618,7 +599,7 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 						},
 					},
 					StackType:  "IPV4_ONLY",
-					Subnetwork: fmt.Sprintf("projects/%s/regions/%s/subnetworks/default", g.projectId, region),
+					Subnetwork: fmt.Sprintf("projects/%s/regions/%s/subnetworks/default", g.projectId, req.Region),
 				},
 			},
 			ServiceAccounts: []*compute.ServiceAccount{
@@ -631,7 +612,7 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, region string, key *co
 				Items: []*compute.MetadataItems{
 					{
 						Key:   "startup-script",
-						Value: aws.String(tmplOut.String()),
+						Value: aws.String(req.UserData),
 					},
 				},
 			},

@@ -84,6 +84,7 @@ func (a *App) Initialize(ctx context.Context) error {
 		CloudProviders: cloudProviders,
 		TSLocalClient:  tsclient.NewLocalClient(tsLocalClient, a.tsnetServer.HTTPClient()),
 		Controller:     controller,
+		SSHKey:         a.config.SSH.PublicKey,
 	})
 
 	return nil

@@ -19,8 +19,7 @@ func TestGarbageCollector_NoOrphanedInstances(t *testing.T) {
 	fakeProvider := fake.NewWithConfig(fake.DefaultConfig())
 
 	// Create an instance in the fake provider
-	key := &controlapi.PreauthKey{Key: "test-key"}
-	_, err := fakeProvider.CreateInstance(ctx, "fake-us-east", key)
+	_, err := fakeProvider.CreateInstance(ctx, providers.CreateRequest{Region: "fake-us-east"})
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
@@ -59,8 +58,7 @@ func TestGarbageCollector_OrphanedInstance_OlderThanGracePeriod(t *testing.T) {
 	fakeProvider := fake.NewWithConfig(config)
 
 	// Create an instance in the fake provider
-	key := &controlapi.PreauthKey{Key: "test-key"}
-	_, err := fakeProvider.CreateInstance(ctx, "fake-us-east", key)
+	_, err := fakeProvider.CreateInstance(ctx, providers.CreateRequest{Region: "fake-us-east"})
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
@@ -242,7 +240,7 @@ type MockProviderWithTimestamp struct {
 	deleteError     bool
 }
 
-func (m *MockProviderWithTimestamp) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
+func (m *MockProviderWithTimestamp) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
 	return providers.Instance{
 		Hostname:     string(m.hostname),
 		ProviderID:   "mock-123",

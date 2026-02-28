@@ -1,17 +1,13 @@
 package linode
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"log"
 	"strconv"
-	"strings"
-	"text/template"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
-	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/linode/linodego"
 	"golang.org/x/oauth2"
@@ -20,7 +16,6 @@ import (
 
 type linodeProvider struct {
 	client   *linodego.Client
-	sshKey   string
 	ownerID  string // Unique identifier for this tscloudvpn instance
 	ownerTag string // Tag combining owner key and value for filtering
 }
@@ -38,7 +33,6 @@ func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
 
 	return &linodeProvider{
 		client:   &client,
-		sshKey:   cfg.SSH.PublicKey,
 		ownerID:  ownerID,
 		ownerTag: fmt.Sprintf("%s:%s", providers.OwnerTagKey, ownerID),
 	}, nil
@@ -63,32 +57,18 @@ func (l *linodeProvider) DeleteInstance(ctx context.Context, instanceID provider
 	return nil
 }
 
-func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
-	tmplOut := new(bytes.Buffer)
-	hostname := linodeInstanceHostname(region)
-	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
-		Args   string
-		SSHKey string
-	}{
-		Args: fmt.Sprintf(
-			`%s --hostname=%s`,
-			strings.Join(key.GetCLIArgs(), " "),
-			hostname,
-		),
-		SSHKey: l.sshKey,
-	}); err != nil {
-		return providers.Instance{}, err
-	}
+func (l *linodeProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
+	hostname := linodeInstanceHostname(req.Region)
 
 	createOpts := linodego.InstanceCreateOptions{
-		Label:    fmt.Sprintf("tscloudvpn-%s", region),
-		Region:   region,
+		Label:    fmt.Sprintf("tscloudvpn-%s", req.Region),
+		Region:   req.Region,
 		Type:     "g6-nanode-1",
 		Image:    "linode/debian12",
 		RootPass: generateRandomPassword(),
 		Tags:     []string{"tscloudvpn", l.ownerTag},
 		Metadata: &linodego.InstanceMetadataOptions{
-			UserData: base64.StdEncoding.EncodeToString(tmplOut.Bytes()),
+			UserData: base64.StdEncoding.EncodeToString([]byte(req.UserData)),
 		},
 	}
 
@@ -103,7 +83,7 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, region string, key 
 		Hostname:     hostname,
 		ProviderID:   strconv.Itoa(instance.ID),
 		ProviderName: "linode",
-		HourlyCost:   l.GetRegionHourlyEstimate(region),
+		HourlyCost:   l.GetRegionHourlyEstimate(req.Region),
 	}, nil
 }
 

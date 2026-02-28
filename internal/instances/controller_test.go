@@ -21,7 +21,7 @@ type MockProvider struct {
 	status   providers.InstanceStatus
 }
 
-func (m *MockProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
+func (m *MockProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
 	return providers.Instance{
 		Hostname:     string(m.hostname),
 		ProviderID:   "mock-123",
@@ -105,7 +105,7 @@ func TestController_NewController(t *testing.T) {
 	}
 	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", controlApi, nil)
+	controller := NewController(ctx, logger, provider, "test-region", "", controlApi, nil)
 	defer controller.Stop()
 
 	if controller == nil {
@@ -137,7 +137,7 @@ func TestRegistry_CreateAndDeleteInstance(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers)
+	registry := NewRegistry(logger, "", controlApi, nil, providers)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -193,7 +193,7 @@ func TestRegistry_GetAllInstanceStatuses(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers)
+	registry := NewRegistry(logger, "", controlApi, nil, providers)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -263,7 +263,7 @@ func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers)
+	registry := NewRegistry(logger, "", controlApi, nil, providers)
 	defer registry.Shutdown()
 	registry.Start(context.Background())
 
@@ -311,7 +311,7 @@ func TestRegistry_PeriodicDiscovery(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providerMap)
+	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -354,7 +354,7 @@ func TestRegistry_PeriodicDiscovery_Idempotent(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providerMap)
+	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -374,7 +374,7 @@ func TestController_IdleShutdown_StatsIdle(t *testing.T) {
 	provider := &MockProvider{hostname: "test-instance"}
 	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", controlApi, nil)
+	controller := NewController(ctx, logger, provider, "test-region", "", controlApi, nil)
 	defer controller.Stop()
 
 	controller.state = StateRunning
@@ -392,7 +392,7 @@ func TestController_IdleShutdown_StatsActive(t *testing.T) {
 	provider := &MockProvider{hostname: "test-instance"}
 	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", controlApi, nil)
+	controller := NewController(ctx, logger, provider, "test-region", "", controlApi, nil)
 	defer controller.Stop()
 
 	controller.state = StateRunning
@@ -410,7 +410,7 @@ func TestController_IdleShutdown_NoStatsWatchdogExpired(t *testing.T) {
 	provider := &MockProvider{hostname: "test-instance"}
 	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", controlApi, nil)
+	controller := NewController(ctx, logger, provider, "test-region", "", controlApi, nil)
 	defer controller.Stop()
 
 	controller.state = StateRunning
@@ -425,7 +425,7 @@ func TestController_IdleShutdown_NoStatsWatchdogNotExpired(t *testing.T) {
 	provider := &MockProvider{hostname: "test-instance"}
 	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", controlApi, nil)
+	controller := NewController(ctx, logger, provider, "test-region", "", controlApi, nil)
 	defer controller.Stop()
 
 	controller.state = StateRunning
@@ -440,7 +440,7 @@ func TestController_IdleShutdown_NotRunning(t *testing.T) {
 	provider := &MockProvider{hostname: "test-instance"}
 	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", controlApi, nil)
+	controller := NewController(ctx, logger, provider, "test-region", "", controlApi, nil)
 	defer controller.Stop()
 
 	// State is StateIdle (default)
@@ -457,7 +457,7 @@ func TestController_NodeStats(t *testing.T) {
 	provider := &MockProvider{hostname: "test-instance"}
 	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", controlApi, nil)
+	controller := NewController(ctx, logger, provider, "test-region", "", controlApi, nil)
 	defer controller.Stop()
 
 	// Initially no stats
@@ -490,7 +490,7 @@ func TestRegistry_IdleShutdownCallback(t *testing.T) {
 		"mock": provider,
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providerMap)
+	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -528,7 +528,7 @@ func TestDiscoveredController_RemovedWhenPeerDisappears(t *testing.T) {
 	}
 	providerMap := map[string]providers.Provider{"mock": provider}
 
-	registry := NewRegistry(logger, controlApi, tsClient, providerMap)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
 	defer registry.Shutdown()
 
 	// Simulate a device in the control plane and a visible peer
@@ -563,7 +563,7 @@ func TestDiscoveredController_StaleStatsNotAppliedToNewInstance(t *testing.T) {
 	}
 	providerMap := map[string]providers.Provider{"mock": provider}
 
-	registry := NewRegistry(logger, controlApi, tsClient, providerMap)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
 	defer registry.Shutdown()
 
 	// Phase 1: First instance appears and gets stats
@@ -626,7 +626,7 @@ func TestDiscoveredController_IdleShutdownCallbackNotFiredAfterPeerGone(t *testi
 	}
 	providerMap := map[string]providers.Provider{"mock": provider}
 
-	registry := NewRegistry(logger, controlApi, tsClient, providerMap)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
 	defer registry.Shutdown()
 
 	// Set up a discovered instance with stats that would trigger idle shutdown
@@ -679,7 +679,7 @@ func TestRegistry_CreateInstance_ContextCancellation(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers)
+	registry := NewRegistry(logger, "", controlApi, nil, providers)
 	defer registry.Shutdown()
 
 	// Create a context that we'll cancel immediately

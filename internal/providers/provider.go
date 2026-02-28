@@ -1,9 +1,12 @@
 package providers
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
+	"strings"
+	"text/template"
 	"time"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
@@ -34,8 +37,15 @@ const (
 	InstanceStatusRunning
 )
 
+// CreateRequest contains everything a provider needs to create an instance.
+type CreateRequest struct {
+	Region   string
+	UserData string // Rendered init script
+	SSHKey   string // SSH public key (used by Azure OS profile; other providers can ignore)
+}
+
 type Provider interface {
-	CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (Instance, error)
+	CreateInstance(ctx context.Context, req CreateRequest) (Instance, error)
 	DeleteInstance(ctx context.Context, instanceID Instance) error
 	GetInstanceStatus(ctx context.Context, region string) (InstanceStatus, error)
 	ListInstances(ctx context.Context, region string) ([]Instance, error)
@@ -69,6 +79,25 @@ var (
 	ProviderFactoryRegistry = make(map[string]ProviderFactory)
 	ProviderLabels          = make(map[string]string)
 )
+
+// RenderUserData renders the init script template with the given parameters.
+func RenderUserData(hostname string, key *controlapi.PreauthKey, sshKey string) (string, error) {
+	var buf bytes.Buffer
+	if err := template.Must(template.New("tmpl").Parse(InitData)).Execute(&buf, struct {
+		Args   string
+		SSHKey string
+	}{
+		Args: fmt.Sprintf(
+			`%s --hostname=%s`,
+			strings.Join(key.GetCLIArgs(), " "),
+			hostname,
+		),
+		SSHKey: sshKey,
+	}); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
 
 // GetOwnerID returns a unique identifier for the current tscloudvpn instance
 // based on the control plane configuration (Tailnet name or Headscale user ID)

@@ -182,7 +182,7 @@ func TestIntegration_ControllerWithFakeProvider_BasicLifecycle(t *testing.T) {
 	fakeProvider := fake.NewWithConfig(fake.DefaultConfig())
 	controlApi := NewIntegrationTestControlApi()
 
-	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", controlApi, nil)
+	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", controlApi, nil)
 	defer controller.Stop()
 
 	// Test initial status
@@ -268,7 +268,7 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers)
+	registry := NewRegistry(logger, "", controlApi, nil, providers)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -381,7 +381,7 @@ func TestIntegration_ControllerWithFakeProvider_CreateFailure(t *testing.T) {
 	fakeProvider := fake.NewWithConfig(config)
 	controlApi := NewIntegrationTestControlApi()
 
-	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", controlApi, nil)
+	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", controlApi, nil)
 	defer controller.Stop()
 
 	// Test creation failure
@@ -423,7 +423,7 @@ func TestIntegration_RegistryWithFakeProvider_ProviderFailures(t *testing.T) {
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers)
+	registry := NewRegistry(logger, "", controlApi, nil, providers)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -509,7 +509,7 @@ func TestIntegration_RegistryWithFakeProvider_DiscoverExistingInstances(t *testi
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, controlApi, nil, providers)
+	registry := NewRegistry(logger, "", controlApi, nil, providers)
 	defer registry.Shutdown()
 	registry.Start(context.Background())
 
@@ -572,7 +572,7 @@ func TestIntegration_ControllerWithFakeProvider_SlowOperations(t *testing.T) {
 		Created:  time.Now().Add(2 * time.Second), // Future timestamp
 	})
 
-	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", controlApi, nil)
+	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", controlApi, nil)
 	defer controller.Stop()
 
 	// Test creation with delay
@@ -617,7 +617,7 @@ func TestIntegration_ControllerDelete_CloudDeletionFailure_StillSucceeds(t *test
 		Created:  time.Now(),
 	})
 
-	controller := NewController(ctx, logger, mockProvider, "test-region", controlApi, nil)
+	controller := NewController(ctx, logger, mockProvider, "test-region", "", controlApi, nil)
 	defer controller.Stop()
 
 	// Mark controller as running (simulate existing instance)
@@ -666,7 +666,7 @@ func TestIntegration_ControllerDelete_DeviceNotInTailscale(t *testing.T) {
 		Created:  time.Now().Add(time.Second),
 	})
 
-	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", controlApi, nil)
+	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", controlApi, nil)
 	defer controller.Stop()
 
 	// Create instance
@@ -710,8 +710,8 @@ type MockProviderWithDeleteFailure struct {
 	deleteAttempted bool
 }
 
-func (m *MockProviderWithDeleteFailure) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
-	m.instances[region] = true
+func (m *MockProviderWithDeleteFailure) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
+	m.instances[req.Region] = true
 	return providers.Instance{
 		Hostname:     string(m.hostname),
 		ProviderID:   "mock-123",

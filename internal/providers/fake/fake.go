@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
-	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 )
 
@@ -73,7 +72,8 @@ func NewWithConfig(config *ProviderConfig) *FakeProvider {
 }
 
 // CreateInstance simulates creating a cloud instance
-func (f *FakeProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
+func (f *FakeProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
+	region := req.Region
 	f.mu.RLock()
 	createDelay := f.config.CreateDelay
 	createFailure := f.config.CreateFailure

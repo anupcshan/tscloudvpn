@@ -1,7 +1,6 @@
 package hetzner
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -9,11 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"text/template"
 	"time"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
-	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
 )
@@ -30,7 +27,6 @@ type regionServerType struct {
 
 type hetznerProvider struct {
 	client  *hcloud.Client
-	sshKey  string
 	ownerID string // Unique identifier for this tscloudvpn instance
 
 	regionServerTypeCacheLock sync.RWMutex
@@ -52,7 +48,6 @@ func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
 
 	return &hetznerProvider{
 		client:  client,
-		sshKey:  cfg.SSH.PublicKey,
 		ownerID: ownerID,
 	}, nil
 }
@@ -76,7 +71,7 @@ func hetznerInstanceHostname(region string) string {
 	return fmt.Sprintf("hetzner-%s", region)
 }
 
-func (h *hetznerProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
+func (h *hetznerProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
 	// Ensure region server type cache is populated
 	h.regionServerTypeCacheLock.Lock()
 	if time.Since(h.regionServerTypeCacheTime) >= cacheDuration || h.regionServerTypeCache == nil {
@@ -90,35 +85,21 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, region string, key
 	}
 	h.regionServerTypeCacheLock.Unlock()
 
-	tmplOut := new(bytes.Buffer)
-	hostname := hetznerInstanceHostname(region)
-	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
-		Args   string
-		SSHKey string
-	}{
-		Args: fmt.Sprintf(
-			`%s --hostname=%s`,
-			strings.Join(key.GetCLIArgs(), " "),
-			hostname,
-		),
-		SSHKey: h.sshKey,
-	}); err != nil {
-		return providers.Instance{}, err
-	}
+	hostname := hetznerInstanceHostname(req.Region)
 
 	// Get the cheapest server type for this region
-	regionST, ok := h.regionServerTypeCache[region]
+	regionST, ok := h.regionServerTypeCache[req.Region]
 	if !ok {
-		return providers.Instance{}, fmt.Errorf("no server types available for region %s", region)
+		return providers.Instance{}, fmt.Errorf("no server types available for region %s", req.Region)
 	}
 
 	// Create server
 	createOpts := hcloud.ServerCreateOpts{
-		Name:       fmt.Sprintf("tscloudvpn-%s", region),
+		Name:       fmt.Sprintf("tscloudvpn-%s", req.Region),
 		ServerType: &hcloud.ServerType{ID: regionST.ServerTypeID},
 		Image:      &hcloud.Image{Name: "debian-12"},
-		Location:   &hcloud.Location{Name: region},
-		UserData:   tmplOut.String(),
+		Location:   &hcloud.Location{Name: req.Region},
+		UserData:   req.UserData,
 		Labels: map[string]string{
 			"tscloudvpn":          "true",
 			providers.OwnerTagKey: h.ownerID,

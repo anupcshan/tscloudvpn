@@ -1,19 +1,15 @@
 package digitalocean
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
-	"text/template"
 	"time"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
-	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 
 	"github.com/digitalocean/godo"
@@ -30,7 +26,6 @@ type regionSize struct {
 
 type digitaloceanProvider struct {
 	client   *godo.Client
-	sshKey   string
 	ownerID  string // Unique identifier for this tscloudvpn instance
 	ownerTag string // Tag combining owner key and value for filtering
 
@@ -51,7 +46,6 @@ func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
 
 	return &digitaloceanProvider{
 		client:   client,
-		sshKey:   cfg.SSH.PublicKey,
 		ownerID:  ownerID,
 		ownerTag: fmt.Sprintf("%s:%s", providers.OwnerTagKey, ownerID),
 	}, nil
@@ -61,7 +55,7 @@ func doInstanceHostname(region string) string {
 	return fmt.Sprintf("do-%s", region)
 }
 
-func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
+func (d *digitaloceanProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
 	// Ensure region size cache is populated
 	d.regionSizeCacheLock.Lock()
 	if time.Since(d.regionSizeCacheTime) >= cacheDuration || d.regionSizeCache == nil {
@@ -75,30 +69,16 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 	}
 	d.regionSizeCacheLock.Unlock()
 
-	tmplOut := new(bytes.Buffer)
-	hostname := doInstanceHostname(region)
-	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
-		Args   string
-		SSHKey string
-	}{
-		Args: fmt.Sprintf(
-			`%s --hostname=%s`,
-			strings.Join(key.GetCLIArgs(), " "),
-			hostname,
-		),
-		SSHKey: d.sshKey,
-	}); err != nil {
-		return providers.Instance{}, err
-	}
+	hostname := doInstanceHostname(req.Region)
 
 	createRequest := &godo.DropletCreateRequest{
-		Name:   fmt.Sprintf("tscloudvpn-%s", region),
-		Region: region,
-		Size:   d.regionSizeCache[region].SizeSlug, // Using cheapest size for the region from cache
+		Name:   fmt.Sprintf("tscloudvpn-%s", req.Region),
+		Region: req.Region,
+		Size:   d.regionSizeCache[req.Region].SizeSlug, // Using cheapest size for the region from cache
 		Image: godo.DropletCreateImage{
 			Slug: "debian-12-x64",
 		},
-		UserData: tmplOut.String(),
+		UserData: req.UserData,
 		Tags:     []string{"tscloudvpn", d.ownerTag},
 	}
 
@@ -113,7 +93,7 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, region string
 		Hostname:     hostname,
 		ProviderID:   strconv.Itoa(droplet.ID),
 		ProviderName: "do",
-		HourlyCost:   d.GetRegionHourlyEstimate(region),
+		HourlyCost:   d.GetRegionHourlyEstimate(req.Region),
 	}, nil
 }
 

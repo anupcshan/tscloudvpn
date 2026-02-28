@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 )
 
@@ -15,8 +14,7 @@ func TestFakeProvider_CreateInstance(t *testing.T) {
 	fakeProvider := NewWithConfig(DefaultConfig())
 
 	// Test creating an instance
-	key := &controlapi.PreauthKey{Key: "test-key"}
-	instanceID, err := fakeProvider.CreateInstance(ctx, "fake-us-east", key)
+	instanceID, err := fakeProvider.CreateInstance(ctx, providers.CreateRequest{Region: "fake-us-east", UserData: "test-user-data"})
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
@@ -58,8 +56,7 @@ func TestFakeProvider_GetInstanceStatus(t *testing.T) {
 	}
 
 	// Create an instance
-	key := &controlapi.PreauthKey{Key: "test-key"}
-	_, err = fakeProvider.CreateInstance(ctx, "fake-us-east", key)
+	_, err = fakeProvider.CreateInstance(ctx, providers.CreateRequest{Region: "fake-us-east", UserData: "test-user-data"})
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
@@ -144,8 +141,7 @@ func TestFakeProvider_ConfigurableFailures(t *testing.T) {
 	config.CreateFailure = errors.New("test create failure")
 	fakeProvider := NewWithConfig(config)
 
-	key := &controlapi.PreauthKey{Key: "test-key"}
-	_, err := fakeProvider.CreateInstance(ctx, "fake-us-east", key)
+	_, err := fakeProvider.CreateInstance(ctx, providers.CreateRequest{Region: "fake-us-east", UserData: "test-user-data"})
 	if err == nil {
 		t.Error("Expected create to fail")
 	}
@@ -188,9 +184,8 @@ func TestFakeProvider_ConfigurableDelays(t *testing.T) {
 	config.CreateDelay = 100 * time.Millisecond
 	fakeProvider := NewWithConfig(config)
 
-	key := &controlapi.PreauthKey{Key: "test-key"}
 	start := time.Now()
-	_, err := fakeProvider.CreateInstance(ctx, "fake-us-east", key)
+	_, err := fakeProvider.CreateInstance(ctx, providers.CreateRequest{Region: "fake-us-east", UserData: "test-user-data"})
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
@@ -241,9 +236,8 @@ func TestFakeProvider_ContextCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	key := &controlapi.PreauthKey{Key: "test-key"}
 
-	_, err := fakeProvider.CreateInstance(ctx, "fake-us-east", key)
+	_, err := fakeProvider.CreateInstance(ctx, providers.CreateRequest{Region: "fake-us-east", UserData: "test-user-data"})
 	if err == nil {
 		t.Error("Expected create to be canceled")
 	}
@@ -263,8 +257,7 @@ func TestFakeProvider_SetInstanceStatus(t *testing.T) {
 	fakeProvider := NewWithConfig(DefaultConfig())
 
 	// Create an instance
-	key := &controlapi.PreauthKey{Key: "test-key"}
-	_, err := fakeProvider.CreateInstance(ctx, "fake-us-east", key)
+	_, err := fakeProvider.CreateInstance(ctx, providers.CreateRequest{Region: "fake-us-east", UserData: "test-user-data"})
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
@@ -286,8 +279,7 @@ func TestFakeProvider_DeleteInstance(t *testing.T) {
 	fakeProvider := NewWithConfig(DefaultConfig())
 
 	// Create an instance
-	key := &controlapi.PreauthKey{Key: "test-key"}
-	instanceID, err := fakeProvider.CreateInstance(ctx, "fake-us-east", key)
+	instanceID, err := fakeProvider.CreateInstance(ctx, providers.CreateRequest{Region: "fake-us-east", UserData: "test-user-data"})
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
@@ -334,8 +326,7 @@ func TestFakeProvider_ListInstances(t *testing.T) {
 	}
 
 	// Create an instance
-	key := &controlapi.PreauthKey{Key: "test-key"}
-	instanceID, err := fakeProvider.CreateInstance(ctx, "fake-us-east", key)
+	instanceID, err := fakeProvider.CreateInstance(ctx, providers.CreateRequest{Region: "fake-us-east", UserData: "test-user-data"})
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
@@ -374,10 +365,9 @@ func TestFakeProvider_GetAllInstances(t *testing.T) {
 
 	// Create multiple instances
 	regions := []string{"fake-us-east", "fake-us-west", "fake-eu-central"}
-	key := &controlapi.PreauthKey{Key: "test-key"}
 
 	for _, region := range regions {
-		_, err := fakeProvider.CreateInstance(ctx, region, key)
+		_, err := fakeProvider.CreateInstance(ctx, providers.CreateRequest{Region: region, UserData: "test-user-data"})
 		if err != nil {
 			t.Fatalf("Failed to create instance in %s: %v", region, err)
 		}

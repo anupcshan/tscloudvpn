@@ -122,6 +122,7 @@ func NewTestHarness(t *testing.T) *TestHarness {
 		},
 		TSLocalClient: mockTSClient,
 		Controller:    mockControlAPI,
+		SSHKey:        "",
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

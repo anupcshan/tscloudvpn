@@ -191,6 +191,7 @@ type Controller struct {
 	logger                *log.Logger
 	provider              providers.Provider
 	region                string
+	sshKey                string
 	controlApi            controlapi.ControlApi
 	tsClient              tsclient.TailscaleClient
 	ping                  *PingHistory
@@ -215,6 +216,7 @@ func NewController(
 	logger *log.Logger,
 	provider providers.Provider,
 	region string,
+	sshKey string,
 	controlApi controlapi.ControlApi,
 	tsClient tsclient.TailscaleClient,
 ) *Controller {
@@ -226,6 +228,7 @@ func NewController(
 		logger:        logger,
 		provider:      provider,
 		region:        region,
+		sshKey:        sshKey,
 		controlApi:    controlApi,
 		tsClient:      tsClient,
 		ping:          NewPingHistory(),
@@ -252,7 +255,7 @@ func (c *Controller) Create() error {
 	c.launchedAt = time.Now()
 	c.mu.Unlock()
 
-	creator := NewCreator()
+	creator := NewCreator(c.sshKey)
 	instanceID, err := creator.Create(c.ctx, c.logger, c.controlApi, c.provider, c.region)
 	if err != nil {
 		c.mu.Lock()

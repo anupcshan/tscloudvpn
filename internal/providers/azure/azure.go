@@ -1,7 +1,6 @@
 package azure
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -13,7 +12,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"text/template"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -24,7 +22,6 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
-	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 )
 
@@ -78,7 +75,6 @@ type retailPriceItem struct {
 type azureProvider struct {
 	subscriptionID string
 	resourceGroup  string
-	sshKey         string
 	ownerID        string // Unique identifier for this tscloudvpn instance
 	computeClient  *armcompute.VirtualMachinesClient
 	networkClient  *armnetwork.VirtualNetworksClient
@@ -150,7 +146,6 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 		subscriptionID: cfg.Providers.Azure.SubscriptionID,
 		resourceGroup:  cfg.Providers.Azure.ResourceGroup,
 		ownerID:        providers.GetOwnerID(cfg),
-		sshKey:         cfg.SSH.PublicKey,
 		computeClient:  computeClient,
 		networkClient:  networkClient,
 		pipClient:      pipClient,
@@ -168,50 +163,34 @@ func azureInstanceHostname(region string) string {
 	return fmt.Sprintf("azure-%s", region)
 }
 
-func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (providers.Instance, error) {
+func (a *azureProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
 	if err := a.ensureVMTypeCache(); err != nil {
 		return providers.Instance{}, fmt.Errorf("failed to load VM pricing: %w", err)
 	}
 
 	a.vmTypeCacheLock.RLock()
-	vmTypes := a.vmTypeCache[region]
+	vmTypes := a.vmTypeCache[req.Region]
 	a.vmTypeCacheLock.RUnlock()
 
 	if len(vmTypes) == 0 {
-		return providers.Instance{}, fmt.Errorf("no VM types available for region %s", region)
+		return providers.Instance{}, fmt.Errorf("no VM types available for region %s", req.Region)
 	}
 
-	hostname := azureInstanceHostname(region)
-	vmName := fmt.Sprintf("tscloudvpn-%s", region)
-
-	// Prepare cloud-init data
-	tmplOut := new(bytes.Buffer)
-	if err := template.Must(template.New("tmpl").Parse(providers.InitData)).Execute(tmplOut, struct {
-		Args   string
-		SSHKey string
-	}{
-		Args: fmt.Sprintf(
-			`%s --hostname=%s`,
-			strings.Join(key.GetCLIArgs(), " "),
-			hostname,
-		),
-		SSHKey: a.sshKey,
-	}); err != nil {
-		return providers.Instance{}, fmt.Errorf("failed to generate cloud-init: %w", err)
-	}
+	hostname := azureInstanceHostname(req.Region)
+	vmName := fmt.Sprintf("tscloudvpn-%s", req.Region)
 
 	// Base64 encode the cloud-init data
-	cloudInitData := base64.StdEncoding.EncodeToString(tmplOut.Bytes())
+	cloudInitData := base64.StdEncoding.EncodeToString([]byte(req.UserData))
 
 	// Create network resources once (before trying VM sizes)
-	if err := a.ensureNetworkResources(ctx, region, vmName); err != nil {
+	if err := a.ensureNetworkResources(ctx, req.Region, vmName); err != nil {
 		return providers.Instance{}, fmt.Errorf("failed to create network resources: %w", err)
 	}
 
 	// Try VM types in order of price (cheapest first), falling back on errors
 	var lastErr error
 	for _, mt := range vmTypes {
-		log.Printf("Creating Azure VM %s in %s using %s ($%.4f/hr)", vmName, region, mt.VMSize, mt.HourlyCost)
+		log.Printf("Creating Azure VM %s in %s using %s ($%.4f/hr)", vmName, req.Region, mt.VMSize, mt.HourlyCost)
 
 		imageSKU := skuX64
 		if mt.Arm64 {
@@ -219,7 +198,7 @@ func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *
 		}
 
 		vmParams := armcompute.VirtualMachine{
-			Location: to.Ptr(region),
+			Location: to.Ptr(req.Region),
 			Properties: &armcompute.VirtualMachineProperties{
 				HardwareProfile: &armcompute.HardwareProfile{
 					VMSize: to.Ptr(armcompute.VirtualMachineSizeTypes(mt.VMSize)),
@@ -248,7 +227,7 @@ func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *
 							PublicKeys: []*armcompute.SSHPublicKey{
 								{
 									Path:    to.Ptr("/home/azureuser/.ssh/authorized_keys"),
-									KeyData: to.Ptr(a.sshKey),
+									KeyData: to.Ptr(req.SSHKey),
 								},
 							},
 						},
@@ -269,7 +248,7 @@ func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *
 			},
 			Tags: map[string]*string{
 				"created-by":          to.Ptr("tscloudvpn"),
-				"region":              to.Ptr(region),
+				"region":              to.Ptr(req.Region),
 				providers.OwnerTagKey: to.Ptr(a.ownerID),
 			},
 		}
@@ -288,7 +267,7 @@ func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *
 			continue
 		}
 
-		log.Printf("Created Azure VM %s in region %s (size: %s)", vmName, region, mt.VMSize)
+		log.Printf("Created Azure VM %s in region %s (size: %s)", vmName, req.Region, mt.VMSize)
 		return providers.Instance{
 			Hostname:     hostname,
 			ProviderID:   vmName,
@@ -297,7 +276,7 @@ func (a *azureProvider) CreateInstance(ctx context.Context, region string, key *
 		}, nil
 	}
 
-	return providers.Instance{}, fmt.Errorf("all VM sizes exhausted for region %s: %w", region, lastErr)
+	return providers.Instance{}, fmt.Errorf("all VM sizes exhausted for region %s: %w", req.Region, lastErr)
 }
 
 func (a *azureProvider) ensureNetworkResources(ctx context.Context, region, vmName string) error {
