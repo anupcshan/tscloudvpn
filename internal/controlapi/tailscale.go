@@ -26,9 +26,9 @@ func NewTailscaleClient(tailnet string, oauthClientId string, oauthSecret string
 }
 
 // CreateKey implements ControlApi.CreateKey
-func (c *TailscaleClient) CreateKey(ctx context.Context) (*PreauthKey, error) {
+func (c *TailscaleClient) CreateKey(ctx context.Context, tags []string) (*PreauthKey, error) {
 	capabilities := tailscale.KeyCapabilities{}
-	capabilities.Devices.Create.Tags = []string{"tag:untrusted"}
+	capabilities.Devices.Create.Tags = tags
 	capabilities.Devices.Create.Ephemeral = true
 	capabilities.Devices.Create.Reusable = false
 	capabilities.Devices.Create.Preauthorized = true

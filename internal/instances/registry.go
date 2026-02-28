@@ -9,6 +9,7 @@ import (
 
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/anupcshan/tscloudvpn/internal/services"
 	"github.com/anupcshan/tscloudvpn/internal/tsclient"
 )
 
@@ -107,7 +108,7 @@ func (r *Registry) CreateInstance(ctx context.Context, providerName, region stri
 		return fmt.Errorf("unknown provider: %s", providerName)
 	}
 
-	controller := NewController(context.Background(), r.logger, provider, region, r.sshKey, r.controlApi, r.tsClient)
+	controller := NewController(context.Background(), r.logger, provider, region, r.sshKey, &services.ExitNode, r.controlApi, r.tsClient)
 	controller.onIdleShutdown = r.makeIdleShutdownCallback(providerName, region)
 	r.controllers[key] = controller
 	r.mu.Unlock()
@@ -283,7 +284,7 @@ func (r *Registry) discoverInstances(ctx context.Context) {
 					}
 
 					// Create controller for existing instance with background context
-					controller := NewController(context.Background(), r.logger, provider, region.Code, r.sshKey, r.controlApi, r.tsClient)
+					controller := NewController(context.Background(), r.logger, provider, region.Code, r.sshKey, &services.ExitNode, r.controlApi, r.tsClient)
 					controller.onIdleShutdown = r.makeIdleShutdownCallback(providerName, region.Code)
 					controller.onPeerGone = r.makePeerGoneCallback(providerName, region.Code)
 

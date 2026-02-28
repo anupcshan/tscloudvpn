@@ -14,6 +14,7 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/anupcshan/tscloudvpn/internal/providers/fake"
+	"github.com/anupcshan/tscloudvpn/internal/services"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,7 +39,7 @@ func NewIntegrationTestControlApi() *IntegrationTestControlApi {
 }
 
 // CreateKey creates a preauth key with optional delay/failure
-func (api *IntegrationTestControlApi) CreateKey(ctx context.Context) (*controlapi.PreauthKey, error) {
+func (api *IntegrationTestControlApi) CreateKey(ctx context.Context, tags []string) (*controlapi.PreauthKey, error) {
 	if api.createKeyDelay > 0 {
 		select {
 		case <-time.After(api.createKeyDelay):
@@ -182,7 +183,7 @@ func TestIntegration_ControllerWithFakeProvider_BasicLifecycle(t *testing.T) {
 	fakeProvider := fake.NewWithConfig(fake.DefaultConfig())
 	controlApi := NewIntegrationTestControlApi()
 
-	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", controlApi, nil)
+	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", &services.ExitNode, controlApi, nil)
 	defer controller.Stop()
 
 	// Test initial status
@@ -381,7 +382,7 @@ func TestIntegration_ControllerWithFakeProvider_CreateFailure(t *testing.T) {
 	fakeProvider := fake.NewWithConfig(config)
 	controlApi := NewIntegrationTestControlApi()
 
-	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", controlApi, nil)
+	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", &services.ExitNode, controlApi, nil)
 	defer controller.Stop()
 
 	// Test creation failure
@@ -572,7 +573,7 @@ func TestIntegration_ControllerWithFakeProvider_SlowOperations(t *testing.T) {
 		Created:  time.Now().Add(2 * time.Second), // Future timestamp
 	})
 
-	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", controlApi, nil)
+	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", &services.ExitNode, controlApi, nil)
 	defer controller.Stop()
 
 	// Test creation with delay
@@ -617,7 +618,7 @@ func TestIntegration_ControllerDelete_CloudDeletionFailure_StillSucceeds(t *test
 		Created:  time.Now(),
 	})
 
-	controller := NewController(ctx, logger, mockProvider, "test-region", "", controlApi, nil)
+	controller := NewController(ctx, logger, mockProvider, "test-region", "", &services.ExitNode, controlApi, nil)
 	defer controller.Stop()
 
 	// Mark controller as running (simulate existing instance)
@@ -666,7 +667,7 @@ func TestIntegration_ControllerDelete_DeviceNotInTailscale(t *testing.T) {
 		Created:  time.Now().Add(time.Second),
 	})
 
-	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", controlApi, nil)
+	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", &services.ExitNode, controlApi, nil)
 	defer controller.Stop()
 
 	// Create instance

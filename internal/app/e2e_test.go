@@ -49,7 +49,7 @@ func NewMockControlAPI() *MockControlAPI {
 	}
 }
 
-func (m *MockControlAPI) CreateKey(ctx context.Context) (*controlapi.PreauthKey, error) {
+func (m *MockControlAPI) CreateKey(ctx context.Context, tags []string) (*controlapi.PreauthKey, error) {
 	m.mu.Lock()
 	m.keyCounter++
 	keyID := fmt.Sprintf("test-key-%d", m.keyCounter)

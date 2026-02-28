@@ -67,8 +67,8 @@ func (a *App) Initialize(ctx context.Context) error {
 		return err
 	}
 
-	// Create auth key for tsnet server
-	authKey, err := controller.CreateKey(ctx)
+	// Create auth key for tsnet server (the control plane node itself)
+	authKey, err := controller.CreateKey(ctx, []string{"tag:untrusted"})
 	if err != nil {
 		return err
 	}

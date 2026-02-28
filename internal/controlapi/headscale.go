@@ -86,7 +86,7 @@ func (a *apiKeyAuth) RequireTransportSecurity() bool {
 }
 
 // CreateKey implements ControlApi.CreateKey
-func (c *HeadscaleClient) CreateKey(ctx context.Context) (*PreauthKey, error) {
+func (c *HeadscaleClient) CreateKey(ctx context.Context, tags []string) (*PreauthKey, error) {
 	// Create an ephemeral, preauthorized key
 	req := &headscale.CreatePreAuthKeyRequest{
 		User:      c.userId,
@@ -94,7 +94,7 @@ func (c *HeadscaleClient) CreateKey(ctx context.Context) (*PreauthKey, error) {
 		Ephemeral: true,
 		// Expire the key in an hour - we can launch an instance and use the key in that time
 		Expiration: timestamppb.New(time.Now().Add(1 * time.Hour)),
-		AclTags:    []string{"tag:untrusted"},
+		AclTags:    tags,
 	}
 
 	resp, err := c.client.CreatePreAuthKey(ctx, req)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/anupcshan/tscloudvpn/internal/services"
 	"github.com/anupcshan/tscloudvpn/internal/tsclient"
 	"github.com/stretchr/testify/require"
 )
@@ -66,7 +67,7 @@ type MockControlApi struct {
 	devices []controlapi.Device
 }
 
-func (m *MockControlApi) CreateKey(ctx context.Context) (*controlapi.PreauthKey, error) {
+func (m *MockControlApi) CreateKey(ctx context.Context, tags []string) (*controlapi.PreauthKey, error) {
 	return &controlapi.PreauthKey{Key: "mock-key"}, nil
 }
 
@@ -105,7 +106,7 @@ func TestController_NewController(t *testing.T) {
 	}
 	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", "", controlApi, nil)
+	controller := NewController(ctx, logger, provider, "test-region", "", &services.ExitNode, controlApi, nil)
 	defer controller.Stop()
 
 	if controller == nil {
@@ -374,7 +375,7 @@ func TestController_IdleShutdown_StatsIdle(t *testing.T) {
 	provider := &MockProvider{hostname: "test-instance"}
 	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", "", controlApi, nil)
+	controller := NewController(ctx, logger, provider, "test-region", "", &services.ExitNode, controlApi, nil)
 	defer controller.Stop()
 
 	controller.state = StateRunning
@@ -392,7 +393,7 @@ func TestController_IdleShutdown_StatsActive(t *testing.T) {
 	provider := &MockProvider{hostname: "test-instance"}
 	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", "", controlApi, nil)
+	controller := NewController(ctx, logger, provider, "test-region", "", &services.ExitNode, controlApi, nil)
 	defer controller.Stop()
 
 	controller.state = StateRunning
@@ -410,7 +411,7 @@ func TestController_IdleShutdown_NoStatsWatchdogExpired(t *testing.T) {
 	provider := &MockProvider{hostname: "test-instance"}
 	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", "", controlApi, nil)
+	controller := NewController(ctx, logger, provider, "test-region", "", &services.ExitNode, controlApi, nil)
 	defer controller.Stop()
 
 	controller.state = StateRunning
@@ -425,7 +426,7 @@ func TestController_IdleShutdown_NoStatsWatchdogNotExpired(t *testing.T) {
 	provider := &MockProvider{hostname: "test-instance"}
 	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", "", controlApi, nil)
+	controller := NewController(ctx, logger, provider, "test-region", "", &services.ExitNode, controlApi, nil)
 	defer controller.Stop()
 
 	controller.state = StateRunning
@@ -440,7 +441,7 @@ func TestController_IdleShutdown_NotRunning(t *testing.T) {
 	provider := &MockProvider{hostname: "test-instance"}
 	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", "", controlApi, nil)
+	controller := NewController(ctx, logger, provider, "test-region", "", &services.ExitNode, controlApi, nil)
 	defer controller.Stop()
 
 	// State is StateIdle (default)
@@ -457,7 +458,7 @@ func TestController_NodeStats(t *testing.T) {
 	provider := &MockProvider{hostname: "test-instance"}
 	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", "", controlApi, nil)
+	controller := NewController(ctx, logger, provider, "test-region", "", &services.ExitNode, controlApi, nil)
 	defer controller.Stop()
 
 	// Initially no stats

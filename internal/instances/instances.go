@@ -6,16 +6,18 @@ import (
 
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/anupcshan/tscloudvpn/internal/services"
 )
 
 // Creator handles instance creation and setup
 type Creator struct {
-	sshKey string
+	sshKey      string
+	serviceType *services.ServiceType
 }
 
 // NewCreator creates a new instance creator
-func NewCreator(sshKey string) *Creator {
-	return &Creator{sshKey: sshKey}
+func NewCreator(sshKey string, serviceType *services.ServiceType) *Creator {
+	return &Creator{sshKey: sshKey, serviceType: serviceType}
 }
 
 // Create creates a new instance in the specified region. It obtains an auth key,
@@ -30,7 +32,7 @@ func (c *Creator) Create(
 	provider providers.Provider,
 	region string,
 ) (providers.Instance, error) {
-	authKey, err := controller.CreateKey(ctx)
+	authKey, err := controller.CreateKey(ctx, c.serviceType.Tags)
 	if err != nil {
 		return providers.Instance{}, err
 	}

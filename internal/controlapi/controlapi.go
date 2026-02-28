@@ -43,8 +43,8 @@ func (k PreauthKey) GetCLIArgs() []string {
 
 // ControlApi defines a generic interface for VPN control plane operations
 type ControlApi interface {
-	// CreateKey generates a new auth key for an untrusted, ephemeral, preauthorized device
-	CreateKey(ctx context.Context) (*PreauthKey, error)
+	// CreateKey generates a new ephemeral, preauthorized auth key with the given tags.
+	CreateKey(ctx context.Context, tags []string) (*PreauthKey, error)
 
 	// ListDevices returns all devices in the network
 	ListDevices(ctx context.Context) ([]Device, error)

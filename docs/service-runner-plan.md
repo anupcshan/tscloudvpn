@@ -528,28 +528,24 @@ Each commit is self-contained and passes all tests.
   through App → Server → Manager → Registry → Controller → Creator. Dead
   `sshKey` fields removed from all providers (Azure now uses `req.SSHKey`).
 
-- [ ] **Commit 2: Add `internal/services` package with ServiceType + ExitNode.**
+- [x] **Commit 2: Add `internal/services` package with ServiceType + ExitNode.**
   Additive only — no existing code modified. Struct definitions, `var ExitNode`,
-  `parseExitNodeStats`. No callers yet. Nothing can break.
+  `parseExitNodeStats`. No callers yet.
 
-- [ ] **Commit 3: ControlApi.CreateKey accepts tags.**
-  `CreateKey(ctx)` → `CreateKey(ctx, tags []string)`. Update tailscale.go,
-  headscale.go, both mocks. All callers pass `[]string{"tag:untrusted"}` —
-  identical behavior.
+- [x] **Commit 3: Thread ServiceType through Controller and Creator.**
+  Controller holds `*ServiceType`, uses `svc.IdleTimeout` instead of hardcoded
+  4h constant. Creator takes `*ServiceType`, uses `svc.Tags` for CreateKey.
+  `ControlApi.CreateKey` now accepts `tags []string`. Only `app.go` (tsnet
+  server) keeps hardcoded `tag:untrusted`.
 
-- [ ] **Commit 4: Provider.Hostname takes servicePrefix.**
+- [ ] **Commit 5: Provider.Hostname takes servicePrefix.**
   `Hostname(region)` → `Hostname(region, servicePrefix)`. All callers pass
   `"exit"` for now. Hostnames change from `do-nyc1` to `exit-do-nyc1`. Tests
   updated to expect new format.
 
-- [ ] **Commit 5: Provider.GetRegionHourlyEstimate takes VMRequirements.**
+- [ ] **Commit 6: Provider.GetRegionHourlyEstimate takes VMRequirements.**
   Small signature change. All providers ignore the parameter and return cheapest.
   Callers pass zero value.
-
-- [ ] **Commit 6: Thread ServiceType through Controller.**
-  Controller holds `*ServiceType`. Uses `svc.IdleTimeout` instead of hardcoded
-  4h constant. Uses `svc.StatsPath` and `svc.ParseStats`. `NewController` takes
-  the extra parameter. All callers pass `&services.ExitNode`.
 
 - [ ] **Commit 7: Thread ServiceType through Registry.**
   Registry key becomes `{service}-{provider}-{region}`. Method signatures take

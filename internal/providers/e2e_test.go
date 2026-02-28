@@ -46,7 +46,7 @@ func NewMockControlAPI() *MockControlAPI {
 	}
 }
 
-func (m *MockControlAPI) CreateKey(ctx context.Context) (*controlapi.PreauthKey, error) {
+func (m *MockControlAPI) CreateKey(ctx context.Context, tags []string) (*controlapi.PreauthKey, error) {
 	m.keyCounter++
 	return &controlapi.PreauthKey{
 		Key:        fmt.Sprintf("test-key-%d", m.keyCounter),
@@ -241,7 +241,7 @@ func testProviderLifecycle(t *testing.T, testConfig *E2ETestConfig, providerName
 	var instanceID providers.Instance
 	t.Run("CreateInstance", func(t *testing.T) {
 		// Create preauth key
-		key, err := testConfig.ControlAPI.CreateKey(ctx)
+		key, err := testConfig.ControlAPI.CreateKey(ctx, []string{"tag:untrusted"})
 		if err != nil {
 			t.Fatalf("Failed to create preauth key: %v", err)
 		}

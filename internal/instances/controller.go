@@ -10,6 +10,7 @@ import (
 
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/anupcshan/tscloudvpn/internal/services"
 	"github.com/anupcshan/tscloudvpn/internal/tsclient"
 )
 
@@ -171,17 +172,11 @@ type InstanceStatus struct {
 	HourlyCost float64    // actual hourly cost of the instance
 }
 
-const (
-	// idleShutdownThreshold is how long a node can be idle (no forwarded traffic)
-	// before the control plane deletes it.
-	idleShutdownThreshold = 4 * time.Hour
-
-	// statsWatchdogThreshold is how long the control plane waits for a node to
-	// report stats before treating it as idle. This is measured from when the
-	// control plane started watching the node (not the node's age), so restarts
-	// give every node a fresh window.
-	statsWatchdogThreshold = 8 * time.Hour
-)
+// statsWatchdogThreshold is how long the control plane waits for a node to
+// report stats before treating it as idle. This is measured from when the
+// control plane started watching the node (not the node's age), so restarts
+// give every node a fresh window.
+const statsWatchdogThreshold = 8 * time.Hour
 
 // Controller manages the entire lifecycle of a single instance
 type Controller struct {
@@ -192,6 +187,7 @@ type Controller struct {
 	provider              providers.Provider
 	region                string
 	sshKey                string
+	serviceType           *services.ServiceType
 	controlApi            controlapi.ControlApi
 	tsClient              tsclient.TailscaleClient
 	ping                  *PingHistory
@@ -217,6 +213,7 @@ func NewController(
 	provider providers.Provider,
 	region string,
 	sshKey string,
+	serviceType *services.ServiceType,
 	controlApi controlapi.ControlApi,
 	tsClient tsclient.TailscaleClient,
 ) *Controller {
@@ -229,6 +226,7 @@ func NewController(
 		provider:      provider,
 		region:        region,
 		sshKey:        sshKey,
+		serviceType:   serviceType,
 		controlApi:    controlApi,
 		tsClient:      tsClient,
 		ping:          NewPingHistory(),
@@ -255,7 +253,7 @@ func (c *Controller) Create() error {
 	c.launchedAt = time.Now()
 	c.mu.Unlock()
 
-	creator := NewCreator(c.sshKey)
+	creator := NewCreator(c.sshKey, c.serviceType)
 	instanceID, err := creator.Create(c.ctx, c.logger, c.controlApi, c.provider, c.region)
 	if err != nil {
 		c.mu.Lock()
@@ -380,9 +378,14 @@ func (c *Controller) shouldIdleShutdown() bool {
 		return false
 	}
 
+	// No idle shutdown if the service type doesn't define a timeout
+	if c.serviceType.IdleTimeout == 0 {
+		return false
+	}
+
 	if c.nodeStats != nil {
 		// Stats received: idle if no forwarded traffic for threshold duration
-		return time.Since(c.nodeStats.LastActive) > idleShutdownThreshold
+		return time.Since(c.nodeStats.LastActive) > c.serviceType.IdleTimeout
 	}
 
 	// No stats ever received: watchdog timer

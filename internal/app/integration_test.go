@@ -153,7 +153,7 @@ func testCreateRealInstance(t *testing.T, ctx context.Context, app *app.App, cfg
 	}
 
 	// Create a preauth key for the instance
-	key, err := controller.CreateKey(ctx)
+	key, err := controller.CreateKey(ctx, []string{"tag:untrusted"})
 	if err != nil {
 		t.Fatalf("Failed to create auth key: %v", err)
 	}
@@ -361,7 +361,7 @@ func testFullNetworkWorkflow(t *testing.T, ctx context.Context, app *app.App, cf
 		t.Fatalf("Failed to get controller: %v", err)
 	}
 
-	key, err := controller.CreateKey(ctx)
+	key, err := controller.CreateKey(ctx, []string{"tag:untrusted"})
 	if err != nil {
 		t.Fatalf("Failed to create auth key: %v", err)
 	}
