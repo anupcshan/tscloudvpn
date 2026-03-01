@@ -35,11 +35,25 @@ boundaries are flexible.
   a `CreateRequest` with VM requirements, user-data, and hostname. Service
   logic lives in the orchestration layer above.
 
-- **Hostname convention:** `{service}-{name?}-{provider}-{region}`.
-  - Exit node: `exit-do-nyc1`
-  - Named file server: `files-photos-gcp-us-central1`
-  - Android emulator: `emu-myphone-ec2-us-west-2`
-  - Multi-instance suffix when needed: `emu-myphone-ec2-us-west-2-1`
+- **Hostnames are user-friendly, not parsed for identity.**
+  - Exit nodes: `do-nyc1` (unchanged — region IS the identity)
+  - Named services: user-chosen, e.g. `pixel`, `myproject`, `work-backup`
+  - No service prefix required. Hostname is for humans, not machines.
+
+- **Discovery via Tailscale tags + stats endpoint.**
+  - All tscloudvpn-managed nodes get a shared tag (e.g., `tag:tscloudvpn`),
+    defined in `ServiceType.Tags`.
+  - Discovery filters Tailscale peers by tag (skips untagged personal devices).
+  - The stats/identity endpoint on port 8245 reports full identity:
+    service type, provider, region, name.
+  - No hostname parsing needed. No local state needed.
+  - Per-service tags (e.g., `tag:tscloudvpn-exit`) enable per-service ACL
+    policies like autoApprovers for exit routes.
+
+- **Stats/identity endpoint on port 8245.** All managed VMs serve a JSON
+  endpoint at `http://{tailscale-ip}:8245/stats.json` with identity +
+  metrics. Port 80 is left free for the actual service (filebrowser,
+  Jupyter, code-server, etc.).
 
 - **Persistence via cloudnbd + R2.** cloudnbd runs on the VM itself (not the
   tscloudvpn host) so tscloudvpn is not in the data path and is not a SPOF.
@@ -348,17 +362,32 @@ have no name). Examples:
 4. Delete VM from cloud provider
 5. Remove device from Tailscale
 
-### Stats endpoint contract
+### Stats/identity endpoint contract
 
-All services expose the same JSON structure on their stats path:
+All managed VMs serve `http://{tailscale-ip}:8245/stats.json` with:
 
 ```json
-{"last_active": <unix_timestamp>, ...service-specific fields...}
+{
+  "identity": {
+    "service": "exit",
+    "provider": "do",
+    "region": "nyc1",
+    "name": ""
+  },
+  "last_active": <unix_timestamp>,
+  ...service-specific fields (forwarded_bytes, adb_clients, etc.)...
+}
 ```
+
+The `identity` block is static (written at boot from init script template
+vars). It is the authoritative source for mapping a Tailscale peer to a
+service type, provider, and region — no hostname parsing needed.
 
 The `last_active` field is the universal idle detection signal.
 `ServiceType.ParseStats` can extract additional service-specific metrics
 for display in the UI, but idle shutdown only looks at `last_active`.
+
+Port 8245 is a fixed convention. Port 80 is left free for the service itself.
 
 ---
 
@@ -432,90 +461,28 @@ CreateKey(ctx context.Context, tags []string) (*PreauthKey, error)
 - `RenderInitScript(svc ServiceType, hostname, tailscaleArgs, sshKey string) (string, error)`
   helper that templates the init script
 
-**internal/providers/provider.go** ✅ done
-- `CreateRequest{Region, UserData, SSHKey}` struct added
-- `Provider.CreateInstance(ctx, req CreateRequest)` signature
-- `RenderUserData` helper added
-- `InitData` embed remains (will be referenced by ExitNode's InitScript field)
-- Remaining: `Hostname` and `GetRegionHourlyEstimate` signature changes (commits 4-5)
+**internal/providers/** ✅ done
+- `CreateRequest{Region, UserData, SSHKey}` struct, `RenderUserData` helper
+- `CreateInstance(ctx, req CreateRequest)` — providers no longer template init scripts
+- Dead `sshKey` fields removed (Azure uses `req.SSHKey`)
+- `Provider.Hostname` and `GetRegionHourlyEstimate` signatures unchanged (no
+  longer planned to change — hostname is for humans, not identity)
 
-**internal/providers/{do,ec2,gcp,azure,hetzner,linode,vultr}/** ✅ done
-- `CreateInstance(ctx, req CreateRequest)` — template execution removed,
-  uses `req.Region`, `req.UserData`, `req.SSHKey` (Azure only)
-- Dead `sshKey` struct fields removed from all providers
-- Remaining: `Hostname(region, servicePrefix)` and
-  `GetRegionHourlyEstimate(region, VMRequirements)` (commits 4-5)
+**internal/controlapi/** ✅ done
+- `CreateKey(ctx, tags []string)` — tags from ServiceType, not hardcoded
 
-**internal/providers/fake/fake.go** ✅ done
+**internal/instances/instances.go** (Creator) ✅ done
+- Renders init script, builds CreateRequest, uses `svc.Tags` for CreateKey
 
-**internal/controlapi/controlapi.go** — commit 3
-`CreateKey(ctx, tags []string)` signature.
+**internal/instances/controller.go** ✅ done
+- Holds `*ServiceType`, uses `svc.IdleTimeout` for idle shutdown
 
-**internal/controlapi/tailscale.go** — commit 3
-Use `tags` parameter instead of hardcoded `tag:untrusted`.
+**internal/instances/registry.go** — commit 6
+- Key becomes `{service}-{provider}-{region}`
+- Discovery changes to tag-based + stats identity (commits 4-5)
 
-**internal/controlapi/headscale.go** — commit 3
-Use `tags` parameter similarly.
-
-**internal/instances/instances.go** (Creator) ✅ done (partially)
-- Creator renders init script via `providers.RenderUserData` and builds
-  `CreateRequest`. SSH key threaded through from Registry.
-- Remaining: use `svc.Tags` for CreateKey (commit 3), use ServiceType's
-  InitScript instead of global `InitData` (commit 6)
-
-**internal/instances/controller.go**
-- New field: `serviceType *services.ServiceType`
-- `NewController` takes `*services.ServiceType` parameter
-- `shouldIdleShutdown()` uses `c.serviceType.IdleTimeout` (0 = no idle shutdown)
-- `fetchStats()` uses `c.serviceType.StatsPath` (skip if "")
-- Stats parsing uses `c.serviceType.ParseStats` (skip if nil)
-- `monitorHealth()` gets hostname via `provider.Hostname(region, svc.Name)`
-
-**internal/instances/registry.go**
-- `CreateInstance(ctx, providerName, region string, svc *services.ServiceType)`
-- `DeleteInstance(providerName, region string, svc *services.ServiceType)`
-- `GetInstanceStatus(providerName, region string, svc *services.ServiceType)`
-- Registry key: `fmt.Sprintf("%s-%s-%s", svc.Name, providerName, region)`
-- `discoverInstances` matches hostnames against known service name prefixes
-  (for Phase 0a, only "exit-" is recognized)
-
-**internal/instances/gc.go**
-- Hostname matching updated for `{service}-{provider}-{region}` format
-
-**internal/server/manager.go**
-- Routes: `/providers/{provider}/services/{service}/regions/{region}` for
-  PUT/DELETE. Keep old routes as aliases pointing to "exit" service for
-  backward compat during transition.
-- `GetStatus` includes service type in mappedRegion
-- SSE event keys include service prefix
-
-**internal/app/e2e_test.go**
-- `MockControlAPI.CreateKey` takes `tags` parameter
-- `TestHarness.CreateInstance` / `DeleteInstance` URL paths updated
-- Hostname expectations updated (e.g., `"exit-fake-fake-us-east"`)
-
-**internal/app/scenario_test.go**
-- Same hostname changes
-
-**internal/instances/controller_test.go**
-- `MockProvider` updated for new interface
-- `MockControlApi.CreateKey` takes tags
-- Controller tests pass ServiceType
-
-### Implementation order
-
-1. ✅ Create branch `service-runner`
-2. Add `internal/services/service.go` — ServiceType + ExitNode + helpers
-3. Update `Provider` interface + `CreateRequest` in provider.go
-4. Update `ControlApi.CreateKey` signature + implementations
-5. Update each provider impl (7 real + fake) — mechanical change
-6. Update Creator to use ServiceType for templating
-7. Update Controller to hold ServiceType, use idle/stats config
-8. Update Registry — key format, method signatures
-9. Update GC — hostname matching
-10. Update Manager + routes
-11. Fix all test files
-12. Run full test suite, verify zero regression
+**internal/server/manager.go** — commit 7
+- Routes include service type, UI shows service label
 
 ### Commit sequence
 
@@ -538,30 +505,25 @@ Each commit is self-contained and passes all tests.
   `ControlApi.CreateKey` now accepts `tags []string`. Only `app.go` (tsnet
   server) keeps hardcoded `tag:untrusted`.
 
-- [ ] **Commit 5: Provider.Hostname takes servicePrefix.**
-  `Hostname(region)` → `Hostname(region, servicePrefix)`. All callers pass
-  `"exit"` for now. Hostnames change from `do-nyc1` to `exit-do-nyc1`. Tests
-  updated to expect new format.
+- [ ] **Commit 4: Stats endpoint identity + port 8245.**
+  Add identity block to stats JSON. Move stats server from port 80 to 8245
+  in install.sh.tmpl. Update FetchNodeStats URL. Init script templates
+  identity fields from creation-time variables. No hostname changes needed.
 
-- [ ] **Commit 6: Provider.GetRegionHourlyEstimate takes VMRequirements.**
-  Small signature change. All providers ignore the parameter and return cheapest.
-  Callers pass zero value.
+- [ ] **Commit 5: Tag-based discovery.**
+  Discovery filters Tailscale peers by tag (any tag from known service types).
+  For tagged peers without a controller, fetch stats endpoint to learn
+  identity (service, provider, region). Create appropriate controller.
+  Replaces hostname-matching discovery. Hostname format unchanged.
 
-- [ ] **Commit 7: Thread ServiceType through Registry.**
-  Registry key becomes `{service}-{provider}-{region}`. Method signatures take
-  `*ServiceType`. Discovery matches hostname prefix. GC updated.
+- [ ] **Commit 6: Thread ServiceType through Registry.**
+  Registry key becomes `{service}-{provider}-{region}`. Method signatures
+  take `*ServiceType`. GC uses cloud provider tags (unchanged) + stats
+  identity for matching.
 
-- [ ] **Commit 8: Update Manager + API routes.**
+- [ ] **Commit 7: Update Manager + API routes.**
   Routes include service type. SSE events include service prefix. UI shows
   service label.
-
-### Hostname migration
-
-Existing running exit nodes have hostnames like `do-nyc1`. After this change,
-new ones will be `exit-do-nyc1`. Running nodes won't be discovered after the
-update (old hostname doesn't match new pattern). Since exit nodes are ephemeral
-and cheap, this is acceptable — they'll idle-shutdown or be GC'd, and new
-creates will use the new format.
 
 ### ZFS for persistent services
 
