@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/netip"
 	"os"
 	"slices"
 	"sync"
@@ -14,6 +15,8 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/anupcshan/tscloudvpn/internal/providers/fake"
+	"github.com/anupcshan/tscloudvpn/internal/services"
+	"github.com/anupcshan/tscloudvpn/internal/tsclient"
 	"github.com/stretchr/testify/require"
 )
 
@@ -500,24 +503,37 @@ func TestIntegration_RegistryWithFakeProvider_DiscoverExistingInstances(t *testi
 	}
 
 	logger := log.New(os.Stderr, "[TEST] ", log.LstdFlags)
+	tsClient := tsclient.NewMockClient()
 	controlApi := NewIntegrationTestControlApi()
 
-	// Pre-populate control API with existing devices
+	// Pre-populate control API with existing devices (with service tags)
 	controlApi.AddDevice(controlapi.Device{
 		Hostname: "fake-fake-us-east",
 		Created:  time.Now().Add(-time.Hour),
+		Tags:     services.ExitNode.Tags,
 	})
 	controlApi.AddDevice(controlapi.Device{
 		Hostname: "fake-fake-eu-central",
 		Created:  time.Now().Add(-30 * time.Minute),
+		Tags:     services.ExitNode.Tags,
 	})
+
+	// Set up identity responses for discovery
+	tsClient.SetNodeIdentity("fake-fake-us-east", &tsclient.NodeIdentity{
+		Service: "exit", Provider: "fake", Region: "fake-us-east",
+	})
+	tsClient.SetNodeIdentity("fake-fake-eu-central", &tsclient.NodeIdentity{
+		Service: "exit", Provider: "fake", Region: "fake-eu-central",
+	})
+	tsClient.AddPeer("fake-fake-us-east", netip.MustParseAddr("100.64.0.1"))
+	tsClient.AddPeer("fake-fake-eu-central", netip.MustParseAddr("100.64.0.2"))
 
 	fakeProvider := fake.NewWithConfig(fake.DefaultConfig())
 	providers := map[string]providers.Provider{
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, "", controlApi, nil, providers)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providers)
 	defer registry.Shutdown()
 	registry.Start(context.Background())
 
@@ -620,6 +636,7 @@ func TestIntegration_RegistryDelete_CloudDeletionFailure_StillSucceeds(t *testin
 
 	ctx := context.Background()
 	logger := log.New(os.Stderr, "[TEST] ", log.LstdFlags)
+	tsClient := tsclient.NewMockClient()
 	controlApi := NewIntegrationTestControlApi()
 
 	// Create a mock provider that fails on delete
@@ -633,13 +650,20 @@ func TestIntegration_RegistryDelete_CloudDeletionFailure_StillSucceeds(t *testin
 		"mock": mockProvider,
 	}
 
-	// Pre-add device to control API (simulates discovered instance)
+	// Pre-add device to control API (simulates discovered instance, with tags)
 	controlApi.AddDevice(controlapi.Device{
 		Hostname: "mock-test-region",
 		Created:  time.Now().Add(-time.Minute),
+		Tags:     services.ExitNode.Tags,
 	})
 
-	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
+	// Set up identity for discovery
+	tsClient.SetNodeIdentity("mock-test-region", &tsclient.NodeIdentity{
+		Service: "exit", Provider: "mock", Region: "test-region",
+	})
+	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
+
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
 	defer registry.Shutdown()
 
 	// Discover the existing instance so it's tracked in the registry

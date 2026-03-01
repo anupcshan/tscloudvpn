@@ -10,17 +10,19 @@ import (
 
 // MockClient is a test implementation of TailscaleClient with controllable peer state.
 type MockClient struct {
-	mu          sync.RWMutex
-	peers       map[string]PeerInfo
-	pingLatency time.Duration
-	nodeStats   *NodeStatsResult // if set, FetchNodeStats returns this
+	mu             sync.RWMutex
+	peers          map[string]PeerInfo
+	pingLatency    time.Duration
+	nodeStats      *NodeStatsResult           // if set, FetchNodeStats returns this
+	nodeIdentities map[string]*NodeIdentity   // per-hostname identity responses
 }
 
 // NewMockClient creates a MockClient with no peers and 10ms default ping latency.
 func NewMockClient() *MockClient {
 	return &MockClient{
-		peers:       make(map[string]PeerInfo),
-		pingLatency: 10 * time.Millisecond,
+		peers:          make(map[string]PeerInfo),
+		pingLatency:    10 * time.Millisecond,
+		nodeIdentities: make(map[string]*NodeIdentity),
 	}
 }
 
@@ -86,4 +88,21 @@ func (m *MockClient) FetchNodeStats(ctx context.Context, hostname string) (NodeS
 		return *m.nodeStats, nil
 	}
 	return NodeStatsResult{}, fmt.Errorf("no stats available")
+}
+
+// SetNodeIdentity sets the identity response for a specific hostname.
+func (m *MockClient) SetNodeIdentity(hostname string, identity *NodeIdentity) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nodeIdentities[hostname] = identity
+}
+
+func (m *MockClient) FetchNodeIdentity(ctx context.Context, hostname string) (NodeIdentity, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if id, ok := m.nodeIdentities[hostname]; ok && id != nil {
+		return *id, nil
+	}
+	return NodeIdentity{}, fmt.Errorf("no identity available for %s", hostname)
 }

@@ -324,7 +324,21 @@ func (r *Registry) Shutdown() {
 	}
 }
 
+// hasServiceTag returns true if the device has any tag matching a known service type.
+func hasServiceTag(device controlapi.Device) bool {
+	for _, tag := range device.Tags {
+		for _, svcTag := range services.ExitNode.Tags {
+			if tag == svcTag {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // discoverInstances finds and registers instances not yet tracked by this registry.
+// It filters control API devices by service tags, then fetches the identity
+// endpoint from untracked devices to learn their service/provider/region.
 func (r *Registry) discoverInstances(ctx context.Context) {
 	// Get all devices from control API
 	devices, err := r.controlApi.ListDevices(ctx)
@@ -333,61 +347,77 @@ func (r *Registry) discoverInstances(ctx context.Context) {
 		return
 	}
 
-	// Create hostname to device mapping
-	deviceMap := make(map[providers.HostName]controlapi.Device)
-	for _, device := range devices {
-		deviceMap[providers.HostName(device.Hostname)] = device
+	// Build set of hostnames already tracked by controllers
+	r.mu.RLock()
+	trackedHostnames := make(map[providers.HostName]bool, len(r.controllers))
+	for _, controller := range r.controllers {
+		trackedHostnames[controller.hostname] = true
 	}
+	r.mu.RUnlock()
 
-	// Check each provider-region combination
-	for providerName, provider := range r.providers {
-		regions, err := provider.ListRegions(ctx)
-		if err != nil {
-			r.logger.Printf("Failed to list regions for provider %s: %v", providerName, err)
+	for _, device := range devices {
+		hostname := providers.HostName(device.Hostname)
+
+		// Skip devices we're already tracking
+		if trackedHostnames[hostname] {
 			continue
 		}
 
-		for _, region := range regions {
-			hostname := provider.Hostname(region.Code)
-			key := fmt.Sprintf("%s-%s", providerName, region.Code)
-
-			// Check if device exists for this hostname
-			if device, exists := deviceMap[hostname]; exists {
-				r.mu.Lock()
-				// Only create controller if one doesn't already exist
-				if _, alreadyExists := r.controllers[key]; !alreadyExists {
-					r.logger.Printf("Discovered instance: %s", hostname)
-
-					// Look up actual instance cost from the cloud provider
-					var hourlyCost float64
-					if cloudInstances, err := provider.ListInstances(ctx, region.Code); err == nil {
-						for _, inst := range cloudInstances {
-							if inst.Hostname == string(hostname) {
-								hourlyCost = inst.HourlyCost
-								break
-							}
-						}
-					}
-
-					// Create controller for monitoring only
-					controller := NewController(context.Background(), r.logger, hostname, &services.ExitNode, r.tsClient)
-					controller.onIdleShutdown = r.makeIdleShutdownCallback(providerName, region.Code)
-					controller.onPeerGone = r.makePeerGoneCallback(providerName, region.Code)
-
-					// Mark as running and set creation time and actual cost
-					controller.mu.Lock()
-					controller.state = StateRunning
-					controller.createdAt = device.Created
-					controller.hourlyCost = hourlyCost
-					controller.mu.Unlock()
-
-					// Start health monitoring
-					controller.Start()
-
-					r.controllers[key] = controller
-				}
-				r.mu.Unlock()
-			}
+		// Skip devices without a known service tag
+		if !hasServiceTag(device) {
+			continue
 		}
+
+		// Fetch identity to learn service/provider/region
+		identity, err := r.tsClient.FetchNodeIdentity(ctx, device.Hostname)
+		if err != nil {
+			// Node not ready yet (still booting) or not a tscloudvpn node.
+			// Will retry on next discovery cycle.
+			continue
+		}
+
+		// Check that the provider is one we know about
+		provider, exists := r.providers[identity.Provider]
+		if !exists {
+			continue
+		}
+
+		key := fmt.Sprintf("%s-%s", identity.Provider, identity.Region)
+
+		r.mu.Lock()
+		// Double-check under write lock
+		if _, alreadyExists := r.controllers[key]; !alreadyExists {
+			r.logger.Printf("Discovered instance: %s (service=%s, provider=%s, region=%s)",
+				hostname, identity.Service, identity.Provider, identity.Region)
+
+			// Look up actual instance cost from the cloud provider
+			var hourlyCost float64
+			if cloudInstances, err := provider.ListInstances(ctx, identity.Region); err == nil {
+				for _, inst := range cloudInstances {
+					if inst.Hostname == string(hostname) {
+						hourlyCost = inst.HourlyCost
+						break
+					}
+				}
+			}
+
+			// Create controller for monitoring only
+			controller := NewController(context.Background(), r.logger, hostname, &services.ExitNode, r.tsClient)
+			controller.onIdleShutdown = r.makeIdleShutdownCallback(identity.Provider, identity.Region)
+			controller.onPeerGone = r.makePeerGoneCallback(identity.Provider, identity.Region)
+
+			// Mark as running and set creation time and actual cost
+			controller.mu.Lock()
+			controller.state = StateRunning
+			controller.createdAt = device.Created
+			controller.hourlyCost = hourlyCost
+			controller.mu.Unlock()
+
+			// Start health monitoring
+			controller.Start()
+
+			r.controllers[key] = controller
+		}
+		r.mu.Unlock()
 	}
 }

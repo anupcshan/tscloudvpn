@@ -25,6 +25,14 @@ type NodeStatsResult struct {
 	LastActive     time.Time
 }
 
+// NodeIdentity contains the static identity of a managed VM,
+// written at boot by the init script and served at /identity.json.
+type NodeIdentity struct {
+	Service  string `json:"service"`
+	Provider string `json:"provider"`
+	Region   string `json:"region"`
+}
+
 // TailscaleClient abstracts the Tailscale local API client.
 type TailscaleClient interface {
 	// GetPeers returns all currently visible Tailscale peers.
@@ -35,4 +43,8 @@ type TailscaleClient interface {
 
 	// FetchNodeStats fetches traffic statistics from an exit node via tailscale serve.
 	FetchNodeStats(ctx context.Context, hostname string) (NodeStatsResult, error)
+
+	// FetchNodeIdentity fetches the static identity of a managed VM from its
+	// identity endpoint (port 8245/identity.json).
+	FetchNodeIdentity(ctx context.Context, hostname string) (NodeIdentity, error)
 }

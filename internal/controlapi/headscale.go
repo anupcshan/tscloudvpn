@@ -140,7 +140,7 @@ func (c *HeadscaleClient) ListDevices(ctx context.Context) ([]Device, error) {
 			LastSeen:    lastSeen,
 			IPAddrs:     m.GetIpAddresses(),
 			IsOnline:    time.Since(lastSeen) < 5*time.Minute,
-			Tags:        []string{m.GetGivenName()}, // Use given name as tag
+			Tags:        m.GetForcedTags(),
 		}
 	}
 

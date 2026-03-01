@@ -89,3 +89,28 @@ func (c *LocalClient) FetchNodeStats(ctx context.Context, hostname string) (Node
 		LastActive:     time.Unix(payload.LastActive, 0),
 	}, nil
 }
+
+func (c *LocalClient) FetchNodeIdentity(ctx context.Context, hostname string) (NodeIdentity, error) {
+	url := fmt.Sprintf("http://%s:8245/identity.json", hostname)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return NodeIdentity{}, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return NodeIdentity{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return NodeIdentity{}, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	var identity NodeIdentity
+	if err := json.NewDecoder(resp.Body).Decode(&identity); err != nil {
+		return NodeIdentity{}, err
+	}
+
+	return identity, nil
+}

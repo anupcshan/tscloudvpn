@@ -235,19 +235,32 @@ func TestRegistry_GetAllInstanceStatuses(t *testing.T) {
 
 func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 	logger := log.Default()
+	tsClient := tsclient.NewMockClient()
 	controlApi := &MockControlApi{
-		// Pre-populate with existing devices
+		// Pre-populate with existing devices (with service tags)
 		devices: []controlapi.Device{
 			{
 				Hostname: "mock1-test-region",
 				Created:  time.Now().Add(-time.Hour), // Created 1 hour ago
+				Tags:     services.ExitNode.Tags,
 			},
 			{
 				Hostname: "mock2-other-region",
 				Created:  time.Now().Add(-30 * time.Minute), // Created 30 minutes ago
+				Tags:     services.ExitNode.Tags,
 			},
 		},
 	}
+
+	// Set up identity responses for discovery
+	tsClient.SetNodeIdentity("mock1-test-region", &tsclient.NodeIdentity{
+		Service: "exit", Provider: "mock1", Region: "test-region",
+	})
+	tsClient.SetNodeIdentity("mock2-other-region", &tsclient.NodeIdentity{
+		Service: "exit", Provider: "mock2", Region: "other-region",
+	})
+	tsClient.AddPeer("mock1-test-region", netip.MustParseAddr("100.64.0.1"))
+	tsClient.AddPeer("mock2-other-region", netip.MustParseAddr("100.64.0.2"))
 
 	providers := map[string]providers.Provider{
 		"mock1": &MockProvider{
@@ -260,7 +273,7 @@ func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, "", controlApi, nil, providers)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providers)
 	defer registry.Shutdown()
 	registry.Start(context.Background())
 
@@ -297,6 +310,7 @@ func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 
 func TestRegistry_PeriodicDiscovery(t *testing.T) {
 	logger := log.Default()
+	tsClient := tsclient.NewMockClient()
 	controlApi := &MockControlApi{
 		devices: []controlapi.Device{},
 	}
@@ -308,7 +322,13 @@ func TestRegistry_PeriodicDiscovery(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
+	// Set up identity for when the device appears
+	tsClient.SetNodeIdentity("mock-test-region", &tsclient.NodeIdentity{
+		Service: "exit", Provider: "mock", Region: "test-region",
+	})
+	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
+
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -317,10 +337,11 @@ func TestRegistry_PeriodicDiscovery(t *testing.T) {
 	registry.discoverInstances(ctx)
 	require.Equal(t, 0, len(registry.GetAllInstanceStatuses()))
 
-	// Simulate another tscloudvpn instance creating a node
+	// Simulate another tscloudvpn instance creating a node (with tags)
 	controlApi.AddDevice(controlapi.Device{
 		Hostname: "mock-test-region",
 		Created:  time.Now().Add(-time.Minute),
+		Tags:     services.ExitNode.Tags,
 	})
 
 	// Next discovery finds the new instance
@@ -335,11 +356,13 @@ func TestRegistry_PeriodicDiscovery(t *testing.T) {
 
 func TestRegistry_PeriodicDiscovery_Idempotent(t *testing.T) {
 	logger := log.Default()
+	tsClient := tsclient.NewMockClient()
 	controlApi := &MockControlApi{
 		devices: []controlapi.Device{
 			{
 				Hostname: "mock-test-region",
 				Created:  time.Now().Add(-time.Hour),
+				Tags:     services.ExitNode.Tags,
 			},
 		},
 	}
@@ -351,7 +374,12 @@ func TestRegistry_PeriodicDiscovery_Idempotent(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
+	tsClient.SetNodeIdentity("mock-test-region", &tsclient.NodeIdentity{
+		Service: "exit", Provider: "mock", Region: "test-region",
+	})
+	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
+
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -363,6 +391,83 @@ func TestRegistry_PeriodicDiscovery_Idempotent(t *testing.T) {
 
 	// Should still have exactly 1 instance
 	require.Equal(t, 1, len(registry.GetAllInstanceStatuses()))
+}
+
+func TestRegistry_Discovery_SkipsUntaggedDevices(t *testing.T) {
+	logger := log.Default()
+	tsClient := tsclient.NewMockClient()
+	controlApi := &MockControlApi{
+		devices: []controlapi.Device{
+			{
+				Hostname: "mock-test-region",
+				Created:  time.Now().Add(-time.Hour),
+				Tags:     services.ExitNode.Tags, // Tagged — should be discovered
+			},
+			{
+				Hostname: "personal-laptop",
+				Created:  time.Now().Add(-24 * time.Hour),
+				Tags:     nil, // No tags — should be skipped
+			},
+			{
+				Hostname: "other-service",
+				Created:  time.Now().Add(-2 * time.Hour),
+				Tags:     []string{"tag:other"}, // Wrong tag — should be skipped
+			},
+		},
+	}
+
+	providerMap := map[string]providers.Provider{
+		"mock": &MockProvider{
+			hostname: "mock-test-region",
+			status:   providers.InstanceStatusRunning,
+		},
+	}
+
+	tsClient.SetNodeIdentity("mock-test-region", &tsclient.NodeIdentity{
+		Service: "exit", Provider: "mock", Region: "test-region",
+	})
+	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
+
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
+	defer registry.Shutdown()
+
+	registry.discoverInstances(context.Background())
+
+	// Only the tagged device should be discovered
+	require.Equal(t, 1, len(registry.GetAllInstanceStatuses()))
+	_, err := registry.GetInstanceStatus("mock", "test-region")
+	require.NoError(t, err)
+}
+
+func TestRegistry_Discovery_SkipsUnknownProvider(t *testing.T) {
+	logger := log.Default()
+	tsClient := tsclient.NewMockClient()
+	controlApi := &MockControlApi{
+		devices: []controlapi.Device{
+			{
+				Hostname: "unknown-us-east",
+				Created:  time.Now().Add(-time.Hour),
+				Tags:     services.ExitNode.Tags,
+			},
+		},
+	}
+
+	// Identity reports a provider we don't have
+	tsClient.SetNodeIdentity("unknown-us-east", &tsclient.NodeIdentity{
+		Service: "exit", Provider: "aws", Region: "us-east-1",
+	})
+
+	providerMap := map[string]providers.Provider{
+		"mock": &MockProvider{hostname: "mock-test-region"},
+	}
+
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
+	defer registry.Shutdown()
+
+	registry.discoverInstances(context.Background())
+
+	// Should discover nothing — provider "aws" is not registered
+	require.Equal(t, 0, len(registry.GetAllInstanceStatuses()))
 }
 
 func TestController_IdleShutdown_StatsIdle(t *testing.T) {
@@ -526,6 +631,10 @@ func TestDiscoveredController_RemovedWhenPeerDisappears(t *testing.T) {
 	controlApi.AddDevice(controlapi.Device{
 		Hostname: "mock-test-region",
 		Created:  time.Now().Add(-time.Minute),
+		Tags:     services.ExitNode.Tags,
+	})
+	tsClient.SetNodeIdentity("mock-test-region", &tsclient.NodeIdentity{
+		Service: "exit", Provider: "mock", Region: "test-region",
 	})
 	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
 
@@ -561,6 +670,10 @@ func TestDiscoveredController_StaleStatsNotAppliedToNewInstance(t *testing.T) {
 	controlApi.AddDevice(controlapi.Device{
 		Hostname: "mock-test-region",
 		Created:  time.Now().Add(-time.Minute),
+		Tags:     services.ExitNode.Tags,
+	})
+	tsClient.SetNodeIdentity("mock-test-region", &tsclient.NodeIdentity{
+		Service: "exit", Provider: "mock", Region: "test-region",
 	})
 	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
 	tsClient.SetNodeStats(&tsclient.NodeStatsResult{
@@ -624,6 +737,10 @@ func TestDiscoveredController_IdleShutdownCallbackNotFiredAfterPeerGone(t *testi
 	controlApi.AddDevice(controlapi.Device{
 		Hostname: "mock-test-region",
 		Created:  time.Now().Add(-time.Minute),
+		Tags:     services.ExitNode.Tags,
+	})
+	tsClient.SetNodeIdentity("mock-test-region", &tsclient.NodeIdentity{
+		Service: "exit", Provider: "mock", Region: "test-region",
 	})
 	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
 	tsClient.SetNodeStats(&tsclient.NodeStatsResult{

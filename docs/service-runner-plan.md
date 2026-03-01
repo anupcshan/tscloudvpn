@@ -512,10 +512,14 @@ Each commit is self-contained and passes all tests.
   region. Stats HTTP server moved from port 80 to 8245. RenderUserData
   accepts identity parameters. FetchNodeStats URL updated to port 8245.
 
-- [ ] **Commit 6: Tag-based discovery.**
-  Discovery filters Tailscale peers by tag. For tagged peers without a
-  controller, fetch identity endpoint to learn service/provider/region.
-  Replaces hostname-matching discovery.
+- [x] **Commit 6: Tag-based discovery.**
+  Discovery filters control API devices by service tags. For tagged
+  devices without a controller, fetches the identity endpoint
+  (`/identity.json` on port 8245) to learn service/provider/region.
+  Replaces hostname-matching discovery (no more iterating all
+  provider-region combos). `FetchNodeIdentity` added to
+  `TailscaleClient` interface. Headscale `ListDevices` fixed to use
+  `GetForcedTags()` instead of `GetGivenName()` for device tags.
 
 - [ ] **Commit 7: Thread ServiceType through Registry + Manager.**
   Registry key becomes `{service}-{provider}-{region}`. API routes include
