@@ -395,93 +395,87 @@ Port 8245 is a fixed convention. Port 80 is left free for the service itself.
 
 All work on branch `service-runner`.
 
-### Provider interface — before and after
+### Interface changes done so far
 
-Before:
-```go
-type Provider interface {
-    CreateInstance(ctx context.Context, region string, key *controlapi.PreauthKey) (Instance, error)
-    DeleteInstance(ctx context.Context, instanceID Instance) error
-    GetInstanceStatus(ctx context.Context, region string) (InstanceStatus, error)
-    ListInstances(ctx context.Context, region string) ([]Instance, error)
-    ListRegions(ctx context.Context) ([]Region, error)
-    Hostname(region string) HostName
-    GetRegionHourlyEstimate(region string) float64
-}
-```
-
-After:
+**Provider interface** ✅ done
 ```go
 type CreateRequest struct {
-    Region       string
-    Hostname     string         // fully formed: "exit-do-nyc1"
-    UserData     string         // rendered init script
-    Requirements VMRequirements // from ServiceType (zero value = cheapest)
+    Region   string
+    UserData string // Rendered init script
+    SSHKey   string // SSH public key (Azure OS profile)
 }
 
 type Provider interface {
     CreateInstance(ctx context.Context, req CreateRequest) (Instance, error)
-    DeleteInstance(ctx context.Context, instanceID Instance) error
-    GetInstanceStatus(ctx context.Context, region string) (InstanceStatus, error)
-    ListInstances(ctx context.Context, region string) ([]Instance, error)
-    ListRegions(ctx context.Context) ([]Region, error)
-    Hostname(region string, servicePrefix string) HostName
-    GetRegionHourlyEstimate(region string, reqs VMRequirements) float64
+    // ... rest unchanged
 }
 ```
 
-Key changes:
-- `CreateInstance` takes `CreateRequest`. Provider no longer templates the init
-  script or generates the hostname — both come from the caller.
-- `Hostname` takes a `servicePrefix` so it can produce `exit-do-nyc1`.
-- `GetRegionHourlyEstimate` takes `VMRequirements`. For Phase 0a all providers
-  ignore the requirements and return cheapest price (same as today). Becomes
-  meaningful in Phase 1 when the emulator needs larger instances.
+`Hostname` and `GetRegionHourlyEstimate` signatures are NOT changing.
+Hostnames are for humans, not identity. Discovery uses tags + stats endpoint.
 
-### ControlApi.CreateKey — before and after
-
-Before:
-```go
-CreateKey(ctx context.Context) (*PreauthKey, error)
-// Hardcodes tags: []string{"tag:untrusted"}
-```
-
-After:
+**ControlApi.CreateKey** ✅ done
 ```go
 CreateKey(ctx context.Context, tags []string) (*PreauthKey, error)
-// Caller passes svc.Tags
 ```
 
-### Changes per file
+### Controller refactor (next)
 
-**internal/services/service.go** (NEW package)
-- `ServiceType`, `VMRequirements`, `PersistenceConfig` structs
-- `var ExitNode` definition with current exit-node behavior
-- `parseExitNodeStats([]byte) (time.Time, error)` — extracted from tsclient
-- `RenderInitScript(svc ServiceType, hostname, tailscaleArgs, sshKey string) (string, error)`
-  helper that templates the init script
+Today, Controller is a God object: state tracker + health monitor + instance
+creator + instance deleter. It holds `controlApi`, `provider`, `sshKey`,
+`serviceType` — most of which it only uses once (at creation time) and then
+passes through.
 
-**internal/providers/** ✅ done
-- `CreateRequest{Region, UserData, SSHKey}` struct, `RenderUserData` helper
-- `CreateInstance(ctx, req CreateRequest)` — providers no longer template init scripts
-- Dead `sshKey` fields removed (Azure uses `req.SSHKey`)
-- `Provider.Hostname` and `GetRegionHourlyEstimate` signatures unchanged (no
-  longer planned to change — hostname is for humans, not identity)
+Target: Controller becomes purely state + health monitor. Registry handles
+instance creation and deletion directly (it already has all the context).
 
-**internal/controlapi/** ✅ done
-- `CreateKey(ctx, tags []string)` — tags from ServiceType, not hardcoded
+**Before:**
+```
+Registry.CreateInstance(providerName, region)
+  → creates Controller(provider, region, sshKey, serviceType, controlApi, tsClient)
+  → Controller.Create()
+    → Creator.Create(controlApi, provider, region)  // Controller passes through
+```
 
-**internal/instances/instances.go** (Creator) ✅ done
-- Renders init script, builds CreateRequest, uses `svc.Tags` for CreateKey
+**After:**
+```
+Registry.CreateInstance(providerName, region)
+  → renders init script, calls controlApi.CreateKey, provider.CreateInstance
+  → creates Controller(hostname, serviceType, tsClient)  // monitor only
+```
 
-**internal/instances/controller.go** ✅ done
-- Holds `*ServiceType`, uses `svc.IdleTimeout` for idle shutdown
+Controller loses: `provider`, `controlApi`, `sshKey`, `Creator`.
+Controller keeps: `serviceType` (idle timeout, stats), `tsClient` (pings),
+  hostname, state, ping history.
 
-**internal/instances/registry.go** — commit 6
-- Key becomes `{service}-{provider}-{region}`
-- Discovery changes to tag-based + stats identity (commits 4-5)
+Deletion moves similarly: Registry calls `controlApi.DeleteDevice` and
+`provider.DeleteInstance` directly, then calls `controller.Stop()`.
 
-**internal/server/manager.go** — commit 7
+### Changes per file — remaining
+
+**internal/instances/controller.go** — next commit
+- Remove `provider`, `controlApi`, `sshKey` fields
+- Remove `Create()` and `Delete()` methods
+- Constructor takes hostname + serviceType + tsClient only
+- Pure health monitor: ping loop, stats fetch, idle detection
+
+**internal/instances/instances.go** — next commit
+- Creator called by Registry directly, not by Controller
+- Or inline creation logic into Registry (Creator may become unnecessary)
+
+**internal/instances/registry.go** — next commit
+- `CreateInstance` does: render init script → create key → create instance
+  → create Controller for monitoring
+- `DeleteInstance` does: delete from Tailscale → delete from cloud → stop Controller
+
+**internal/providers/install.sh.tmpl** — identity endpoint commit
+- Port 80 → 8245, write identity.json at boot, stats.json stays separate
+
+**internal/tsclient/** — identity endpoint commit
+- Port 8245 in FetchNodeStats URL
+- Add FetchNodeIdentity method + NodeIdentity struct
+
+**internal/server/manager.go** — later
 - Routes include service type, UI shows service label
 
 ### Commit sequence
@@ -505,25 +499,27 @@ Each commit is self-contained and passes all tests.
   `ControlApi.CreateKey` now accepts `tags []string`. Only `app.go` (tsnet
   server) keeps hardcoded `tag:untrusted`.
 
-- [ ] **Commit 4: Stats endpoint identity + port 8245.**
-  Add identity block to stats JSON. Move stats server from port 80 to 8245
-  in install.sh.tmpl. Update FetchNodeStats URL. Init script templates
-  identity fields from creation-time variables. No hostname changes needed.
+- [ ] **Commit 4: Move instance creation/deletion from Controller to Registry.**
+  Controller becomes purely state + health monitor. Registry handles the full
+  create flow (render init script → create key → create cloud instance) and
+  delete flow (delete Tailscale device → delete cloud instance). Controller
+  loses `provider`, `controlApi`, `sshKey`, `Creator`. This also eliminates
+  the `providerName` pass-through problem.
 
-- [ ] **Commit 5: Tag-based discovery.**
-  Discovery filters Tailscale peers by tag (any tag from known service types).
-  For tagged peers without a controller, fetch stats endpoint to learn
-  identity (service, provider, region). Create appropriate controller.
-  Replaces hostname-matching discovery. Hostname format unchanged.
+- [ ] **Commit 5: Stats/identity endpoint on port 8245.**
+  Split stats endpoint into identity.json (static, written at boot) and
+  stats.json (dynamic, updated every 30s). Move from port 80 to 8245.
+  Registry has `providerName` directly — no pass-through needed.
+  Add FetchNodeIdentity to TailscaleClient.
 
-- [ ] **Commit 6: Thread ServiceType through Registry.**
-  Registry key becomes `{service}-{provider}-{region}`. Method signatures
-  take `*ServiceType`. GC uses cloud provider tags (unchanged) + stats
-  identity for matching.
+- [ ] **Commit 6: Tag-based discovery.**
+  Discovery filters Tailscale peers by tag. For tagged peers without a
+  controller, fetch identity endpoint to learn service/provider/region.
+  Replaces hostname-matching discovery.
 
-- [ ] **Commit 7: Update Manager + API routes.**
-  Routes include service type. SSE events include service prefix. UI shows
-  service label.
+- [ ] **Commit 7: Thread ServiceType through Registry + Manager.**
+  Registry key becomes `{service}-{provider}-{region}`. API routes include
+  service type. UI shows service label.
 
 ### ZFS for persistent services
 
