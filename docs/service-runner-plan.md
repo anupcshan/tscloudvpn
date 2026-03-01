@@ -507,11 +507,10 @@ Each commit is self-contained and passes all tests.
   Start()/Stop() separated so Stop() is safe before Start() (fixes deadlock
   on creation failure). Race on `started` field fixed with mutex.
 
-- [ ] **Commit 5: Stats/identity endpoint on port 8245.**
-  Split stats endpoint into identity.json (static, written at boot) and
-  stats.json (dynamic, updated every 30s). Move from port 80 to 8245.
-  Registry has `providerName` directly — no pass-through needed.
-  Add FetchNodeIdentity to TailscaleClient.
+- [x] **Commit 5: Stats/identity endpoint on port 8245.**
+  Init script writes static identity.json at boot with service, provider,
+  region. Stats HTTP server moved from port 80 to 8245. RenderUserData
+  accepts identity parameters. FetchNodeStats URL updated to port 8245.
 
 - [ ] **Commit 6: Tag-based discovery.**
   Discovery filters Tailscale peers by tag. For tagged peers without a

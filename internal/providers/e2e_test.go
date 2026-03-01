@@ -248,7 +248,7 @@ func testProviderLifecycle(t *testing.T, testConfig *E2ETestConfig, providerName
 
 		// Render user data
 		hostname := string(provider.Hostname(region))
-		userData, err := providers.RenderUserData(hostname, key, "")
+		userData, err := providers.RenderUserData(hostname, key, "", "exit", providerName, region)
 		if err != nil {
 			t.Fatalf("Failed to render user data: %v", err)
 		}

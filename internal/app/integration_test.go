@@ -168,7 +168,7 @@ func testCreateRealInstance(t *testing.T, ctx context.Context, app *app.App, cfg
 
 	// Render user data
 	hostname := string(provider.Hostname(cheapestRegion))
-	userData, err := providers.RenderUserData(hostname, key, cfg.SSH.PublicKey)
+	userData, err := providers.RenderUserData(hostname, key, cfg.SSH.PublicKey, "exit", cheapestProvider, cheapestRegion)
 	if err != nil {
 		t.Fatalf("Failed to render user data: %v", err)
 	}
@@ -374,7 +374,7 @@ func testFullNetworkWorkflow(t *testing.T, ctx context.Context, app *app.App, cf
 
 	// Render user data
 	hostname := string(provider.Hostname(cheapestRegion))
-	userData, err := providers.RenderUserData(hostname, key, cfg.SSH.PublicKey)
+	userData, err := providers.RenderUserData(hostname, key, cfg.SSH.PublicKey, "exit", cheapestProvider, cheapestRegion)
 	if err != nil {
 		t.Fatalf("Failed to render user data: %v", err)
 	}

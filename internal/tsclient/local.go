@@ -60,7 +60,7 @@ func (c *LocalClient) PingPeer(ctx context.Context, addr netip.Addr) (PingResult
 }
 
 func (c *LocalClient) FetchNodeStats(ctx context.Context, hostname string) (NodeStatsResult, error) {
-	url := fmt.Sprintf("http://%s/stats.json", hostname)
+	url := fmt.Sprintf("http://%s:8245/stats.json", hostname)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return NodeStatsResult{}, err

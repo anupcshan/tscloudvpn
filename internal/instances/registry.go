@@ -112,7 +112,7 @@ func (r *Registry) CreateInstance(ctx context.Context, providerName, region stri
 
 	// Start instance creation in background
 	go func() {
-		instance, err := r.createCloudInstance(context.Background(), provider, region)
+		instance, err := r.createCloudInstance(context.Background(), providerName, provider, region)
 		if err != nil {
 			r.logger.Printf("Failed to create instance %s: %s", key, err)
 			controller.SetFailed(err)
@@ -129,14 +129,14 @@ func (r *Registry) CreateInstance(ctx context.Context, providerName, region stri
 
 // createCloudInstance handles the cloud provisioning: create auth key,
 // render init script, call provider.
-func (r *Registry) createCloudInstance(ctx context.Context, provider providers.Provider, region string) (providers.Instance, error) {
+func (r *Registry) createCloudInstance(ctx context.Context, providerName string, provider providers.Provider, region string) (providers.Instance, error) {
 	authKey, err := r.controlApi.CreateKey(ctx, services.ExitNode.Tags)
 	if err != nil {
 		return providers.Instance{}, err
 	}
 
 	hostname := string(provider.Hostname(region))
-	userData, err := providers.RenderUserData(hostname, authKey, r.sshKey)
+	userData, err := providers.RenderUserData(hostname, authKey, r.sshKey, services.ExitNode.Name, providerName, region)
 	if err != nil {
 		return providers.Instance{}, err
 	}

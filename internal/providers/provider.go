@@ -80,19 +80,28 @@ var (
 	ProviderLabels          = make(map[string]string)
 )
 
+// InitScriptData contains the template variables for the init script.
+type InitScriptData struct {
+	Args     string // Tailscale CLI arguments (--authkey, --hostname, etc.)
+	SSHKey   string // SSH public key for authorized_keys
+	Service  string // Service type name (e.g., "exit")
+	Provider string // Provider short name (e.g., "do")
+	Region   string // Region code (e.g., "nyc1")
+}
+
 // RenderUserData renders the init script template with the given parameters.
-func RenderUserData(hostname string, key *controlapi.PreauthKey, sshKey string) (string, error) {
+func RenderUserData(hostname string, key *controlapi.PreauthKey, sshKey string, service string, provider string, region string) (string, error) {
 	var buf bytes.Buffer
-	if err := template.Must(template.New("tmpl").Parse(InitData)).Execute(&buf, struct {
-		Args   string
-		SSHKey string
-	}{
+	if err := template.Must(template.New("tmpl").Parse(InitData)).Execute(&buf, InitScriptData{
 		Args: fmt.Sprintf(
 			`%s --hostname=%s`,
 			strings.Join(key.GetCLIArgs(), " "),
 			hostname,
 		),
-		SSHKey: sshKey,
+		SSHKey:   sshKey,
+		Service:  service,
+		Provider: provider,
+		Region:   region,
 	}); err != nil {
 		return "", err
 	}

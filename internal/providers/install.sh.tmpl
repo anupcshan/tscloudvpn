@@ -30,12 +30,19 @@ set +x
 lastForwarded=$(awk '/^Ip:/ && !/Forwarding/ {print $7}' /proc/net/snmp)
 lastForwardedTime=$(date "+%s")
 
-# Serve stats over HTTP for the control plane to poll.
-# We avoid `tailscale serve` here because it uses HTTPS, which registers
+# Serve stats over HTTP on port 8245 for the control plane to poll.
+# Port 80 is left free for the actual service (filebrowser, Jupyter, etc.).
+# We avoid `tailscale serve` because it uses HTTPS, which registers
 # certificates in Certificate Transparency logs and leaks node hostnames.
 mkdir -p /tmp/stats
 echo "{\"forwarded_bytes\": 0, \"last_active\": $(date +%s)}" > /tmp/stats/stats.json
-(cd /tmp/stats && python3 -m http.server 80 --bind "$(tailscale ip -4)") &
+
+# Write static identity file at boot (provider/region/service for discovery).
+cat > /tmp/stats/identity.json <<IDENTITY
+{"service": "{{.Service}}", "provider": "{{.Provider}}", "region": "{{.Region}}"}
+IDENTITY
+
+(cd /tmp/stats && python3 -m http.server 8245 --bind "$(tailscale ip -4)") &
 
 # Update stats file every 30 seconds
 while sleep 30; do
