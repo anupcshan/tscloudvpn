@@ -521,9 +521,15 @@ Each commit is self-contained and passes all tests.
   `TailscaleClient` interface. Headscale `ListDevices` fixed to use
   `GetForcedTags()` instead of `GetGivenName()` for device tags.
 
-- [ ] **Commit 7: Thread ServiceType through Registry + Manager.**
-  Registry key becomes `{service}-{provider}-{region}`. API routes include
-  service type. UI shows service label.
+- [x] **Commit 7: Thread ServiceType through Registry + Manager.**
+  Registry key becomes `{service}-{provider}-{region}`. Controllers
+  wrapped in `controllerEntry` with service/provider/region metadata
+  (Controller itself stays a pure health monitor). API routes become
+  `/services/{service}/providers/{provider}/regions/{region}`. SSE event
+  keys include service. Node cards show service label badge. Registry
+  methods (`CreateInstance`, `DeleteInstance`, `GetInstanceStatus`) all
+  take service name. `GetAllInstanceStatuses` populates
+  Service/Provider/Region from stored metadata instead of parsing keys.
 
 ### ZFS for persistent services
 

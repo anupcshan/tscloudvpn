@@ -16,6 +16,7 @@ import (
 	httputils "github.com/anupcshan/tscloudvpn/internal/http"
 	"github.com/anupcshan/tscloudvpn/internal/instances"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/anupcshan/tscloudvpn/internal/services"
 	"github.com/anupcshan/tscloudvpn/internal/status"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
 
@@ -64,6 +65,8 @@ func NewManager(
 }
 
 type mappedRegion struct {
+	Service           string
+	ServiceLabel      string
 	Provider          string
 	ProviderLabel     string
 	Region            string
@@ -101,6 +104,8 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 	// Get all instance statuses from the registry
 	allInstanceStatuses := m.instanceRegistry.GetAllInstanceStatuses()
 
+	serviceName := services.ExitNode.Name
+
 	for providerName, provider := range m.cloudProviders {
 		provider := provider
 		providerName := providerName
@@ -108,7 +113,7 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 		regions := m.lazyListRegionsMap[providerName]()
 
 		for _, region := range regions {
-			key := fmt.Sprintf("%s-%s", providerName, region.Code)
+			key := fmt.Sprintf("%s-%s-%s", serviceName, providerName, region.Code)
 			instanceStatus, hasInstance := allInstanceStatuses[key]
 
 			var sinceCreated string
@@ -143,6 +148,8 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 			}
 
 			mappedRegions = append(mappedRegions, mappedRegion{
+				Service:           serviceName,
+				ServiceLabel:      services.ExitNode.Label,
 				Provider:          providerName,
 				ProviderLabel:     providers.ProviderLabels[providerName],
 				Region:            region.Code,
@@ -187,7 +194,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				if region.HasNode {
 					continue
 				}
-				instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Provider, region.Region)
+				instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Service, region.Provider, region.Region)
 				if err != nil || instanceStatus.State != instances.StateLaunching {
 					continue
 				}
@@ -198,6 +205,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				html.WriteString(`<div>`)
 				html.WriteString(`<div class="node-main">`)
 				fmt.Fprintf(&html, `<span class="node-location">%s</span>`, region.LongName)
+				fmt.Fprintf(&html, `<span class="node-service">%s</span>`, region.ServiceLabel)
 				fmt.Fprintf(&html, `<span class="node-provider">%s</span>`, region.ProviderLabel)
 				fmt.Fprintf(&html, `<span class="pill pill-blue">launching %s...</span>`, elapsed)
 				html.WriteString(`</div>`)
@@ -213,7 +221,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				if region.HasNode {
 					continue
 				}
-				instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Provider, region.Region)
+				instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Service, region.Provider, region.Region)
 				if err != nil || instanceStatus.State != instances.StateFailed {
 					continue
 				}
@@ -223,6 +231,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				html.WriteString(`<div>`)
 				html.WriteString(`<div class="node-main">`)
 				fmt.Fprintf(&html, `<span class="node-location">%s</span>`, region.LongName)
+				fmt.Fprintf(&html, `<span class="node-service">%s</span>`, region.ServiceLabel)
 				fmt.Fprintf(&html, `<span class="node-provider">%s</span>`, region.ProviderLabel)
 				html.WriteString(`<span class="pill pill-red">failed</span>`)
 				html.WriteString(`</div>`)
@@ -231,8 +240,8 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				html.WriteString(`</div>`)
 				html.WriteString(`</div>`)
 				fmt.Fprintf(&html, `<button class="btn btn-danger" hx-ext="disable-element" `+
-					`hx-disable-element="self" hx-delete="/providers/%s/regions/%s">Dismiss</button>`,
-					region.Provider, region.Region)
+					`hx-disable-element="self" hx-delete="/services/%s/providers/%s/regions/%s">Dismiss</button>`,
+					region.Service, region.Provider, region.Region)
 				html.WriteString(`</div>`)
 			}
 
@@ -253,6 +262,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				html.WriteString(`<div>`)
 				html.WriteString(`<div class="node-main">`)
 				fmt.Fprintf(&html, `<span class="node-location">%s</span>`, node.LongName)
+				fmt.Fprintf(&html, `<span class="node-service">%s</span>`, node.ServiceLabel)
 				fmt.Fprintf(&html, `<span class="node-provider">%s</span>`, node.ProviderLabel)
 				fmt.Fprintf(&html, `<span class="pill %s">%s</span>`, pillClass, connectionType)
 				html.WriteString(`</div>`)
@@ -277,8 +287,8 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				html.WriteString(`</div>`)
 				html.WriteString(`</div>`)
 				fmt.Fprintf(&html, `<button class="btn btn-danger" hx-ext="disable-element" `+
-					`hx-disable-element="self" hx-delete="/providers/%s/regions/%s">Delete</button>`,
-					node.Provider, node.Region)
+					`hx-disable-element="self" hx-delete="/services/%s/providers/%s/regions/%s">Delete</button>`,
+					node.Service, node.Provider, node.Region)
 				html.WriteString(`</div>`)
 			}
 
@@ -312,9 +322,9 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 			}
 
 			for _, region := range status.Detail {
-				hasNodeKey := fmt.Sprintf("%s-%s-hasnode", region.Provider, region.Region)
-				buttonKey := fmt.Sprintf("%s-%s-button", region.Provider, region.Region)
-				opURL := fmt.Sprintf("/providers/%s/regions/%s", region.Provider, region.Region)
+				hasNodeKey := fmt.Sprintf("%s-%s-%s-hasnode", region.Service, region.Provider, region.Region)
+				buttonKey := fmt.Sprintf("%s-%s-%s-button", region.Service, region.Provider, region.Region)
+				opURL := fmt.Sprintf("/services/%s/providers/%s/regions/%s", region.Service, region.Provider, region.Region)
 				if region.HasNode {
 					pillClass := "pill-green"
 					if region.PingStats.SuccessRate < 0.80 {
@@ -325,7 +335,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, opURL)
 				} else {
 					// Check if instance is being launched or failed
-					instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Provider, region.Region)
+					instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Service, region.Provider, region.Region)
 					disabledFragment := ""
 					if err == nil && instanceStatus.State == instances.StateLaunching {
 						data[hasNodeKey] = fmt.Sprintf(`<span class="pill pill-blue">launching %s...</span>`, durafmt.ParseShort(time.Since(instanceStatus.LaunchedAt)).InternationalString())
@@ -374,16 +384,17 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 		}
 	})
 
+	svcName := services.ExitNode.Name
 	for providerName := range m.cloudProviders {
 		providerName := providerName
 
 		lazyListRegions := m.lazyListRegionsMap[providerName]
 		for _, region := range lazyListRegions() {
 			region := region
-			mux.HandleFunc(fmt.Sprintf("/providers/%s/regions/%s", providerName, region.Code), func(w http.ResponseWriter, r *http.Request) {
+			mux.HandleFunc(fmt.Sprintf("/services/%s/providers/%s/regions/%s", svcName, providerName, region.Code), func(w http.ResponseWriter, r *http.Request) {
 				switch r.Method {
 				case "DELETE":
-					err := m.instanceRegistry.DeleteInstance(providerName, region.Code)
+					err := m.instanceRegistry.DeleteInstance(svcName, providerName, region.Code)
 					if err != nil {
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write([]byte(err.Error()))
@@ -398,7 +409,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 					ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer cancelFunc()
 
-					err := m.instanceRegistry.CreateInstance(ctx, providerName, region.Code)
+					err := m.instanceRegistry.CreateInstance(ctx, svcName, providerName, region.Code)
 					if err != nil {
 						logger.Printf("Failed to create instance: %s", err)
 						w.Write([]byte(err.Error()))

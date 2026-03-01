@@ -32,8 +32,8 @@
         <div class="region-row" data-name="{{ .LongName }}">
           <span class="region-name">{{ .LongName }}</span>
           <span class="region-price">{{ printf "%.2f" .PriceCentsPerHour }}c/hr</span>
-          <span class="region-status" sse-swap="{{ .Provider }}-{{ .Region }}-hasnode"></span>
-          <span class="region-action" sse-swap="{{ .Provider }}-{{ .Region }}-button"></span>
+          <span class="region-status" sse-swap="{{ .Service }}-{{ .Provider }}-{{ .Region }}-hasnode"></span>
+          <span class="region-action" sse-swap="{{ .Service }}-{{ .Provider }}-{{ .Region }}-button"></span>
         </div>
         {{ end }}
       </div>

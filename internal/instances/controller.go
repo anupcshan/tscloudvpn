@@ -151,9 +151,11 @@ const (
 
 // InstanceStatus represents the current state of an instance
 type InstanceStatus struct {
-	Hostname   providers.HostName
-	Provider   string
-	Region     string
+	Hostname     providers.HostName
+	Service      string
+	ServiceLabel string
+	Provider     string
+	Region       string
 	State      InstanceState
 	IsRunning  bool
 	CreatedAt  time.Time
@@ -256,9 +258,7 @@ func (c *Controller) Status() InstanceStatus {
 	defer c.mu.RUnlock()
 
 	status := InstanceStatus{
-		Hostname:   c.hostname,
-		Provider:   "", // Provider name will be set by caller
-		Region:     "",  // Will be set by caller
+		Hostname: c.hostname,
 		State:      c.state,
 		IsRunning:  c.state == StateRunning,
 		CreatedAt:  c.createdAt,

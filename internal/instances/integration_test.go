@@ -193,13 +193,13 @@ func TestIntegration_RegistryWithFakeProvider_BasicLifecycle(t *testing.T) {
 	defer registry.Shutdown()
 
 	// Test instance creation via registry
-	err := registry.CreateInstance(ctx, "fake", "fake-us-east")
+	err := registry.CreateInstance(ctx, "exit", "fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
 
 	// After creation, state should be Launching
-	status, err := registry.GetInstanceStatus("fake", "fake-us-east")
+	status, err := registry.GetInstanceStatus("exit", "fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Failed to get instance status: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestIntegration_RegistryWithFakeProvider_BasicLifecycle(t *testing.T) {
 	}
 
 	// Verify LaunchedAt is set
-	status, _ = registry.GetInstanceStatus("fake", "fake-us-east")
+	status, _ = registry.GetInstanceStatus("exit", "fake", "fake-us-east")
 	if status.LaunchedAt.IsZero() {
 		t.Error("Expected LaunchedAt to be set after creation")
 	}
@@ -238,7 +238,7 @@ func TestIntegration_RegistryWithFakeProvider_BasicLifecycle(t *testing.T) {
 	})
 
 	// Test deletion via registry
-	err = registry.DeleteInstance("fake", "fake-us-east")
+	err = registry.DeleteInstance("exit", "fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Failed to delete instance: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestIntegration_RegistryWithFakeProvider_BasicLifecycle(t *testing.T) {
 	}
 
 	// Verify instance is gone from registry
-	_, err = registry.GetInstanceStatus("fake", "fake-us-east")
+	_, err = registry.GetInstanceStatus("exit", "fake", "fake-us-east")
 	if err == nil {
 		t.Error("Expected error when getting status of deleted instance")
 	}
@@ -295,7 +295,7 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 	}
 
 	for _, region := range regions {
-		err := registry.CreateInstance(ctx, "fake", region)
+		err := registry.CreateInstance(ctx, "exit", "fake", region)
 		if err != nil {
 			t.Fatalf("Failed to create instance in %s: %v", region, err)
 		}
@@ -341,7 +341,7 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 
 	// Verify each instance status
 	for _, region := range regions {
-		key := fmt.Sprintf("fake-%s", region)
+		key := fmt.Sprintf("exit-fake-%s", region)
 		status, exists := statuses[key]
 		if !exists {
 			t.Errorf("Instance status not found for %s", key)
@@ -358,7 +358,7 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 	}
 
 	// Test deleting one instance
-	err := registry.DeleteInstance("fake", "fake-us-west")
+	err := registry.DeleteInstance("exit", "fake", "fake-us-west")
 	if err != nil {
 		t.Fatalf("Failed to delete instance: %v", err)
 	}
@@ -370,8 +370,8 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 	}
 
 	// Verify the correct instance was removed
-	if _, exists := statuses["fake-fake-us-west"]; exists {
-		t.Error("Instance fake-fake-us-west should have been deleted")
+	if _, exists := statuses["exit-fake-fake-us-west"]; exists {
+		t.Error("Instance exit-fake-fake-us-west should have been deleted")
 	}
 }
 
@@ -397,19 +397,19 @@ func TestIntegration_RegistryWithFakeProvider_CreateFailure(t *testing.T) {
 	defer registry.Shutdown()
 
 	// Create instance - registry returns nil immediately, failure happens async
-	err := registry.CreateInstance(ctx, "fake", "fake-us-east")
+	err := registry.CreateInstance(ctx, "exit", "fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Registry CreateInstance should not fail immediately: %v", err)
 	}
 
 	// Wait for the async creation to fail and transition to StateFailed
 	require.Eventually(t, func() bool {
-		status, err := registry.GetInstanceStatus("fake", "fake-us-east")
+		status, err := registry.GetInstanceStatus("exit", "fake", "fake-us-east")
 		return err == nil && status.State == StateFailed
 	}, 5*time.Second, 100*time.Millisecond, "Expected instance to be in StateFailed")
 
 	// Verify the failed status has the error message
-	status, err := registry.GetInstanceStatus("fake", "fake-us-east")
+	status, err := registry.GetInstanceStatus("exit", "fake", "fake-us-east")
 	require.NoError(t, err)
 	require.Contains(t, status.LastError, "simulated creation failure")
 
@@ -446,14 +446,14 @@ func TestIntegration_RegistryWithFakeProvider_ProviderFailures(t *testing.T) {
 	})
 
 	// Successfully create an instance first
-	err := registry.CreateInstance(ctx, "fake", "fake-us-east")
+	err := registry.CreateInstance(ctx, "exit", "fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
 
 	// Wait for instance to be created (stays Launching since tsClient is nil)
 	require.Eventually(t, func() bool {
-		status, err := registry.GetInstanceStatus("fake", "fake-us-east")
+		status, err := registry.GetInstanceStatus("exit", "fake", "fake-us-east")
 		return err == nil && status.State == StateLaunching
 	}, 10*time.Second, 100*time.Millisecond, "Expected instance to be launching")
 
@@ -470,30 +470,30 @@ func TestIntegration_RegistryWithFakeProvider_ProviderFailures(t *testing.T) {
 	fakeProvider.UpdateConfig(config)
 
 	// First instance should still be tracked
-	_, err = registry.GetInstanceStatus("fake", "fake-us-east")
+	_, err = registry.GetInstanceStatus("exit", "fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Registry should still return status for existing instance: %v", err)
 	}
 
 	// Try to create another instance with failing provider
-	err = registry.CreateInstance(ctx, "fake", "fake-us-west")
+	err = registry.CreateInstance(ctx, "exit", "fake", "fake-us-west")
 	if err != nil {
 		t.Fatalf("Registry creation shouldn't fail immediately: %v", err)
 	}
 
 	// Wait for failed creation to transition to StateFailed
 	require.Eventually(t, func() bool {
-		status, err := registry.GetInstanceStatus("fake", "fake-us-west")
+		status, err := registry.GetInstanceStatus("exit", "fake", "fake-us-west")
 		return err == nil && status.State == StateFailed
 	}, 5*time.Second, 100*time.Millisecond, "Expected failed instance to be in StateFailed")
 
 	// Verify the failed instance has an error message
-	failedStatus, err := registry.GetInstanceStatus("fake", "fake-us-west")
+	failedStatus, err := registry.GetInstanceStatus("exit", "fake", "fake-us-west")
 	require.NoError(t, err)
 	require.Contains(t, failedStatus.LastError, "simulated creation failure")
 
 	// Verify the first instance is still tracked
-	_, err = registry.GetInstanceStatus("fake", "fake-us-east")
+	_, err = registry.GetInstanceStatus("exit", "fake", "fake-us-east")
 	require.NoError(t, err)
 }
 
@@ -563,7 +563,7 @@ func TestIntegration_RegistryWithFakeProvider_DiscoverExistingInstances(t *testi
 
 	// Test that creating an existing instance doesn't duplicate it
 	ctx := context.Background()
-	err := registry.CreateInstance(ctx, "fake", "fake-us-east")
+	err := registry.CreateInstance(ctx, "exit", "fake", "fake-us-east")
 	if err != nil {
 		t.Errorf("Creating existing instance should not fail: %v", err)
 	}
@@ -600,7 +600,7 @@ func TestIntegration_RegistryWithFakeProvider_SlowOperations(t *testing.T) {
 
 	// Create instance - returns immediately, creation happens async
 	start := time.Now()
-	err := registry.CreateInstance(ctx, "fake", "fake-us-east")
+	err := registry.CreateInstance(ctx, "exit", "fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
@@ -612,7 +612,7 @@ func TestIntegration_RegistryWithFakeProvider_SlowOperations(t *testing.T) {
 	}
 
 	// Instance should immediately be in StateLaunching
-	status, err := registry.GetInstanceStatus("fake", "fake-us-east")
+	status, err := registry.GetInstanceStatus("exit", "fake", "fake-us-east")
 	require.NoError(t, err)
 	require.Equal(t, StateLaunching, status.State)
 
@@ -672,7 +672,7 @@ func TestIntegration_RegistryDelete_CloudDeletionFailure_StillSucceeds(t *testin
 
 	// Delete instance via registry - should succeed even if cloud delete fails
 	// (Tailscale device is deleted, GC will clean up orphaned cloud instance)
-	err := registry.DeleteInstance("mock", "test-region")
+	err := registry.DeleteInstance("exit", "mock", "test-region")
 	if err != nil {
 		t.Fatalf("Delete should succeed even if cloud deletion fails: %v", err)
 	}
@@ -689,7 +689,7 @@ func TestIntegration_RegistryDelete_CloudDeletionFailure_StillSucceeds(t *testin
 	}
 
 	// Verify instance is gone from registry
-	_, err = registry.GetInstanceStatus("mock", "test-region")
+	_, err = registry.GetInstanceStatus("exit", "mock", "test-region")
 	if err == nil {
 		t.Error("Expected error when getting status of deleted instance")
 	}
@@ -719,7 +719,7 @@ func TestIntegration_RegistryDelete_DeviceNotInTailscale(t *testing.T) {
 	defer registry.Shutdown()
 
 	// Create instance via registry
-	err := registry.CreateInstance(ctx, "fake", "fake-us-east")
+	err := registry.CreateInstance(ctx, "exit", "fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
@@ -744,7 +744,7 @@ func TestIntegration_RegistryDelete_DeviceNotInTailscale(t *testing.T) {
 	}
 
 	// Delete instance via registry - should succeed even though device is not in Tailscale
-	err = registry.DeleteInstance("fake", "fake-us-east")
+	err = registry.DeleteInstance("exit", "fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Delete should succeed even if device not in Tailscale: %v", err)
 	}

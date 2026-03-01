@@ -63,6 +63,19 @@ type PersistenceConfig struct {
 	FSType     string // always "zfs" for persistent services
 }
 
+// All is the catalog of all known service types.
+var All = []*ServiceType{&ExitNode}
+
+// ByName returns the ServiceType with the given name, or nil if not found.
+func ByName(name string) *ServiceType {
+	for _, svc := range All {
+		if svc.Name == name {
+			return svc
+		}
+	}
+	return nil
+}
+
 // ExitNode is the service type for Tailscale exit nodes.
 var ExitNode = ServiceType{
 	Name:           "exit",
