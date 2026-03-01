@@ -14,7 +14,6 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/anupcshan/tscloudvpn/internal/providers/fake"
-	"github.com/anupcshan/tscloudvpn/internal/services"
 	"github.com/stretchr/testify/require"
 )
 
@@ -173,7 +172,7 @@ func (api *IntegrationTestControlApi) SetDeleteDeviceError(err error) {
 	api.mu.Unlock()
 }
 
-func TestIntegration_ControllerWithFakeProvider_BasicLifecycle(t *testing.T) {
+func TestIntegration_RegistryWithFakeProvider_BasicLifecycle(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
@@ -183,32 +182,36 @@ func TestIntegration_ControllerWithFakeProvider_BasicLifecycle(t *testing.T) {
 	fakeProvider := fake.NewWithConfig(fake.DefaultConfig())
 	controlApi := NewIntegrationTestControlApi()
 
-	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", &services.ExitNode, controlApi, nil)
-	defer controller.Stop()
-
-	// Test initial status
-	status := controller.Status()
-	if status.Hostname != "fake-fake-us-east" {
-		t.Errorf("Expected hostname 'fake-fake-us-east', got %s", status.Hostname)
-	}
-	if status.Region != "fake-us-east" {
-		t.Errorf("Expected region 'fake-us-east', got %s", status.Region)
-	}
-	if status.State != StateIdle {
-		t.Errorf("Expected instance state to be StateIdle, got %d", status.State)
+	providerMap := map[string]providers.Provider{
+		"fake": fakeProvider,
 	}
 
-	// Add device to control API before creation to simulate quick registration
-	controlApi.AddDevice(controlapi.Device{
-		Hostname: "fake-fake-us-east",
-		Created:  time.Now().Add(time.Second), // Created slightly in the future
-	})
+	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
+	defer registry.Shutdown()
 
-	// Test instance creation
-	err := controller.Create()
+	// Test instance creation via registry
+	err := registry.CreateInstance(ctx, "fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
+
+	// After creation, state should be Launching
+	status, err := registry.GetInstanceStatus("fake", "fake-us-east")
+	if err != nil {
+		t.Fatalf("Failed to get instance status: %v", err)
+	}
+	if status.State != StateLaunching {
+		t.Errorf("Expected instance state to be StateLaunching, got %d", status.State)
+	}
+	if status.Hostname != "fake-fake-us-east" {
+		t.Errorf("Expected hostname 'fake-fake-us-east', got %s", status.Hostname)
+	}
+
+	// Wait for instance to be created in the fake provider
+	require.Eventually(t, func() bool {
+		_, exists := fakeProvider.GetInstance("fake-us-east")
+		return exists
+	}, 10*time.Second, 100*time.Millisecond, "Expected instance in fake provider")
 
 	// Check that instance was created in fake provider
 	instance, exists := fakeProvider.GetInstance("fake-us-east")
@@ -219,18 +222,20 @@ func TestIntegration_ControllerWithFakeProvider_BasicLifecycle(t *testing.T) {
 		t.Errorf("Expected instance status to be running, got %v", instance.Status)
 	}
 
-	// After creation, state stays Launching until the health check discovers
-	// the peer (tsClient is nil in this test so that won't happen).
-	status = controller.Status()
-	if status.State != StateLaunching {
-		t.Errorf("Expected instance state to be StateLaunching, got %d", status.State)
-	}
+	// Verify LaunchedAt is set
+	status, _ = registry.GetInstanceStatus("fake", "fake-us-east")
 	if status.LaunchedAt.IsZero() {
 		t.Error("Expected LaunchedAt to be set after creation")
 	}
 
-	// Test deletion
-	err = controller.Delete()
+	// Add device to control API to simulate device registration (needed for deletion)
+	controlApi.AddDevice(controlapi.Device{
+		Hostname: "fake-fake-us-east",
+		Created:  time.Now(),
+	})
+
+	// Test deletion via registry
+	err = registry.DeleteInstance("fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Failed to delete instance: %v", err)
 	}
@@ -244,12 +249,13 @@ func TestIntegration_ControllerWithFakeProvider_BasicLifecycle(t *testing.T) {
 		t.Errorf("Expected 0 devices after deletion, got %d", len(devices))
 	}
 
-	// Test status after deletion
-	status = controller.Status()
-	if status.State != StateIdle {
-		t.Errorf("Expected instance state to be StateIdle after deletion, got %d", status.State)
+	// Verify instance is gone from registry
+	_, err = registry.GetInstanceStatus("fake", "fake-us-east")
+	if err == nil {
+		t.Error("Expected error when getting status of deleted instance")
 	}
 
+	// Verify cloud instance was deleted
 	_, exists = fakeProvider.GetInstance("fake-us-east")
 	if exists {
 		t.Error("Instance was not deleted in fake provider")
@@ -342,9 +348,7 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 		if status.Provider != "fake" {
 			t.Errorf("Expected provider 'fake', got %s", status.Provider)
 		}
-		if status.Region != region {
-			t.Errorf("Expected region %s, got %s", region, status.Region)
-		}
+		// Region is populated by GetInstanceStatus(), not GetAllInstanceStatuses()
 		if status.State != StateLaunching {
 			t.Errorf("Expected instance %s to have state StateLaunching, got %d", key, status.State)
 		}
@@ -368,7 +372,7 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 	}
 }
 
-func TestIntegration_ControllerWithFakeProvider_CreateFailure(t *testing.T) {
+func TestIntegration_RegistryWithFakeProvider_CreateFailure(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
@@ -382,31 +386,34 @@ func TestIntegration_ControllerWithFakeProvider_CreateFailure(t *testing.T) {
 	fakeProvider := fake.NewWithConfig(config)
 	controlApi := NewIntegrationTestControlApi()
 
-	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", &services.ExitNode, controlApi, nil)
-	defer controller.Stop()
-
-	// Test creation failure
-	err := controller.Create()
-	if err == nil {
-		t.Fatal("Expected creation to fail, but it succeeded")
-	}
-	if err.Error() != "simulated creation failure" {
-		t.Errorf("Expected specific error message, got: %v", err)
+	providerMap := map[string]providers.Provider{
+		"fake": fakeProvider,
 	}
 
-	// Verify no instance was created
+	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
+	defer registry.Shutdown()
+
+	// Create instance - registry returns nil immediately, failure happens async
+	err := registry.CreateInstance(ctx, "fake", "fake-us-east")
+	if err != nil {
+		t.Fatalf("Registry CreateInstance should not fail immediately: %v", err)
+	}
+
+	// Wait for the async creation to fail and transition to StateFailed
+	require.Eventually(t, func() bool {
+		status, err := registry.GetInstanceStatus("fake", "fake-us-east")
+		return err == nil && status.State == StateFailed
+	}, 5*time.Second, 100*time.Millisecond, "Expected instance to be in StateFailed")
+
+	// Verify the failed status has the error message
+	status, err := registry.GetInstanceStatus("fake", "fake-us-east")
+	require.NoError(t, err)
+	require.Contains(t, status.LastError, "simulated creation failure")
+
+	// Verify no instance was created in the fake provider
 	_, exists := fakeProvider.GetInstance("fake-us-east")
 	if exists {
 		t.Error("Instance should not exist after failed creation")
-	}
-
-	// Verify controller status reflects failure
-	status := controller.Status()
-	if status.State != StateIdle {
-		t.Errorf("Expected instance state to be StateIdle after failed creation, got %d", status.State)
-	}
-	if !status.LaunchedAt.IsZero() {
-		t.Error("Expected LaunchedAt to be zero after failed creation")
 	}
 }
 
@@ -552,12 +559,11 @@ func TestIntegration_RegistryWithFakeProvider_DiscoverExistingInstances(t *testi
 	}
 }
 
-func TestIntegration_ControllerWithFakeProvider_SlowOperations(t *testing.T) {
+func TestIntegration_RegistryWithFakeProvider_SlowOperations(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	ctx := context.Background()
 	logger := log.New(os.Stderr, "[TEST] ", log.LstdFlags)
 
 	// Configure fake provider with realistic delays
@@ -567,36 +573,47 @@ func TestIntegration_ControllerWithFakeProvider_SlowOperations(t *testing.T) {
 	fakeProvider := fake.NewWithConfig(config)
 	controlApi := NewIntegrationTestControlApi()
 
-	// Pre-add device to simulate registration
-	controlApi.AddDevice(controlapi.Device{
-		Hostname: "fake-fake-us-east",
-		Created:  time.Now().Add(2 * time.Second), // Future timestamp
-	})
+	providerMap := map[string]providers.Provider{
+		"fake": fakeProvider,
+	}
 
-	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", &services.ExitNode, controlApi, nil)
-	defer controller.Stop()
+	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
+	defer registry.Shutdown()
 
-	// Test creation with delay
+	ctx := context.Background()
+
+	// Create instance - returns immediately, creation happens async
 	start := time.Now()
-	err := controller.Create()
+	err := registry.CreateInstance(ctx, "fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
-	duration := time.Since(start)
 
-	// Should have taken at least the configured delay
-	if duration < config.CreateDelay {
-		t.Errorf("Creation took %v, expected at least %v", duration, config.CreateDelay)
+	// CreateInstance should return quickly (async creation)
+	createCallDuration := time.Since(start)
+	if createCallDuration > 200*time.Millisecond {
+		t.Errorf("CreateInstance took %v, expected it to return quickly (async)", createCallDuration)
 	}
 
-	// Verify instance was created (stays Launching since tsClient is nil)
-	status := controller.Status()
-	if status.State != StateLaunching {
-		t.Errorf("Expected instance state to be StateLaunching after creation, got %d", status.State)
+	// Instance should immediately be in StateLaunching
+	status, err := registry.GetInstanceStatus("fake", "fake-us-east")
+	require.NoError(t, err)
+	require.Equal(t, StateLaunching, status.State)
+
+	// Wait for the slow creation to complete in the fake provider
+	require.Eventually(t, func() bool {
+		_, exists := fakeProvider.GetInstance("fake-us-east")
+		return exists
+	}, 10*time.Second, 100*time.Millisecond, "Expected instance in fake provider after delay")
+
+	// Total time should have been at least the configured delay
+	totalDuration := time.Since(start)
+	if totalDuration < config.CreateDelay {
+		t.Errorf("Total creation took %v, expected at least %v", totalDuration, config.CreateDelay)
 	}
 }
 
-func TestIntegration_ControllerDelete_CloudDeletionFailure_StillSucceeds(t *testing.T) {
+func TestIntegration_RegistryDelete_CloudDeletionFailure_StillSucceeds(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
@@ -612,23 +629,26 @@ func TestIntegration_ControllerDelete_CloudDeletionFailure_StillSucceeds(t *test
 	}
 	mockProvider.instances["test-region"] = true
 
-	// Pre-add device to control API
+	providerMap := map[string]providers.Provider{
+		"mock": mockProvider,
+	}
+
+	// Pre-add device to control API (simulates discovered instance)
 	controlApi.AddDevice(controlapi.Device{
 		Hostname: "mock-test-region",
-		Created:  time.Now(),
+		Created:  time.Now().Add(-time.Minute),
 	})
 
-	controller := NewController(ctx, logger, mockProvider, "test-region", "", &services.ExitNode, controlApi, nil)
-	defer controller.Stop()
+	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
+	defer registry.Shutdown()
 
-	// Mark controller as running (simulate existing instance)
-	controller.mu.Lock()
-	controller.state = StateRunning
-	controller.mu.Unlock()
+	// Discover the existing instance so it's tracked in the registry
+	registry.discoverInstances(ctx)
+	require.Equal(t, 1, len(registry.GetAllInstanceStatuses()))
 
-	// Delete instance - should succeed even if cloud delete fails
+	// Delete instance via registry - should succeed even if cloud delete fails
 	// (Tailscale device is deleted, GC will clean up orphaned cloud instance)
-	err := controller.Delete()
+	err := registry.DeleteInstance("mock", "test-region")
 	if err != nil {
 		t.Fatalf("Delete should succeed even if cloud deletion fails: %v", err)
 	}
@@ -643,9 +663,15 @@ func TestIntegration_ControllerDelete_CloudDeletionFailure_StillSucceeds(t *test
 	if !mockProvider.deleteAttempted {
 		t.Error("Cloud deletion should have been attempted")
 	}
+
+	// Verify instance is gone from registry
+	_, err = registry.GetInstanceStatus("mock", "test-region")
+	if err == nil {
+		t.Error("Expected error when getting status of deleted instance")
+	}
 }
 
-func TestIntegration_ControllerDelete_DeviceNotInTailscale(t *testing.T) {
+func TestIntegration_RegistryDelete_DeviceNotInTailscale(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
@@ -661,20 +687,24 @@ func TestIntegration_ControllerDelete_DeviceNotInTailscale(t *testing.T) {
 
 	controlApi := NewIntegrationTestControlApi()
 
-	// Pre-add device so Create() can complete
-	controlApi.AddDevice(controlapi.Device{
-		Hostname: "fake-fake-us-east",
-		Created:  time.Now().Add(time.Second),
-	})
+	providerMap := map[string]providers.Provider{
+		"fake": fakeProvider,
+	}
 
-	controller := NewController(ctx, logger, fakeProvider, "fake-us-east", "", &services.ExitNode, controlApi, nil)
-	defer controller.Stop()
+	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
+	defer registry.Shutdown()
 
-	// Create instance
-	err := controller.Create()
+	// Create instance via registry
+	err := registry.CreateInstance(ctx, "fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
+
+	// Wait for instance to be created in the fake provider
+	require.Eventually(t, func() bool {
+		_, exists := fakeProvider.GetInstance("fake-us-east")
+		return exists
+	}, 10*time.Second, 100*time.Millisecond, "Expected instance in fake provider")
 
 	// Verify instance exists in fake provider
 	_, exists := fakeProvider.GetInstance("fake-us-east")
@@ -682,17 +712,15 @@ func TestIntegration_ControllerDelete_DeviceNotInTailscale(t *testing.T) {
 		t.Error("Instance should exist in fake provider after creation")
 	}
 
-	// NOW remove the device from control API to simulate it being deleted externally
-	controlApi.RemoveDevice("fake-fake-us-east")
-
-	// Verify device is gone from control API
+	// Device was never added to control API (or was removed externally).
+	// Verify no device in control API.
 	devices, _ := controlApi.ListDevices(ctx)
 	if len(devices) != 0 {
-		t.Fatalf("Expected device to be removed from control API, got %d devices", len(devices))
+		t.Fatalf("Expected 0 devices in control API, got %d", len(devices))
 	}
 
-	// Delete instance - should succeed and delete cloud instance even though device is gone
-	err = controller.Delete()
+	// Delete instance via registry - should succeed even though device is not in Tailscale
+	err = registry.DeleteInstance("fake", "fake-us-east")
 	if err != nil {
 		t.Fatalf("Delete should succeed even if device not in Tailscale: %v", err)
 	}

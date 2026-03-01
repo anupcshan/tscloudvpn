@@ -16,6 +16,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Ensure services import is used.
+var _ = &services.ExitNode
+
 // MockProvider implements a simple mock provider for testing
 type MockProvider struct {
 	hostname providers.HostName
@@ -100,13 +103,9 @@ func (m *MockControlApi) AddDevice(device controlapi.Device) {
 func TestController_NewController(t *testing.T) {
 	ctx := context.Background()
 	logger := log.Default()
-	provider := &MockProvider{
-		hostname: "test-instance",
-		status:   providers.InstanceStatusMissing,
-	}
-	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", "", &services.ExitNode, controlApi, nil)
+	controller := NewController(ctx, logger, providers.HostName("test-instance"), &services.ExitNode, nil)
+	controller.Start()
 	defer controller.Stop()
 
 	if controller == nil {
@@ -116,9 +115,6 @@ func TestController_NewController(t *testing.T) {
 	status := controller.Status()
 	if status.Hostname != "test-instance" {
 		t.Errorf("Expected hostname 'test-instance', got %s", status.Hostname)
-	}
-	if status.Region != "test-region" {
-		t.Errorf("Expected region 'test-region', got %s", status.Region)
 	}
 	if status.State != StateIdle {
 		t.Errorf("Expected instance state to be StateIdle, got %d", status.State)
@@ -372,10 +368,9 @@ func TestRegistry_PeriodicDiscovery_Idempotent(t *testing.T) {
 func TestController_IdleShutdown_StatsIdle(t *testing.T) {
 	ctx := context.Background()
 	logger := log.Default()
-	provider := &MockProvider{hostname: "test-instance"}
-	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", "", &services.ExitNode, controlApi, nil)
+	controller := NewController(ctx, logger, providers.HostName("test-instance"), &services.ExitNode, nil)
+	controller.Start()
 	defer controller.Stop()
 
 	controller.state = StateRunning
@@ -390,10 +385,9 @@ func TestController_IdleShutdown_StatsIdle(t *testing.T) {
 func TestController_IdleShutdown_StatsActive(t *testing.T) {
 	ctx := context.Background()
 	logger := log.Default()
-	provider := &MockProvider{hostname: "test-instance"}
-	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", "", &services.ExitNode, controlApi, nil)
+	controller := NewController(ctx, logger, providers.HostName("test-instance"), &services.ExitNode, nil)
+	controller.Start()
 	defer controller.Stop()
 
 	controller.state = StateRunning
@@ -408,10 +402,9 @@ func TestController_IdleShutdown_StatsActive(t *testing.T) {
 func TestController_IdleShutdown_NoStatsWatchdogExpired(t *testing.T) {
 	ctx := context.Background()
 	logger := log.Default()
-	provider := &MockProvider{hostname: "test-instance"}
-	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", "", &services.ExitNode, controlApi, nil)
+	controller := NewController(ctx, logger, providers.HostName("test-instance"), &services.ExitNode, nil)
+	controller.Start()
 	defer controller.Stop()
 
 	controller.state = StateRunning
@@ -423,10 +416,9 @@ func TestController_IdleShutdown_NoStatsWatchdogExpired(t *testing.T) {
 func TestController_IdleShutdown_NoStatsWatchdogNotExpired(t *testing.T) {
 	ctx := context.Background()
 	logger := log.Default()
-	provider := &MockProvider{hostname: "test-instance"}
-	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", "", &services.ExitNode, controlApi, nil)
+	controller := NewController(ctx, logger, providers.HostName("test-instance"), &services.ExitNode, nil)
+	controller.Start()
 	defer controller.Stop()
 
 	controller.state = StateRunning
@@ -438,10 +430,9 @@ func TestController_IdleShutdown_NoStatsWatchdogNotExpired(t *testing.T) {
 func TestController_IdleShutdown_NotRunning(t *testing.T) {
 	ctx := context.Background()
 	logger := log.Default()
-	provider := &MockProvider{hostname: "test-instance"}
-	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", "", &services.ExitNode, controlApi, nil)
+	controller := NewController(ctx, logger, providers.HostName("test-instance"), &services.ExitNode, nil)
+	controller.Start()
 	defer controller.Stop()
 
 	// State is StateIdle (default)
@@ -455,10 +446,9 @@ func TestController_IdleShutdown_NotRunning(t *testing.T) {
 func TestController_NodeStats(t *testing.T) {
 	ctx := context.Background()
 	logger := log.Default()
-	provider := &MockProvider{hostname: "test-instance"}
-	controlApi := &MockControlApi{}
 
-	controller := NewController(ctx, logger, provider, "test-region", "", &services.ExitNode, controlApi, nil)
+	controller := NewController(ctx, logger, providers.HostName("test-instance"), &services.ExitNode, nil)
+	controller.Start()
 	defer controller.Stop()
 
 	// Initially no stats

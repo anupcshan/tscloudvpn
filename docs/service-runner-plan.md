@@ -499,12 +499,13 @@ Each commit is self-contained and passes all tests.
   `ControlApi.CreateKey` now accepts `tags []string`. Only `app.go` (tsnet
   server) keeps hardcoded `tag:untrusted`.
 
-- [ ] **Commit 4: Move instance creation/deletion from Controller to Registry.**
+- [x] **Commit 4: Move instance creation/deletion from Controller to Registry.**
   Controller becomes purely state + health monitor. Registry handles the full
   create flow (render init script → create key → create cloud instance) and
   delete flow (delete Tailscale device → delete cloud instance). Controller
-  loses `provider`, `controlApi`, `sshKey`, `Creator`. This also eliminates
-  the `providerName` pass-through problem.
+  loses `provider`, `controlApi`, `sshKey`, `Creator`. Creator eliminated.
+  Start()/Stop() separated so Stop() is safe before Start() (fixes deadlock
+  on creation failure). Race on `started` field fixed with mutex.
 
 - [ ] **Commit 5: Stats/identity endpoint on port 8245.**
   Split stats endpoint into identity.json (static, written at boot) and

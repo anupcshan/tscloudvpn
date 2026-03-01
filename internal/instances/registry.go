@@ -87,41 +87,72 @@ func (r *Registry) CreateInstance(ctx context.Context, providerName, region stri
 		if status.State == StateFailed {
 			// Clean up failed controller before creating a new one
 			delete(r.controllers, key)
-		} else {
-			// Controller exists but instance isn't running, proceed with creation
-			controller := r.controllers[key]
+		} else if status.State == StateLaunching {
+			// Already launching, nothing to do
 			r.mu.Unlock()
-			go func() {
-				if err := controller.Create(); err != nil {
-					r.logger.Printf("Failed to create instance %s: %s", key, err)
-					controller.SetFailed(err)
-				}
-			}()
 			return nil
 		}
 	}
 
-	// Create new controller
+	// Look up provider
 	provider, exists := r.providers[providerName]
 	if !exists {
 		r.mu.Unlock()
 		return fmt.Errorf("unknown provider: %s", providerName)
 	}
 
-	controller := NewController(context.Background(), r.logger, provider, region, r.sshKey, &services.ExitNode, r.controlApi, r.tsClient)
+	hostname := provider.Hostname(region)
+
+	// Create controller for monitoring (does not start health loop yet)
+	controller := NewController(context.Background(), r.logger, hostname, &services.ExitNode, r.tsClient)
 	controller.onIdleShutdown = r.makeIdleShutdownCallback(providerName, region)
+	controller.SetLaunching()
 	r.controllers[key] = controller
 	r.mu.Unlock()
 
-	// Start instance creation
+	// Start instance creation in background
 	go func() {
-		if err := controller.Create(); err != nil {
+		instance, err := r.createCloudInstance(context.Background(), provider, region)
+		if err != nil {
 			r.logger.Printf("Failed to create instance %s: %s", key, err)
 			controller.SetFailed(err)
+			return
 		}
+		controller.SetHourlyCost(instance.HourlyCost)
+
+		// Start health monitoring now that the instance is launching
+		controller.Start()
 	}()
 
 	return nil
+}
+
+// createCloudInstance handles the cloud provisioning: create auth key,
+// render init script, call provider.
+func (r *Registry) createCloudInstance(ctx context.Context, provider providers.Provider, region string) (providers.Instance, error) {
+	authKey, err := r.controlApi.CreateKey(ctx, services.ExitNode.Tags)
+	if err != nil {
+		return providers.Instance{}, err
+	}
+
+	hostname := string(provider.Hostname(region))
+	userData, err := providers.RenderUserData(hostname, authKey, r.sshKey)
+	if err != nil {
+		return providers.Instance{}, err
+	}
+
+	createdInstance, err := provider.CreateInstance(ctx, providers.CreateRequest{
+		Region:   region,
+		UserData: userData,
+		SSHKey:   r.sshKey,
+	})
+	if err != nil {
+		r.logger.Printf("Failed to launch instance %s: %s", hostname, err)
+		return providers.Instance{}, err
+	}
+
+	r.logger.Printf("Launched instance %s", createdInstance.Hostname)
+	return createdInstance, nil
 }
 
 // DeleteInstance deletes an instance and its controller
@@ -142,11 +173,65 @@ func (r *Registry) DeleteInstance(providerName, region string) error {
 		return nil
 	}
 
-	// Delete the instance
-	err := controller.Delete()
-	controller.Stop()
+	// Look up provider
+	provider, exists := r.providers[providerName]
+	if !exists {
+		controller.Stop()
+		return fmt.Errorf("unknown provider: %s", providerName)
+	}
 
-	return err
+	hostname := provider.Hostname(region)
+
+	// Step 1: Delete from Tailscale/Headscale
+	r.deleteFromControlPlane(hostname)
+
+	// Step 2: Delete from cloud provider
+	r.deleteFromCloudProvider(provider, region, hostname)
+
+	controller.Stop()
+	return nil
+}
+
+// deleteFromControlPlane removes a device from Tailscale/Headscale.
+func (r *Registry) deleteFromControlPlane(hostname providers.HostName) {
+	devices, err := r.controlApi.ListDevices(context.Background())
+	if err != nil {
+		r.logger.Printf("Warning: failed to list devices: %v", err)
+		return
+	}
+
+	for i, device := range devices {
+		if providers.HostName(device.Hostname) == hostname {
+			if err := r.controlApi.DeleteDevice(context.Background(), &devices[i]); err != nil {
+				r.logger.Printf("Warning: failed to delete device %s from control plane: %v", hostname, err)
+			} else {
+				r.logger.Printf("Deleted device %s from control plane", hostname)
+			}
+			return
+		}
+	}
+
+	r.logger.Printf("Device %s not found in control plane, may have already been deleted", hostname)
+}
+
+// deleteFromCloudProvider removes a cloud instance.
+func (r *Registry) deleteFromCloudProvider(provider providers.Provider, region string, hostname providers.HostName) {
+	instances, err := provider.ListInstances(context.Background(), region)
+	if err != nil {
+		r.logger.Printf("Warning: failed to list cloud instances: %v", err)
+		return
+	}
+
+	for _, instance := range instances {
+		if instance.Hostname == string(hostname) {
+			if err := provider.DeleteInstance(context.Background(), instance); err != nil {
+				r.logger.Printf("Warning: failed to delete cloud instance %s: %v (will be cleaned up by GC)", instance.ProviderID, err)
+			} else {
+				r.logger.Printf("Deleted cloud instance %s", instance.ProviderID)
+			}
+			return
+		}
+	}
 }
 
 // GetInstanceStatus returns the status of a specific instance
@@ -163,6 +248,7 @@ func (r *Registry) GetInstanceStatus(providerName, region string) (InstanceStatu
 
 	status := controller.Status()
 	status.Provider = providerName
+	status.Region = region
 	return status, nil
 }
 
@@ -283,8 +369,8 @@ func (r *Registry) discoverInstances(ctx context.Context) {
 						}
 					}
 
-					// Create controller for existing instance with background context
-					controller := NewController(context.Background(), r.logger, provider, region.Code, r.sshKey, &services.ExitNode, r.controlApi, r.tsClient)
+					// Create controller for monitoring only
+					controller := NewController(context.Background(), r.logger, hostname, &services.ExitNode, r.tsClient)
 					controller.onIdleShutdown = r.makeIdleShutdownCallback(providerName, region.Code)
 					controller.onPeerGone = r.makePeerGoneCallback(providerName, region.Code)
 
@@ -294,6 +380,9 @@ func (r *Registry) discoverInstances(ctx context.Context) {
 					controller.createdAt = device.Created
 					controller.hourlyCost = hourlyCost
 					controller.mu.Unlock()
+
+					// Start health monitoring
+					controller.Start()
 
 					r.controllers[key] = controller
 				}

@@ -2,13 +2,11 @@ package instances
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"math"
 	"sync"
 	"time"
 
-	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 	"github.com/anupcshan/tscloudvpn/internal/services"
 	"github.com/anupcshan/tscloudvpn/internal/tsclient"
@@ -178,23 +176,22 @@ type InstanceStatus struct {
 // give every node a fresh window.
 const statsWatchdogThreshold = 8 * time.Hour
 
-// Controller manages the entire lifecycle of a single instance
+// Controller monitors the health of a single instance. It does not create
+// or delete instances — that is handled by the Registry.
 type Controller struct {
 	mu                    sync.RWMutex
 	ctx                   context.Context
 	cancel                context.CancelFunc
 	logger                *log.Logger
-	provider              providers.Provider
-	region                string
-	sshKey                string
+	hostname              providers.HostName
 	serviceType           *services.ServiceType
-	controlApi            controlapi.ControlApi
 	tsClient              tsclient.TailscaleClient
 	ping                  *PingHistory
 	launchedAt            time.Time
 	createdAt             time.Time
 	state                 InstanceState
 	done                  chan struct{}
+	started               bool // whether Start() was called
 	healthCheckTicker     *time.Ticker
 	nodeStats             *NodeStats // latest stats fetched from the node; nil if never fetched
 	watchingSince         time.Time  // when we started monitoring this node (for stats watchdog)
@@ -206,124 +203,51 @@ type Controller struct {
 	hourlyCost            float64    // actual hourly cost of the instance
 }
 
-// NewController creates a new instance controller
+// NewController creates a new instance controller that monitors health.
+// It does not start the health check loop — call Start() to begin monitoring.
 func NewController(
 	ctx context.Context,
 	logger *log.Logger,
-	provider providers.Provider,
-	region string,
-	sshKey string,
+	hostname providers.HostName,
 	serviceType *services.ServiceType,
-	controlApi controlapi.ControlApi,
 	tsClient tsclient.TailscaleClient,
 ) *Controller {
 	ctx, cancel := context.WithCancel(ctx)
 
-	c := &Controller{
+	return &Controller{
 		ctx:           ctx,
 		cancel:        cancel,
 		logger:        logger,
-		provider:      provider,
-		region:        region,
-		sshKey:        sshKey,
+		hostname:      hostname,
 		serviceType:   serviceType,
-		controlApi:    controlApi,
 		tsClient:      tsClient,
 		ping:          NewPingHistory(),
 		done:          make(chan struct{}),
 		watchingSince: time.Now(),
 	}
-
-	// Start health monitoring in background
-	go c.monitorHealth()
-
-	return c
 }
 
-// Create creates and configures the instance
-func (c *Controller) Create() error {
+// Start begins the health monitoring loop in a background goroutine.
+func (c *Controller) Start() {
 	c.mu.Lock()
-	// Check if instance is already running (discovered on startup)
-	if c.state == StateRunning {
-		c.mu.Unlock()
-		c.logger.Printf("Instance %s is already running, skipping creation", c.provider.Hostname(c.region))
-		return nil
-	}
+	c.started = true
+	c.mu.Unlock()
+	go c.monitorHealth()
+}
+
+// SetLaunching transitions the controller to launching state.
+func (c *Controller) SetLaunching() {
+	c.mu.Lock()
 	c.state = StateLaunching
 	c.launchedAt = time.Now()
 	c.mu.Unlock()
-
-	creator := NewCreator(c.sshKey, c.serviceType)
-	instanceID, err := creator.Create(c.ctx, c.logger, c.controlApi, c.provider, c.region)
-	if err != nil {
-		c.mu.Lock()
-		c.state = StateIdle
-		c.launchedAt = time.Time{}
-		c.mu.Unlock()
-		return err
-	}
-
-	c.mu.Lock()
-	c.hourlyCost = instanceID.HourlyCost
-	c.mu.Unlock()
-
-	// Stay in StateLaunching — the health check will transition to
-	// StateRunning when the peer appears in Tailscale.
-	return nil
 }
 
-// Delete removes the instance from both Tailscale and the cloud provider
-func (c *Controller) Delete() error {
-	hostname := c.provider.Hostname(c.region)
-
-	// Step 1: Delete from Tailscale/Headscale
-	devices, err := c.controlApi.ListDevices(c.ctx)
-	if err != nil {
-		return fmt.Errorf("failed to list devices: %w", err)
-	}
-
-	tailscaleDeleted := false
-	for i, device := range devices {
-		if providers.HostName(device.Hostname) == hostname {
-			if err := c.controlApi.DeleteDevice(c.ctx, &devices[i]); err != nil {
-				return fmt.Errorf("failed to delete device from control plane: %w", err)
-			}
-			tailscaleDeleted = true
-			c.logger.Printf("Deleted device %s from control plane", hostname)
-			break
-		}
-	}
-
-	if !tailscaleDeleted {
-		c.logger.Printf("Device %s not found in control plane, may have already been deleted", hostname)
-	}
-
-	// Step 2: Delete from cloud provider
-	instances, err := c.provider.ListInstances(c.ctx, c.region)
-	if err != nil {
-		c.logger.Printf("Warning: failed to list cloud instances: %v", err)
-		// Don't fail here - the device is already removed from Tailscale
-		// The GC will clean up orphaned cloud instances
-	} else {
-		for _, instance := range instances {
-			if instance.Hostname == string(hostname) {
-				if err := c.provider.DeleteInstance(c.ctx, instance); err != nil {
-					c.logger.Printf("Warning: failed to delete cloud instance %s: %v (will be cleaned up by GC)", instance.ProviderID, err)
-					// Don't return error - the device is already removed from Tailscale
-					// The GC will clean up orphaned cloud instances
-				} else {
-					c.logger.Printf("Deleted cloud instance %s", instance.ProviderID)
-				}
-				break
-			}
-		}
-	}
-
+// SetHourlyCost records the actual hourly cost of the instance.
+func (c *Controller) SetHourlyCost(cost float64) {
 	c.mu.Lock()
-	c.state = StateIdle
+	c.hourlyCost = cost
 	c.mu.Unlock()
-
-	return nil
 }
 
 // Status returns the current status of the instance
@@ -332,9 +256,9 @@ func (c *Controller) Status() InstanceStatus {
 	defer c.mu.RUnlock()
 
 	status := InstanceStatus{
-		Hostname:   c.provider.Hostname(c.region),
+		Hostname:   c.hostname,
 		Provider:   "", // Provider name will be set by caller
-		Region:     c.region,
+		Region:     "",  // Will be set by caller
 		State:      c.state,
 		IsRunning:  c.state == StateRunning,
 		CreatedAt:  c.createdAt,
@@ -402,10 +326,16 @@ func (c *Controller) SetFailed(err error) {
 	c.Stop()
 }
 
-// Stop stops the controller and cleans up resources
+// Stop stops the controller and cleans up resources.
+// Safe to call even if Start() was never called.
 func (c *Controller) Stop() {
 	c.cancel()
-	<-c.done
+	c.mu.RLock()
+	started := c.started
+	c.mu.RUnlock()
+	if started {
+		<-c.done
+	}
 }
 
 // monitorHealth runs the health check loop for this instance
@@ -415,14 +345,12 @@ func (c *Controller) monitorHealth() {
 	c.healthCheckTicker = time.NewTicker(healthCheckInterval)
 	defer c.healthCheckTicker.Stop()
 
-	hostname := c.provider.Hostname(c.region)
-
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
 		case <-c.healthCheckTicker.C:
-			c.performHealthCheck(hostname)
+			c.performHealthCheck(c.hostname)
 		}
 	}
 }
