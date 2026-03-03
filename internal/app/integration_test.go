@@ -1,24 +1,27 @@
-// Package app_test contains integration tests for the tscloudvpn application.
+// Package app_test contains end-to-end integration tests for tscloudvpn.
 //
-// This file contains real integration tests that use actual Tailscale API and cloud providers.
-// These tests require real credentials and will create actual cloud instances, so they:
+// These tests create real cloud instances across all configured providers,
+// wait for them to register with the Tailscale/Headscale control plane, and
+// verify that each exit node can actually forward traffic by routing through
+// it from a dedicated Docker container on the same tailnet.
 //
-//   - Are only built with the 'e2e' build tag
-//   - Are skipped in short mode
-//   - Require REAL_INTEGRATION_TEST=true environment variable
-//   - Need valid cloud provider and Tailscale/Headscale credentials
+// Requirements:
+//   - Build tag 'e2e'
+//   - REAL_INTEGRATION_TEST=true environment variable
+//   - Tailscale/Headscale control plane credentials
+//   - Cloud provider credentials for all registered providers
+//   - Docker available for traffic verification
 //   - Will incur actual costs from cloud providers
-//
-// For local testing with mocked dependencies, see e2e_test.go
 
 //go:build e2e
 
 package app_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -28,514 +31,308 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/config"
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/ory/dockertest/v3"
+	"github.com/ory/dockertest/v3/docker"
+	"github.com/stretchr/testify/require"
 
 	// Import all cloud provider implementations to register them
+	_ "github.com/anupcshan/tscloudvpn/internal/providers/azure"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/digitalocean"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/ec2"
-	_ "github.com/anupcshan/tscloudvpn/internal/providers/fake"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/gcp"
+	_ "github.com/anupcshan/tscloudvpn/internal/providers/hetzner"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/linode"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/vultr"
 )
 
-// TestRealIntegration_FullWorkflow tests the complete workflow with real Tailscale API and cloud providers
-// This test requires real credentials and will create actual cloud instances
-func TestRealIntegration_FullWorkflow(t *testing.T) {
+// defaultTestRegions maps provider names to cheap default regions.
+// Override with E2E_<PROVIDER>_REGION environment variables.
+var defaultTestRegions = map[string]string{
+	"do":      "sfo3",
+	"vultr":   "lax",
+	"linode":  "us-lax",
+	"ec2":     "us-west-2",
+	"gcp":     "us-west1",
+	"hetzner": "hil",
+	"azure":   "westus2",
+}
+
+// regionEnvVars maps provider names to the environment variable that overrides the test region.
+var regionEnvVars = map[string]string{
+	"do":      "E2E_DO_REGION",
+	"vultr":   "E2E_VULTR_REGION",
+	"linode":  "E2E_LINODE_REGION",
+	"ec2":     "E2E_AWS_REGION",
+	"gcp":     "E2E_GCP_REGION",
+	"hetzner": "E2E_HETZNER_REGION",
+	"azure":   "E2E_AZURE_REGION",
+}
+
+// TestExitNode launches an exit node on each registered cloud provider,
+// waits for it to register with the control plane, and verifies traffic
+// forwarding by routing through it from a Docker container on the same tailnet.
+//
+// Each provider is a subtest, so individual providers can be tested with:
+//
+//	go test -tags=e2e -run /ec2
+func TestExitNode(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping real integration tests in short mode")
 	}
-
-	// Check if we have the necessary environment variables for real testing
 	if os.Getenv("REAL_INTEGRATION_TEST") != "true" {
 		t.Skip("Skipping real integration test - set REAL_INTEGRATION_TEST=true to enable")
 	}
 
-	// Load configuration from environment or config file
 	cfg, err := loadRealConfig(t)
-	if err != nil {
-		t.Fatalf("Failed to load real configuration: %v", err)
-	}
+	require.NoError(t, err, "Failed to load real configuration")
 
-	// Validate we have at least one cloud provider configured
-	if !hasCloudProviderConfigured(cfg) {
-		t.Skip("No cloud provider credentials configured for real integration test")
-	}
-
-	// Validate we have Tailscale or Headscale configured
 	if !hasControlAPIConfigured(cfg) {
-		t.Skip("No Tailscale/Headscale credentials configured for real integration test")
+		t.Skip("No Tailscale/Headscale credentials configured")
 	}
 
-	t.Logf("Starting real integration test with actual cloud providers and Tailscale API")
+	application, err := app.New("")
+	require.NoError(t, err, "Failed to create app")
 
-	// Create and initialize the real application
-	app, err := app.New("")
-	if err != nil {
-		t.Fatalf("Failed to create app: %v", err)
-	}
+	initCtx, initCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer initCancel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
+	require.NoError(t, application.Initialize(initCtx), "Failed to initialize app")
 
-	if err := app.Initialize(ctx); err != nil {
-		t.Fatalf("Failed to initialize app: %v", err)
-	}
+	controller, err := cfg.GetController()
+	require.NoError(t, err, "Failed to get controller")
 
-	// Test creating a real instance in the cheapest available region
-	t.Run("CreateRealInstance", func(t *testing.T) {
-		// Double-check that providers were actually loaded after initialization
-		providers := app.GetCloudProviders()
-		if len(providers) == 0 {
-			t.Logf("Config indicates providers should be available:")
-			t.Logf("  DigitalOcean token present: %v", cfg.Providers.DigitalOcean.Token != "")
-			t.Logf("  Vultr API key present: %v", cfg.Providers.Vultr.APIKey != "")
-			t.Logf("  Linode token present: %v", cfg.Providers.Linode.Token != "")
-			t.Logf("  GCP credentials present: %v", cfg.Providers.GCP.CredentialsJSON != "")
-			t.Logf("  AWS access key present: %v", cfg.Providers.AWS.AccessKey != "")
-			t.Logf("  AWS_ACCESS_KEY_ID env: %v", os.Getenv("AWS_ACCESS_KEY_ID") != "")
-			t.Logf("  GOOGLE_APPLICATION_CREDENTIALS env: %v", os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != "")
+	pool, err := dockertest.NewPool("")
+	require.NoError(t, err, "Failed to connect to Docker")
+	require.NoError(t, pool.Client.Ping(), "Docker is not reachable")
 
-			// This suggests providers aren't registering properly or credentials are invalid
-			t.Skip("No cloud providers were successfully initialized despite configuration being present")
+	// One subtest per registered provider (skip the fake test provider).
+	for name := range providers.ProviderFactoryRegistry {
+		if name == "fake" {
+			continue
 		}
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-		t.Logf("Successfully loaded %d cloud providers", len(providers))
-		testCreateRealInstance(t, ctx, app, cfg)
-	})
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			defer cancel()
+
+			provider := application.GetCloudProvider(name)
+			require.NotNil(t, provider, "Provider %s has no credentials configured", name)
+
+			region := getTestRegion(name)
+			require.NotEmpty(t, region, "No test region for provider %s", name)
+
+			// Start a dedicated Docker test client for this provider.
+			testClient := startTestClient(t, ctx, pool, controller, cfg, name)
+
+			originalIP := dockerFetchURL(t, testClient, "https://api.ipify.org")
+			require.NotEmpty(t, originalIP, "Failed to get test client's external IP")
+			t.Logf("Test client original external IP: %s", originalIP)
+
+			// Create auth key and instance.
+			key, err := controller.CreateKey(ctx, []string{"tag:untrusted"})
+			require.NoError(t, err, "Failed to create auth key")
+
+			hostname := string(provider.Hostname(region))
+			userData, err := providers.RenderUserData(hostname, key, cfg.SSH.PublicKey, "exit", name, region)
+			require.NoError(t, err, "Failed to render user data")
+
+			t.Logf("Creating %s exit node in %s", name, region)
+			instance, err := provider.CreateInstance(ctx, providers.CreateRequest{
+				Region:   region,
+				UserData: userData,
+				SSHKey:   cfg.SSH.PublicKey,
+			})
+			require.NoError(t, err, "Failed to create instance")
+			t.Logf("Created instance: %s (provider ID: %s)", instance.Hostname, instance.ProviderID)
+
+			// Clean up instance and device when done.
+			t.Cleanup(func() {
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 3*time.Minute)
+				defer cleanupCancel()
+				t.Logf("Cleaning up %s instance %s", name, instance.ProviderID)
+				if err := provider.DeleteInstance(cleanupCtx, instance); err != nil {
+					t.Logf("Failed to delete %s instance: %v", name, err)
+				}
+				if dev, err := findDeviceByHostname(cleanupCtx, controller, instance.Hostname); err == nil && dev != nil {
+					if err := controller.DeleteDevice(cleanupCtx, dev); err != nil {
+						t.Logf("Failed to delete device %s: %v", dev.Name, err)
+					}
+				}
+			})
+
+			// Wait for the instance to register with the control plane.
+			t.Logf("Waiting for %s to register with control plane...", hostname)
+			device, err := waitForDeviceRegistration(ctx, controller, instance.Hostname, 3*time.Minute)
+			require.NoError(t, err, "Timed out waiting for device registration")
+			require.True(t, device.IsOnline, "Device is not online")
+			require.NotEmpty(t, device.IPAddrs, "Device has no IP addresses")
+			t.Logf("Device registered: %s, IPs: %v", device.Name, device.IPAddrs)
+
+			exitNodeIP := device.IPAddrs[0]
+
+			// Verify stats and identity endpoints before setting exit node.
+			statsURL := fmt.Sprintf("http://%s:8245/stats.json", exitNodeIP)
+			var statsBody string
+			require.Eventually(t, func() bool {
+				statsBody = dockerFetchURL(t, testClient, statsURL)
+				return statsBody != ""
+			}, 3*time.Minute, 10*time.Second, "Stats endpoint not reachable at %s", statsURL)
+			require.Contains(t, statsBody, "forwarded_bytes", "Stats response missing forwarded_bytes: %s", statsBody)
+			require.Contains(t, statsBody, "last_active", "Stats response missing last_active: %s", statsBody)
+			t.Logf("Stats endpoint verified: %s", statsBody)
+
+			identityURL := fmt.Sprintf("http://%s:8245/identity.json", exitNodeIP)
+			identityBody := dockerFetchURL(t, testClient, identityURL)
+			require.NotEmpty(t, identityBody, "Identity endpoint not reachable at %s", identityURL)
+
+			var identity struct {
+				Service  string `json:"service"`
+				Provider string `json:"provider"`
+				Region   string `json:"region"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(identityBody), &identity), "Invalid identity JSON: %s", identityBody)
+			require.Equal(t, "exit", identity.Service, "Wrong service in identity")
+			require.Equal(t, name, identity.Provider, "Wrong provider in identity")
+			require.Equal(t, region, identity.Region, "Wrong region in identity")
+			t.Logf("Identity endpoint verified: %s", identityBody)
+
+			// Wait for the exit node to advertise routes, then set it.
+			t.Logf("Waiting for %s to advertise exit node routes (IP: %s)", hostname, exitNodeIP)
+
+			require.Eventually(t, func() bool {
+				var stdout bytes.Buffer
+				code, _ := testClient.Exec(
+					[]string{"tailscale", "set", "--exit-node=" + exitNodeIP},
+					dockertest.ExecOptions{StdOut: &stdout, StdErr: &stdout},
+				)
+				if code != 0 {
+					t.Logf("tailscale set --exit-node=%s failed: %s", exitNodeIP, strings.TrimSpace(stdout.String()))
+				}
+				return code == 0
+			}, 3*time.Minute, 10*time.Second, "Exit node %s never started advertising", hostname)
+
+			var routedIP string
+			require.Eventually(t, func() bool {
+				routedIP = dockerFetchURL(t, testClient, "https://api.ipify.org")
+				t.Logf("External IP check: got %q (original: %s)", routedIP, originalIP)
+				return routedIP != "" && routedIP != originalIP
+			}, 3*time.Minute, 5*time.Second, "External IP did not change (still %s)", originalIP)
+
+			t.Logf("Traffic verified: original IP %s -> routed IP %s (via %s/%s)", originalIP, routedIP, name, region)
+		})
+	}
 }
 
-// loadRealConfig loads configuration for real integration testing
+// startTestClient creates a Docker container running tailscale, joins it to the
+// tailnet, and returns the dockertest resource. Each provider gets its own
+// container so exit node routing tests run fully in parallel.
+// The container is cleaned up automatically via t.Cleanup.
+func startTestClient(t *testing.T, ctx context.Context, pool *dockertest.Pool, controller controlapi.ControlApi, cfg *config.Config, providerName string) *dockertest.Resource {
+	t.Helper()
+
+	key, err := controller.CreateKey(ctx, []string{"tag:untrusted"})
+	require.NoError(t, err, "Failed to create auth key for test client")
+
+	clientHostname := "e2e-test-" + providerName
+	tsArgs := []string{"--hostname=" + clientHostname}
+	tsArgs = append(tsArgs, key.GetCLIArgs()...)
+
+	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
+		Repository: "tailscale/tailscale",
+		Tag:        "stable",
+		Env:        []string{"TS_STATE_DIR=/var/lib/tailscale"},
+		Cmd:        []string{"tailscaled", "--state=/var/lib/tailscale/tailscaled.state"},
+	}, func(hc *docker.HostConfig) {
+		hc.CapAdd = []string{"NET_ADMIN", "NET_RAW"}
+		hc.Devices = []docker.Device{
+			{PathOnHost: "/dev/net/tun", PathInContainer: "/dev/net/tun", CgroupPermissions: "rwm"},
+		}
+		hc.AutoRemove = true
+		hc.RestartPolicy = docker.NeverRestart()
+	})
+	require.NoError(t, err, "Failed to start tailscale container")
+
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+		defer cancel()
+		if dev, err := findDeviceByHostname(cleanupCtx, controller, clientHostname); err == nil && dev != nil {
+			_ = controller.DeleteDevice(cleanupCtx, dev)
+		}
+		_ = pool.Purge(resource)
+	})
+
+	// Wait for tailscaled to be ready, then join the tailnet.
+	require.Eventually(t, func() bool {
+		exitCode, _ := resource.Exec([]string{"tailscale", "status"}, dockertest.ExecOptions{})
+		return exitCode == 0 || exitCode == 1 // 1 = "not logged in" means daemon is running
+	}, 30*time.Second, 1*time.Second, "tailscaled did not become ready")
+
+	var stdout, stderr bytes.Buffer
+	exitCode, err := resource.Exec(
+		append([]string{"tailscale", "up"}, tsArgs...),
+		dockertest.ExecOptions{StdOut: &stdout, StdErr: &stderr},
+	)
+	require.NoError(t, err, "Failed to exec tailscale up")
+	require.Equal(t, 0, exitCode, "tailscale up failed: stdout=%s stderr=%s", stdout.String(), stderr.String())
+
+	require.Eventually(t, func() bool {
+		var out bytes.Buffer
+		code, _ := resource.Exec([]string{"tailscale", "status"}, dockertest.ExecOptions{StdOut: &out})
+		return code == 0
+	}, 1*time.Minute, 2*time.Second, "Test client did not come online")
+
+	t.Logf("Test client container started and joined tailnet")
+	return resource
+}
+
+// dockerFetchURL runs wget inside the Docker container and returns the trimmed output.
+// Returns empty string on failure. Uses timeout wrapper to prevent hanging on DNS
+// resolution when exit node routing is set but not yet functional.
+func dockerFetchURL(t *testing.T, resource *dockertest.Resource, url string) string {
+	t.Helper()
+	var stdout bytes.Buffer
+	exitCode, err := resource.Exec(
+		[]string{"timeout", "15", "wget", "-qO-", "-T", "10", url},
+		dockertest.ExecOptions{StdOut: &stdout},
+	)
+	if err != nil || exitCode != 0 {
+		return ""
+	}
+	return strings.TrimSpace(stdout.String())
+}
+
+// getTestRegion returns the test region for a provider, checking env var override first.
+func getTestRegion(providerName string) string {
+	if envVar, ok := regionEnvVars[providerName]; ok {
+		if region := os.Getenv(envVar); region != "" {
+			return region
+		}
+	}
+	if region, ok := defaultTestRegions[providerName]; ok {
+		return region
+	}
+	return ""
+}
+
+// loadRealConfig loads configuration for real integration testing.
 func loadRealConfig(t *testing.T) (*config.Config, error) {
-	// Try to load from config file first
+	t.Helper()
 	if configPath := os.Getenv("TSCLOUDVPN_CONFIG"); configPath != "" {
 		return config.LoadConfig(configPath)
 	}
-
-	// Fallback to environment variables
 	return config.LoadFromEnv()
 }
 
-// hasCloudProviderConfigured checks if at least one cloud provider has credentials
-func hasCloudProviderConfigured(cfg *config.Config) bool {
-	return cfg.Providers.DigitalOcean.Token != "" ||
-		cfg.Providers.Vultr.APIKey != "" ||
-		cfg.Providers.Linode.Token != "" ||
-		cfg.Providers.GCP.CredentialsJSON != "" ||
-		cfg.Providers.AWS.AccessKey != "" ||
-		os.Getenv("AWS_ACCESS_KEY_ID") != "" ||
-		os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != ""
-}
-
-// hasControlAPIConfigured checks if Tailscale or Headscale is configured
+// hasControlAPIConfigured checks if Tailscale or Headscale is configured.
 func hasControlAPIConfigured(cfg *config.Config) bool {
 	return (cfg.Control.Tailscale.ClientID != "" && cfg.Control.Tailscale.ClientSecret != "") ||
-		(cfg.Control.Headscale.APIKey != "" && cfg.Control.Headscale.User != "")
+		(cfg.Control.Headscale.APIKey != "")
 }
 
-// testCreateRealInstance tests creating a real instance with the cheapest provider
-func testCreateRealInstance(t *testing.T, ctx context.Context, app *app.App, cfg *config.Config) {
-	// Find the cheapest available region across all configured providers
-	cheapestProvider, cheapestRegion, cheapestPrice, err := findCheapestRegion(ctx, app)
-	if err != nil {
-		t.Fatalf("Failed to find cheapest region: %v", err)
-	}
-
-	if cheapestProvider == "" {
-		t.Skip("No regions available from configured providers")
-	}
-
-	t.Logf("Found cheapest region: %s/%s at $%.4f/hour", cheapestProvider, cheapestRegion, cheapestPrice)
-
-	// Create controller for managing the instance
-	controller, err := cfg.GetController()
-	if err != nil {
-		t.Fatalf("Failed to get controller: %v", err)
-	}
-
-	// Create a preauth key for the instance
-	key, err := controller.CreateKey(ctx, []string{"tag:untrusted"})
-	if err != nil {
-		t.Fatalf("Failed to create auth key: %v", err)
-	}
-
-	t.Logf("Created auth key for instance")
-
-	// Get the provider to create the instance
-	provider := app.GetCloudProvider(cheapestProvider)
-	if provider == nil {
-		t.Fatalf("Provider %s not found in app", cheapestProvider)
-	}
-
-	// Render user data
-	hostname := string(provider.Hostname(cheapestRegion))
-	userData, err := providers.RenderUserData(hostname, key, cfg.SSH.PublicKey, "exit", cheapestProvider, cheapestRegion)
-	if err != nil {
-		t.Fatalf("Failed to render user data: %v", err)
-	}
-
-	// Create the instance
-	t.Logf("Creating instance in %s/%s...", cheapestProvider, cheapestRegion)
-	instanceID, err := provider.CreateInstance(ctx, providers.CreateRequest{Region: cheapestRegion, UserData: userData, SSHKey: cfg.SSH.PublicKey})
-	if err != nil {
-		t.Fatalf("Failed to create instance: %v", err)
-	}
-
-	t.Logf("Created instance: %+v", instanceID)
-
-	// Ensure cleanup happens even if test fails
-	defer func() {
-		t.Logf("Cleaning up instance %+v", instanceID)
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		if err := provider.DeleteInstance(cleanupCtx, instanceID); err != nil {
-			t.Errorf("Failed to delete instance during cleanup: %v", err)
-		}
-	}()
-
-	// Wait for the instance to register with Tailscale
-	t.Logf("Waiting for instance to register with Tailscale...")
-	device, err := waitForDeviceRegistration(ctx, controller, instanceID.Hostname, 5*time.Minute)
-	if err != nil {
-		t.Fatalf("Failed to wait for device registration: %v", err)
-	}
-
-	t.Logf("Device registered: %s with IPs: %v", device.Name, device.IPAddrs)
-
-	// Test basic connectivity - device should be online
-	if !device.IsOnline {
-		t.Errorf("Device is not online: %+v", device)
-	}
-
-	if len(device.IPAddrs) == 0 {
-		t.Errorf("Device has no IP addresses: %+v", device)
-	}
-
-	// Verify instance status
-	status, err := provider.GetInstanceStatus(ctx, cheapestRegion)
-	if err != nil {
-		t.Errorf("Failed to get instance status: %v", err)
-	} else if status != providers.InstanceStatusRunning {
-		t.Errorf("Instance is not running, status: %v", status)
-	}
-
-	t.Logf("Successfully created and tested real instance %s in %s/%s", instanceID.Hostname, cheapestProvider, cheapestRegion)
-}
-
-// TestRealIntegration_ConfigValidation tests configuration validation with real APIs
-
-// testProviderConnectivity tests basic API connectivity for a cloud provider
-func testProviderConnectivity(t *testing.T, ctx context.Context, cfg *config.Config, providerName string) {
-	// Get the provider factory from the registry
-	factory, exists := providers.ProviderFactoryRegistry[providerName]
-	if !exists {
-		t.Fatalf("Provider %s not found in registry", providerName)
-	}
-
-	// Create the provider instance
-	provider, err := factory(ctx, cfg)
-	if err != nil {
-		t.Fatalf("Failed to create provider %s: %v", providerName, err)
-	}
-
-	if provider == nil {
-		t.Skipf("Provider %s is not configured (returned nil)", providerName)
-	}
-
-	t.Logf("Testing %s provider connectivity...", providerName)
-
-	// Test 1: List regions (basic API connectivity)
-	regions, err := provider.ListRegions(ctx)
-	if err != nil {
-		t.Fatalf("Failed to list regions for %s: %v", providerName, err)
-	}
-
-	if len(regions) == 0 {
-		t.Errorf("Provider %s returned no regions", providerName)
-	} else {
-		t.Logf("✓ Successfully listed %d regions for %s", len(regions), providerName)
-	}
-
-	// Test 2: Region pricing (validates region data)
-	priceValidRegions := 0
-	for _, region := range regions {
-		price := provider.GetRegionHourlyEstimate(region.Code)
-		if price > 0 {
-			priceValidRegions++
-			t.Logf("  Region %s (%s): $%.4f/hour", region.Code, region.LongName, price)
-		} else {
-			t.Logf("  Region %s (%s): no pricing info", region.Code, region.LongName)
-		}
-	}
-
-	if priceValidRegions == 0 {
-		t.Errorf("No regions have valid pricing information for %s", providerName)
-	} else {
-		t.Logf("✓ Found pricing for %d/%d regions for %s", priceValidRegions, len(regions), providerName)
-	}
-
-	// Test 3: Check instance status for a region (basic API operations)
-	if len(regions) > 0 {
-		testRegion := regions[0].Code
-		status, err := provider.GetInstanceStatus(ctx, testRegion)
-		if err != nil {
-			t.Logf("Warning: Failed to get instance status for region %s: %v", testRegion, err)
-		} else {
-			t.Logf("✓ Successfully checked instance status for region %s: %v", testRegion, status)
-		}
-
-		// Test 4: List instances in region
-		instances, err := provider.ListInstances(ctx, testRegion)
-		if err != nil {
-			t.Logf("Warning: Failed to list instances for region %s: %v", testRegion, err)
-		} else {
-			t.Logf("✓ Successfully listed instances for region %s: %d found", testRegion, len(instances))
-		}
-	}
-
-	t.Logf("✓ Provider %s connectivity test completed successfully", providerName)
-}
-
-// TestRealIntegration_NetworkConnectivity tests actual network connectivity through created instances
-func TestRealIntegration_NetworkConnectivity(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping real integration tests in short mode")
-	}
-
-	if os.Getenv("REAL_INTEGRATION_TEST") != "true" {
-		t.Skip("Skipping real integration test - set REAL_INTEGRATION_TEST=true to enable")
-	}
-
-	// Load configuration and validate setup
-	cfg, err := loadRealConfig(t)
-	if err != nil {
-		t.Fatalf("Failed to load real configuration: %v", err)
-	}
-
-	if !hasCloudProviderConfigured(cfg) {
-		t.Skip("No cloud provider credentials configured for real integration test")
-	}
-
-	if !hasControlAPIConfigured(cfg) {
-		t.Skip("No Tailscale/Headscale credentials configured for real integration test")
-	}
-
-	t.Logf("Starting real network connectivity test with actual cloud instance creation")
-
-	// Create and initialize the real application
-	app, err := app.New("")
-	if err != nil {
-		t.Fatalf("Failed to create app: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-	defer cancel()
-
-	if err := app.Initialize(ctx); err != nil {
-		t.Fatalf("Failed to initialize app: %v", err)
-	}
-
-	// Test complete network workflow
-	t.Run("FullNetworkWorkflow", func(t *testing.T) {
-		testFullNetworkWorkflow(t, ctx, app, cfg)
-	})
-}
-
-// testFullNetworkWorkflow tests the complete network connectivity workflow
-func testFullNetworkWorkflow(t *testing.T, ctx context.Context, app *app.App, cfg *config.Config) {
-	// Step 1: Create a real instance
-	t.Logf("Step 1: Creating real cloud instance...")
-	cheapestProvider, cheapestRegion, cheapestPrice, err := findCheapestRegion(ctx, app)
-	if err != nil {
-		t.Fatalf("Failed to find cheapest region: %v", err)
-	}
-
-	if cheapestProvider == "" {
-		t.Skip("No regions available from configured providers")
-	}
-
-	t.Logf("Creating instance in cheapest region: %s/%s at $%.4f/hour", cheapestProvider, cheapestRegion, cheapestPrice)
-
-	// Create controller and auth key
-	controller, err := cfg.GetController()
-	if err != nil {
-		t.Fatalf("Failed to get controller: %v", err)
-	}
-
-	key, err := controller.CreateKey(ctx, []string{"tag:untrusted"})
-	if err != nil {
-		t.Fatalf("Failed to create auth key: %v", err)
-	}
-
-	// Create the instance
-	provider := app.GetCloudProvider(cheapestProvider)
-	if provider == nil {
-		t.Fatalf("Provider %s not found in app", cheapestProvider)
-	}
-
-	// Render user data
-	hostname := string(provider.Hostname(cheapestRegion))
-	userData, err := providers.RenderUserData(hostname, key, cfg.SSH.PublicKey, "exit", cheapestProvider, cheapestRegion)
-	if err != nil {
-		t.Fatalf("Failed to render user data: %v", err)
-	}
-
-	instanceID, err := provider.CreateInstance(ctx, providers.CreateRequest{Region: cheapestRegion, UserData: userData, SSHKey: cfg.SSH.PublicKey})
-	if err != nil {
-		t.Fatalf("Failed to create instance: %v", err)
-	}
-
-	t.Logf("Created instance: %+v", instanceID)
-
-	// Ensure cleanup happens
-	defer func() {
-		t.Logf("Cleaning up instance %+v", instanceID)
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		defer cancel()
-		if err := provider.DeleteInstance(cleanupCtx, instanceID); err != nil {
-			t.Errorf("Failed to delete instance during cleanup: %v", err)
-		}
-
-		// Also try to clean up the device from Tailscale
-		if device, err := findDeviceByHostname(cleanupCtx, controller, instanceID.Hostname); err == nil && device != nil {
-			if err := controller.DeleteDevice(cleanupCtx, device); err != nil {
-				t.Logf("Failed to delete device %s from Tailscale: %v", device.Name, err)
-			} else {
-				t.Logf("Cleaned up device %s from Tailscale", device.Name)
-			}
-		}
-	}()
-
-	// Step 2: Wait for it to join the Tailscale network
-	t.Logf("Step 2: Waiting for instance to join Tailscale network...")
-	device, err := waitForDeviceRegistration(ctx, controller, instanceID.Hostname, 8*time.Minute)
-	if err != nil {
-		t.Fatalf("Failed to wait for device registration: %v", err)
-	}
-
-	t.Logf("Device registered: %s with IPs: %v", device.Name, device.IPAddrs)
-
-	if !device.IsOnline {
-		t.Fatalf("Device is not online: %+v", device)
-	}
-
-	if len(device.IPAddrs) == 0 {
-		t.Fatalf("Device has no IP addresses: %+v", device)
-	}
-
-	// Step 3: Enable exit node and test routing
-	t.Logf("Step 3: Testing exit node functionality...")
-	testExitNodeFunctionality(t, ctx, controller, device)
-
-	t.Logf("✓ Full network connectivity test completed successfully!")
-}
-
-// testExitNodeFunctionality tests exit node routing capabilities
-func testExitNodeFunctionality(t *testing.T, ctx context.Context, controller controlapi.ControlApi, device *controlapi.Device) {
-	// Get our current external IP
-	originalIP, err := getExternalIP()
-	if err != nil {
-		t.Logf("Warning: Could not get original external IP: %v", err)
-		originalIP = "unknown"
-	} else {
-		t.Logf("Current external IP: %s", originalIP)
-	}
-
-	// Exit node route approval is handled by Tailscale's autoApprovers ACL policy.
-	t.Logf("✓ Exit node functionality test completed (device registered, routes auto-approved by policy)")
-}
-
-// Helper function to make HTTP requests
-func makeHTTPRequest(url string, timeout time.Duration) (*http.Response, error) {
-	client := &http.Client{Timeout: timeout}
-	return client.Get(url)
-}
-
-// makeHTTPRequestWithIP makes HTTP requests to a specific IP with timeout
-func makeHTTPRequestWithIP(url string, timeout time.Duration) (*http.Response, error) {
-	client := &http.Client{Timeout: timeout}
-	return client.Get(url)
-}
-
-// findDeviceByHostname searches for a device with the given hostname
-func findDeviceByHostname(ctx context.Context, controller controlapi.ControlApi, hostname string) (*controlapi.Device, error) {
-	devices, err := controller.ListDevices(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, device := range devices {
-		if device.Hostname == hostname {
-			return &device, nil
-		}
-	}
-
-	return nil, fmt.Errorf("device with hostname %s not found", hostname)
-}
-
-// Helper function to test internet connectivity through an exit node (for future use)
-
-// Helper function to get external IP (for testing exit node functionality)
-func getExternalIP() (string, error) {
-	resp, err := http.Get("https://api.ipify.org")
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body := make([]byte, 100)
-	n, err := resp.Body.Read(body)
-	if err != nil && err.Error() != "EOF" {
-		return "", err
-	}
-
-	return strings.TrimSpace(string(body[:n])), nil
-}
-
-// AppWithProviders interface for accessing cloud providers (for testing)
-type AppWithProviders interface {
-	GetCloudProviders() map[string]providers.Provider
-	GetCloudProvider(name string) providers.Provider
-}
-
-// findCheapestRegion finds the cheapest region across all configured providers
-func findCheapestRegion(ctx context.Context, app AppWithProviders) (providerName, regionCode string, price float64, err error) {
-	providers := app.GetCloudProviders()
-	if len(providers) == 0 {
-		return "", "", 0, fmt.Errorf("no cloud providers configured")
-	}
-
-	cheapestPrice := float64(-1)
-	cheapestProvider := ""
-	cheapestRegion := ""
-
-	for providerName, provider := range providers {
-		regions, err := provider.ListRegions(ctx)
-		if err != nil {
-			return "", "", 0, fmt.Errorf("failed to list regions for provider %s: %w", providerName, err)
-		}
-
-		for _, region := range regions {
-			price := provider.GetRegionHourlyEstimate(region.Code)
-			if price <= 0 {
-				continue // Skip regions with no pricing info
-			}
-
-			if cheapestPrice < 0 || price < cheapestPrice {
-				cheapestPrice = price
-				cheapestProvider = providerName
-				cheapestRegion = region.Code
-			}
-		}
-	}
-
-	if cheapestProvider == "" {
-		return "", "", 0, fmt.Errorf("no regions with valid pricing found")
-	}
-
-	return cheapestProvider, cheapestRegion, cheapestPrice, nil
-}
-
-// waitForDeviceRegistration waits for a device with the given hostname to register with the control API
+// waitForDeviceRegistration polls the control API until a device with the
+// expected hostname appears, or the timeout expires.
 func waitForDeviceRegistration(ctx context.Context, controller controlapi.ControlApi, expectedHostname string, timeout time.Duration) (*controlapi.Device, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -550,9 +347,8 @@ func waitForDeviceRegistration(ctx context.Context, controller controlapi.Contro
 		case <-ticker.C:
 			devices, err := controller.ListDevices(ctx)
 			if err != nil {
-				continue // Retry on error
+				continue
 			}
-
 			for _, device := range devices {
 				if device.Hostname == expectedHostname {
 					return &device, nil
@@ -562,7 +358,16 @@ func waitForDeviceRegistration(ctx context.Context, controller controlapi.Contro
 	}
 }
 
-// TestRealIntegration_HelperFunctions tests our helper functions with mock providers
-// This test validates the core logic without requiring real credentials
-
-// TestRealIntegration_ProviderConnectivityWithFake tests the provider connectivity function with fake provider
+// findDeviceByHostname searches for a device with the given hostname.
+func findDeviceByHostname(ctx context.Context, controller controlapi.ControlApi, hostname string) (*controlapi.Device, error) {
+	devices, err := controller.ListDevices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, device := range devices {
+		if device.Hostname == hostname {
+			return &device, nil
+		}
+	}
+	return nil, fmt.Errorf("device with hostname %s not found", hostname)
+}

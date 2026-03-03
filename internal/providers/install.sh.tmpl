@@ -42,7 +42,12 @@ cat > /tmp/stats/identity.json <<IDENTITY
 {"service": "{{.Service}}", "provider": "{{.Provider}}", "region": "{{.Region}}"}
 IDENTITY
 
-(cd /tmp/stats && python3 -m http.server 8245 --bind "$(tailscale ip -4)") &
+# Wait for tailscale IP to be assignable on the interface before binding.
+TS_IP=$(tailscale ip -4)
+while ! ip addr show dev tailscale0 2>/dev/null | grep -q "$TS_IP"; do
+  sleep 1
+done
+(cd /tmp/stats && python3 -m http.server 8245 --bind "$TS_IP") &
 
 # Update stats file every 30 seconds
 while sleep 30; do
