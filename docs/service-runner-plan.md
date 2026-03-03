@@ -531,12 +531,83 @@ Each commit is self-contained and passes all tests.
   take service name. `GetAllInstanceStatuses` populates
   Service/Provider/Region from stored metadata instead of parsing keys.
 
+### Phase 0b+0c implementation sequence
+
+Validated end-to-end with a spike (stashed on `service-runner` branch).
+cloudblockdev + ZFS + filebrowser + R2 persistence works across VM
+lifecycles. Boot time ~1.5min on Ubuntu (vs ~7min on Debian due to ZFS
+DKMS compilation). Landing as focused commits:
+
+- [ ] **Commit 8: Switch all providers to Ubuntu 24.04.**
+  All 7 providers currently use Debian 12. Switch to Ubuntu 24.04:
+  EC2 SSM path, DO slug, Vultr OS filter, Linode image ID, Hetzner
+  image name, GCP image family, Azure publisher/offer/SKU. Update
+  exit node init script tailscale repo URLs (`ubuntu/noble` instead
+  of `debian/bookworm`). Ubuntu ships ZFS as a prebuilt kernel module
+  — no DKMS needed.
+
+- [ ] **Commit 9: Init script rendering refactor.**
+  `RenderUserData` takes init script template as parameter (currently
+  hardcodes `InitData`). Use `svcType.InitScript` in registry's
+  `createCloudInstance`. Extend `InitScriptData` with R2 credential
+  fields (`R2AccessKeyID`, `R2SecretAccessKey`, `R2Endpoint`,
+  `R2Bucket`, `VolumeSize`, `VolumeName`). Add
+  `RenderUserDataWithPersistence` that accepts a pre-populated
+  `InitScriptData`. No behavior change for exit nodes.
+
+- [ ] **Commit 10: Named instances in registry.**
+  Add `instanceName` parameter to `CreateInstance`, `DeleteInstance`,
+  `GetInstanceStatus`. `registryKey` returns `{service}-{name}` for
+  persistent services (name non-empty), `{service}-{provider}-{region}`
+  for ephemeral. Add `name` field to `controllerEntry`, `InstanceName`
+  to `InstanceStatus`. All existing callers pass `""`.
+
+- [ ] **Commit 11: Cloudflare config + R2 client.**
+  New `internal/r2/r2.go`: `TokenManager` with `CreateVolume` (create
+  bucket + scoped API token, derive S3 creds via SHA-256 of token
+  value) and `RevokeToken` (find token by name, delete it). One R2
+  bucket per volume (`tscloudvpn-vol-{name}`). Permission group IDs
+  looked up at runtime via `GET /user/tokens/permission_groups` and
+  cached. Resource scope: `com.cloudflare.edge.r2.bucket.{acct}_default_{bucket}`.
+  Config: `cloudflare.account_id` + `cloudflare.api_token`. Wired
+  through app → server → manager → registry (nil if not configured).
+
+- [ ] **Commit 12: R2 wiring in registry lifecycle.**
+  In `createCloudInstance`: if `svcType.Persistence != nil` and R2 is
+  configured, call `CreateVolume` then `RenderUserDataWithPersistence`
+  with credentials. In `DeleteInstance`: revoke R2 token before
+  deleting from control plane/cloud (instant fencing). Bucket and
+  data are preserved for future resume.
+
+- [ ] **Commit 13: File server ServiceType + init script.**
+  `var FileServer = ServiceType{Name: "files", Label: "File Server", ...}`
+  with `Persistence: &PersistenceConfig{MountPoint: "/data", Size: "10G"}`,
+  `IdleTimeout: 2h`, `Tags: ["tag:untrusted"]`. Init script
+  (`fileserver_init.sh.tmpl`, embedded): Phase 1: modprobe nbd,
+  download cloudblockdev (arch-aware amd64/arm64 from GitHub release
+  1772439544-6ebe4db), write YAML config with R2 creds, start
+  cloudblockdev in background. Phase 2: install tailscale + ZFS,
+  join tailnet. Phase 3: wait for /dev/nbd0, `zpool import -f data`
+  or `zpool create` for new volumes. Phase 4: download filebrowser
+  (v2.61.0), init DB, run on port 80 bound to tailscale IP. Phase 5:
+  stats server on 8245, idle detection via filebrowser I/O activity.
+  Add to `services.All` catalog.
+
+- [ ] **Commit 14: API routes + minimal UI.**
+  Routes: `PUT /services/files/instances/{name}/providers/{provider}/regions/{region}`
+  and `DELETE /services/files/instances/{name}` (looks up provider/region
+  from running instance status). UI: "Launch File Server" section with
+  name text input, provider/region dropdown, create button. Uses
+  `fetch()` (not HTMX) since the form is different from exit nodes.
+
+- [ ] **Commit 15: Cleanup.**
+  Cloud provider instance tags include service type. GC handles new
+  registry key format. identity.json includes instance name for
+  discovery of persistent services. Restore init script ERR/EXIT
+  trap. Improve async error reporting in UI.
+
 ### ZFS for persistent services
 
-All persistent services use ZFS instead of ext4. This adds DKMS compilation
-overhead at first boot of a new kernel but provides:
-- ZFS ARC for read caching (helps paper over S3/R2 latency)
-- Readahead optimization
-- Snapshots, compression, checksumming
-
-The `PersistenceConfig.FSType` is always `"zfs"` for persistent services.
+Ubuntu ships ZFS as a prebuilt kernel module in `linux-modules-extra`.
+No DKMS compilation needed — `apt install zfsutils-linux` + `modprobe zfs`
+works immediately. ZFS provides:
