@@ -254,6 +254,8 @@ func (f *FakeProvider) SetInstanceStatus(region string, status providers.Instanc
 	}
 }
 
+func (f *FakeProvider) DebugSSHUser() string { return "root" }
+
 func (f *FakeProvider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
 	return netip.MustParseAddr("192.0.2.1"), nil
 }

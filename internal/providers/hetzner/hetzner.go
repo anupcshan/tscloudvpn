@@ -122,6 +122,8 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, req providers.Crea
 	}, nil
 }
 
+func (h *hetznerProvider) DebugSSHUser() string { return "root" }
+
 func (h *hetznerProvider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
 	serverID, err := strconv.ParseInt(instance.ProviderID, 10, 64)
 	if err != nil {

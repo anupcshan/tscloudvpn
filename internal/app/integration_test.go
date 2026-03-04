@@ -414,7 +414,7 @@ func generateTestSSHKey(t *testing.T) (ssh.Signer, string) {
 // Intended to be called in a goroutine.
 func sshTailCloudInitLog(ctx context.Context, t *testing.T, getter providers.PublicIPGetter, instance providers.Instance, signer ssh.Signer) {
 	sshCfg := &ssh.ClientConfig{
-		User:            "root",
+		User:            getter.DebugSSHUser(),
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,

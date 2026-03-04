@@ -200,6 +200,8 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, req providers.Create
 	}, nil
 }
 
+func (v *vultrProvider) DebugSSHUser() string { return "root" }
+
 func (v *vultrProvider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
 	inst, _, err := v.vultrClient.Instance.Get(ctx, instance.ProviderID)
 	if err != nil {

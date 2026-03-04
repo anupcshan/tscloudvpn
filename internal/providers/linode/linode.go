@@ -88,6 +88,8 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, req providers.Creat
 	}, nil
 }
 
+func (l *linodeProvider) DebugSSHUser() string { return "root" }
+
 func (l *linodeProvider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
 	linodeID, err := strconv.Atoi(instance.ProviderID)
 	if err != nil {

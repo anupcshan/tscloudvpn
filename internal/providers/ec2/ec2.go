@@ -223,6 +223,8 @@ func (e *ec2Provider) addSSHPortRule(ctx context.Context, client *ec2.Client, gr
 	return err
 }
 
+func (e *ec2Provider) DebugSSHUser() string { return "root" }
+
 func (e *ec2Provider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
 	region := strings.TrimPrefix(instance.Hostname, "ec2-")
 	e.mu.Lock()

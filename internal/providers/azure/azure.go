@@ -280,6 +280,8 @@ func (a *azureProvider) CreateInstance(ctx context.Context, req providers.Create
 	return providers.Instance{}, fmt.Errorf("all VM sizes exhausted for region %s: %w", req.Region, lastErr)
 }
 
+func (a *azureProvider) DebugSSHUser() string { return "azureuser" }
+
 func (a *azureProvider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
 	pipName := instance.ProviderID + "-pip"
 	pip, err := a.pipClient.Get(ctx, a.resourceGroup, pipName, nil)

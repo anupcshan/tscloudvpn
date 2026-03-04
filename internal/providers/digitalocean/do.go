@@ -98,6 +98,8 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, req providers
 	}, nil
 }
 
+func (d *digitaloceanProvider) DebugSSHUser() string { return "root" }
+
 func (d *digitaloceanProvider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
 	dropletID, err := strconv.Atoi(instance.ProviderID)
 	if err != nil {

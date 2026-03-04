@@ -68,6 +68,8 @@ type AllInstanceLister interface {
 // in integration tests.
 type PublicIPGetter interface {
 	GetPublicIP(ctx context.Context, instance Instance) (netip.Addr, error)
+	// DebugSSHUser returns the username for SSH debug connections (e.g. "root", "azureuser").
+	DebugSSHUser() string
 }
 
 type ProviderFactory func(ctx context.Context, cfg *config.Config) (Provider, error)

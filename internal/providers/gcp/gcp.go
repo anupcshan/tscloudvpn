@@ -577,6 +577,8 @@ func (g *gcpProvider) getOrCreateSSHFirewallRule(ctx context.Context) error {
 	return nil
 }
 
+func (g *gcpProvider) DebugSSHUser() string { return "root" }
+
 func (g *gcpProvider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
 	zone := strings.TrimPrefix(instance.ProviderID, "tscloudvpn-")
 
