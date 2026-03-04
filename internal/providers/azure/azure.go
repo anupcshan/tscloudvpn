@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strings"
@@ -277,6 +278,18 @@ func (a *azureProvider) CreateInstance(ctx context.Context, req providers.Create
 	}
 
 	return providers.Instance{}, fmt.Errorf("all VM sizes exhausted for region %s: %w", req.Region, lastErr)
+}
+
+func (a *azureProvider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
+	pipName := instance.ProviderID + "-pip"
+	pip, err := a.pipClient.Get(ctx, a.resourceGroup, pipName, nil)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("failed to get public IP: %w", err)
+	}
+	if pip.Properties == nil || pip.Properties.IPAddress == nil {
+		return netip.Addr{}, fmt.Errorf("public IP not yet assigned for %s", pipName)
+	}
+	return netip.ParseAddr(*pip.Properties.IPAddress)
 }
 
 func (a *azureProvider) ensureNetworkResources(ctx context.Context, region, vmName string) error {

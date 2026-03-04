@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"net/netip"
 	"slices"
 	"sort"
 	"strings"
@@ -24,7 +25,8 @@ const (
 	debianLatestImage = "projects/debian-cloud/global/images/family/debian-12"
 	providerName      = "gcp"
 	cacheDuration     = 24 * time.Hour // Cache machine types for 24 hours
-	firewallRuleName  = "tscloudvpn-allow-vpn"
+	firewallRuleName    = "tscloudvpn-allow-vpn"
+	sshFirewallRuleName = "tscloudvpn-allow-ssh"
 	networkTag        = "tscloudvpn"
 	// Tailscale uses this port for inbound connections - see https://tailscale.com/kb/1257/connection-types#hard-nat
 	tailscaledInboundPort = "41641"
@@ -535,6 +537,68 @@ func (g *gcpProvider) getOrCreateFirewallRule(ctx context.Context) error {
 	return nil
 }
 
+func (g *gcpProvider) getOrCreateSSHFirewallRule(ctx context.Context) error {
+	_, err := compute.NewFirewallsService(g.service).Get(g.projectId, sshFirewallRuleName).Context(ctx).Do()
+	if err == nil {
+		return nil
+	}
+
+	op, err := compute.NewFirewallsService(g.service).Insert(g.projectId, &compute.Firewall{
+		Name:      sshFirewallRuleName,
+		Network:   "global/networks/default",
+		Direction: "INGRESS",
+		Priority:  1000,
+		Allowed: []*compute.FirewallAllowed{
+			{
+				IPProtocol: "tcp",
+				Ports:      []string{"22"},
+			},
+		},
+		SourceRanges: []string{"0.0.0.0/0"},
+		TargetTags:   []string{networkTag},
+	}).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("failed to create SSH firewall rule: %w", err)
+	}
+
+	op, err = compute.NewGlobalOperationsService(g.service).Wait(g.projectId, op.Name).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("failed waiting for SSH firewall rule creation: %w", err)
+	}
+	if op.Error != nil {
+		var msgs []string
+		for _, e := range op.Error.Errors {
+			msgs = append(msgs, fmt.Sprintf("%s: %s", e.Code, e.Message))
+		}
+		return fmt.Errorf("SSH firewall rule creation failed: %s", strings.Join(msgs, "; "))
+	}
+
+	log.Printf("Created GCP SSH firewall rule %s", sshFirewallRuleName)
+	return nil
+}
+
+func (g *gcpProvider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
+	zone := strings.TrimPrefix(instance.ProviderID, "tscloudvpn-")
+
+	inst, err := compute.NewInstancesService(g.service).Get(g.projectId, zone, instance.ProviderID).Context(ctx).Do()
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("failed to get instance: %w", err)
+	}
+
+	for _, ni := range inst.NetworkInterfaces {
+		for _, ac := range ni.AccessConfigs {
+			if ac.NatIP != "" {
+				addr, err := netip.ParseAddr(ac.NatIP)
+				if err != nil {
+					return netip.Addr{}, fmt.Errorf("failed to parse IP %q: %w", ac.NatIP, err)
+				}
+				return addr, nil
+			}
+		}
+	}
+	return netip.Addr{}, fmt.Errorf("no public IP found for instance %s", instance.ProviderID)
+}
+
 func (g *gcpProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
 	// Ensure machine type cache is populated
 	if err := g.ensureMachineTypeCache(); err != nil {
@@ -561,6 +625,12 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, req providers.CreateRe
 	// Ensure firewall rule exists for Tailscale inbound port
 	if err := g.getOrCreateFirewallRule(ctx); err != nil {
 		return providers.Instance{}, fmt.Errorf("failed to setup firewall rule: %w", err)
+	}
+
+	if req.Debug {
+		if err := g.getOrCreateSSHFirewallRule(ctx); err != nil {
+			log.Printf("Failed to create SSH firewall rule: %v", err)
+		}
 	}
 
 	zone := zones.Items[rand.Intn(len(zones.Items))].Name

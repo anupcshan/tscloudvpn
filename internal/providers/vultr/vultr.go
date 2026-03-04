@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"net/netip"
 	"slices"
 	"sort"
 	"strings"
@@ -197,6 +198,17 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, req providers.Create
 		ProviderName: "vultr",
 		HourlyCost:   regionSize.HourlyCost,
 	}, nil
+}
+
+func (v *vultrProvider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
+	inst, _, err := v.vultrClient.Instance.Get(ctx, instance.ProviderID)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("failed to get instance: %w", err)
+	}
+	if inst.MainIP == "" || inst.MainIP == "0.0.0.0" {
+		return netip.Addr{}, fmt.Errorf("no public IP assigned yet for instance %s", instance.ProviderID)
+	}
+	return netip.ParseAddr(inst.MainIP)
 }
 
 func (v *vultrProvider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {

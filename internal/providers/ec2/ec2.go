@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/netip"
 	"sort"
 	"strings"
 	"sync"
@@ -202,6 +203,54 @@ func (e *ec2Provider) addVPNPortRule(ctx context.Context, client *ec2.Client, gr
 	return err
 }
 
+func (e *ec2Provider) addSSHPortRule(ctx context.Context, client *ec2.Client, groupId *string) error {
+	_, err := client.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: groupId,
+		IpPermissions: []types.IpPermission{
+			{
+				IpProtocol: aws.String("tcp"),
+				FromPort:   aws.Int32(22),
+				ToPort:     aws.Int32(22),
+				IpRanges: []types.IpRange{
+					{
+						CidrIp:      aws.String("0.0.0.0/0"),
+						Description: aws.String("SSH access for debug diagnostics"),
+					},
+				},
+			},
+		},
+	})
+	return err
+}
+
+func (e *ec2Provider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
+	region := strings.TrimPrefix(instance.Hostname, "ec2-")
+	e.mu.Lock()
+	e.cfg.Region = region
+	client := ec2.NewFromConfig(e.cfg)
+	e.mu.Unlock()
+
+	result, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: []string{instance.ProviderID},
+	})
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("failed to describe instance: %w", err)
+	}
+
+	for _, reservation := range result.Reservations {
+		for _, inst := range reservation.Instances {
+			if inst.PublicIpAddress != nil {
+				addr, err := netip.ParseAddr(*inst.PublicIpAddress)
+				if err != nil {
+					return netip.Addr{}, fmt.Errorf("failed to parse IP %q: %w", *inst.PublicIpAddress, err)
+				}
+				return addr, nil
+			}
+		}
+	}
+	return netip.Addr{}, fmt.Errorf("no public IP found for instance %s", instance.ProviderID)
+}
+
 func (e *ec2Provider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	e.mu.Lock()
 	// Extract region from hostname (e.g., "ec2-us-west-2" -> "us-west-2")
@@ -243,6 +292,12 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, req providers.CreateRe
 	sgID, err := e.getOrCreateSecurityGroup(ctx, client)
 	if err != nil {
 		return providers.Instance{}, fmt.Errorf("failed to setup security group: %v", err)
+	}
+
+	if req.Debug {
+		if err := e.addSSHPortRule(ctx, client, &sgID); err != nil {
+			log.Printf("Failed to add SSH port rule (may already exist): %v", err)
+		}
 	}
 
 	input := &ec2.RunInstancesInput{

@@ -20,8 +20,11 @@ package app_test
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	crypto_rand "crypto/rand"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -34,6 +37,7 @@ import (
 	"github.com/ory/dockertest/v3"
 	"github.com/ory/dockertest/v3/docker"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 
 	// Import all cloud provider implementations to register them
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/azure"
@@ -130,19 +134,23 @@ func TestExitNode(t *testing.T) {
 			require.NotEmpty(t, originalIP, "Failed to get test client's external IP")
 			t.Logf("Test client original external IP: %s", originalIP)
 
+			// Generate ephemeral SSH key for this test.
+			sshSigner, sshPubKey := generateTestSSHKey(t)
+
 			// Create auth key and instance.
 			key, err := controller.CreateKey(ctx, []string{"tag:untrusted"})
 			require.NoError(t, err, "Failed to create auth key")
 
 			hostname := string(provider.Hostname(region))
-			userData, err := providers.RenderUserData(hostname, key, cfg.SSH.PublicKey, "exit", name, region)
+			userData, err := providers.RenderUserData(hostname, key, sshPubKey, "exit", name, region, true)
 			require.NoError(t, err, "Failed to render user data")
 
 			t.Logf("Creating %s exit node in %s", name, region)
 			instance, err := provider.CreateInstance(ctx, providers.CreateRequest{
 				Region:   region,
 				UserData: userData,
-				SSHKey:   cfg.SSH.PublicKey,
+				SSHKey:   sshPubKey,
+				Debug:    true,
 			})
 			require.NoError(t, err, "Failed to create instance")
 			t.Logf("Created instance: %s (provider ID: %s)", instance.Hostname, instance.ProviderID)
@@ -162,10 +170,23 @@ func TestExitNode(t *testing.T) {
 				}
 			})
 
+			// Start streaming cloud-init output in the background. Retries
+			// IP lookup + SSH connect until the VM is reachable, then streams
+			// tail -f. Stops when tailCancel is called or the VM is deleted.
+			tailCtx, tailCancel := context.WithCancel(context.Background())
+			t.Cleanup(tailCancel)
+			if getter, ok := provider.(providers.PublicIPGetter); ok {
+				go sshTailCloudInitLog(tailCtx, t, getter, instance, sshSigner)
+			}
+
 			// Wait for the instance to register with the control plane.
 			t.Logf("Waiting for %s to register with control plane...", hostname)
 			device, err := waitForDeviceRegistration(ctx, controller, instance.Hostname, 3*time.Minute)
-			require.NoError(t, err, "Timed out waiting for device registration")
+			if err != nil {
+				// Let the tail stream a bit longer before we fail — the log
+				// output above will show what went wrong.
+				require.NoError(t, err, "Timed out waiting for device registration (see cloud-init log above)")
+			}
 			require.True(t, device.IsOnline, "Device is not online")
 			require.NotEmpty(t, device.IPAddrs, "Device has no IP addresses")
 			t.Logf("Device registered: %s, IPs: %v", device.Name, device.IPAddrs)
@@ -370,4 +391,98 @@ func findDeviceByHostname(ctx context.Context, controller controlapi.ControlApi,
 		}
 	}
 	return nil, fmt.Errorf("device with hostname %s not found", hostname)
+}
+
+// generateTestSSHKey creates an ephemeral ed25519 SSH keypair for the test.
+// Returns the signer (for SSH client auth) and the public key in authorized_keys format.
+func generateTestSSHKey(t *testing.T) (ssh.Signer, string) {
+	t.Helper()
+	_, privKey, err := ed25519.GenerateKey(crypto_rand.Reader)
+	require.NoError(t, err, "Failed to generate SSH key")
+
+	signer, err := ssh.NewSignerFromKey(privKey)
+	require.NoError(t, err, "Failed to create SSH signer")
+
+	pubKey := ssh.MarshalAuthorizedKey(signer.PublicKey())
+	return signer, strings.TrimSpace(string(pubKey))
+}
+
+// sshTailCloudInitLog resolves the VM's public IP (retrying until available),
+// connects via SSH (retrying until reachable), and streams
+// cloud-init-output.log via tail -f. Blocks until ctx is cancelled (which
+// closes the connection and unblocks the stream).
+// Intended to be called in a goroutine.
+func sshTailCloudInitLog(ctx context.Context, t *testing.T, getter providers.PublicIPGetter, instance providers.Instance, signer ssh.Signer) {
+	sshCfg := &ssh.ClientConfig{
+		User:            "root",
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+
+	// Wait for the public IP to be assigned.
+	var addr string
+	for {
+		ip, err := getter.GetPublicIP(ctx, instance)
+		if err == nil {
+			addr = net.JoinHostPort(ip.String(), "22")
+			t.Logf("Public IP for %s: %s", instance.Hostname, ip)
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	// Retry SSH connect + handshake until the VM accepts connections.
+	var client *ssh.Client
+	var conn net.Conn
+	for {
+		dialConn, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+		if err == nil {
+			sshConn, chans, reqs, sshErr := ssh.NewClientConn(dialConn, addr, sshCfg)
+			if sshErr == nil {
+				client = ssh.NewClient(sshConn, chans, reqs)
+				conn = dialConn
+				t.Logf("SSH connected to %s", addr)
+				break
+			}
+			dialConn.Close()
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	session, err := client.NewSession()
+	if err != nil {
+		client.Close()
+		t.Logf("SSH session to %s failed: %v", addr, err)
+		return
+	}
+
+	session.Stdout = t.Output()
+	if err := session.Start("tail -f /var/log/cloud-init-output.log"); err != nil {
+		session.Close()
+		client.Close()
+		t.Logf("SSH tail on %s failed: %v", addr, err)
+		return
+	}
+
+	t.Logf("Streaming cloud-init-output.log from %s...", addr)
+
+	// When ctx is cancelled, close the connection to unblock Wait.
+	go func() {
+		<-ctx.Done()
+		conn.Close()
+	}()
+
+	session.Wait()
+	session.Close()
+	client.Close()
+	t.Logf("cloud-init log stream from %s ended", addr)
 }

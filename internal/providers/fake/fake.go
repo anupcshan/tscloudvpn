@@ -3,6 +3,7 @@ package fake
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -251,6 +252,10 @@ func (f *FakeProvider) SetInstanceStatus(region string, status providers.Instanc
 	if instance, exists := f.instances[region]; exists {
 		instance.Status = status
 	}
+}
+
+func (f *FakeProvider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
+	return netip.MustParseAddr("192.0.2.1"), nil
 }
 
 // DeleteInstance removes an instance by InstanceID

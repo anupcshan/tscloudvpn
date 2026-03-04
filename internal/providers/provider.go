@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"net/netip"
 	"strings"
 	"text/template"
 	"time"
@@ -42,6 +43,7 @@ type CreateRequest struct {
 	Region   string
 	UserData string // Rendered init script
 	SSHKey   string // SSH public key (used by Azure OS profile; other providers can ignore)
+	Debug    bool   // When true, open SSH port in firewalls and delay ERR shutdown
 }
 
 type Provider interface {
@@ -59,6 +61,13 @@ type Provider interface {
 // The GC will use this when available instead of iterating per-region.
 type AllInstanceLister interface {
 	ListAllInstances(ctx context.Context) ([]Instance, error)
+}
+
+// PublicIPGetter is an optional interface that providers can implement
+// to look up the public IP of a running instance. Used for SSH diagnostics
+// in integration tests.
+type PublicIPGetter interface {
+	GetPublicIP(ctx context.Context, instance Instance) (netip.Addr, error)
 }
 
 type ProviderFactory func(ctx context.Context, cfg *config.Config) (Provider, error)
@@ -87,10 +96,11 @@ type InitScriptData struct {
 	Service  string // Service type name (e.g., "exit")
 	Provider string // Provider short name (e.g., "do")
 	Region   string // Region code (e.g., "nyc1")
+	Debug    bool   // When true, delay ERR shutdown for SSH diagnostics
 }
 
 // RenderUserData renders the init script template with the given parameters.
-func RenderUserData(hostname string, key *controlapi.PreauthKey, sshKey string, service string, provider string, region string) (string, error) {
+func RenderUserData(hostname string, key *controlapi.PreauthKey, sshKey string, service string, provider string, region string, debug bool) (string, error) {
 	var buf bytes.Buffer
 	if err := template.Must(template.New("tmpl").Parse(InitData)).Execute(&buf, InitScriptData{
 		Args: fmt.Sprintf(
@@ -102,6 +112,7 @@ func RenderUserData(hostname string, key *controlapi.PreauthKey, sshKey string, 
 		Service:  service,
 		Provider: provider,
 		Region:   region,
+		Debug:    debug,
 	}); err != nil {
 		return "", err
 	}

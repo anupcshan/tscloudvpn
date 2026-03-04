@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -119,6 +120,26 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, req providers.Crea
 		ProviderName: "hetzner",
 		HourlyCost:   regionST.HourlyCost,
 	}, nil
+}
+
+func (h *hetznerProvider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
+	serverID, err := strconv.ParseInt(instance.ProviderID, 10, 64)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("invalid server ID: %w", err)
+	}
+
+	server, _, err := h.client.Server.GetByID(ctx, serverID)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("failed to get server: %w", err)
+	}
+	if server.PublicNet.IPv4.IP.IsUnspecified() {
+		return netip.Addr{}, fmt.Errorf("no public IPv4 for server %d", serverID)
+	}
+	addr, ok := netip.AddrFromSlice(server.PublicNet.IPv4.IP)
+	if !ok {
+		return netip.Addr{}, fmt.Errorf("failed to parse IP %v", server.PublicNet.IPv4.IP)
+	}
+	return addr, nil
 }
 
 func (h *hetznerProvider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/netip"
 	"sort"
 	"strconv"
 	"sync"
@@ -95,6 +96,24 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, req providers
 		ProviderName: "do",
 		HourlyCost:   d.GetRegionHourlyEstimate(req.Region),
 	}, nil
+}
+
+func (d *digitaloceanProvider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
+	dropletID, err := strconv.Atoi(instance.ProviderID)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("invalid droplet ID: %w", err)
+	}
+
+	droplet, _, err := d.client.Droplets.Get(ctx, dropletID)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("failed to get droplet: %w", err)
+	}
+
+	ipStr, err := droplet.PublicIPv4()
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("failed to get public IPv4: %w", err)
+	}
+	return netip.ParseAddr(ipStr)
 }
 
 func (d *digitaloceanProvider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {

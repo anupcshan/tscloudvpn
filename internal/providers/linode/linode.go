@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"net/netip"
 	"strconv"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
@@ -85,6 +86,27 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, req providers.Creat
 		ProviderName: "linode",
 		HourlyCost:   l.GetRegionHourlyEstimate(req.Region),
 	}, nil
+}
+
+func (l *linodeProvider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
+	linodeID, err := strconv.Atoi(instance.ProviderID)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("invalid Linode ID: %w", err)
+	}
+
+	inst, err := l.client.GetInstance(ctx, linodeID)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("failed to get instance: %w", err)
+	}
+
+	if len(inst.IPv4) == 0 {
+		return netip.Addr{}, fmt.Errorf("no IPv4 addresses for instance %d", linodeID)
+	}
+	addr, err := netip.ParseAddr(inst.IPv4[0].String())
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("failed to parse IP %v: %w", inst.IPv4[0], err)
+	}
+	return addr, nil
 }
 
 func (l *linodeProvider) GetInstanceStatus(ctx context.Context, region string) (providers.InstanceStatus, error) {

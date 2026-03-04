@@ -1,10 +1,17 @@
 #!/bin/bash -eux
 
+{{if .Debug}}
+trap 'echo "DEBUG: error at line $LINENO" >&2; sleep 300' ERR
+{{else}}
 trap 'sudo /sbin/poweroff' ERR EXIT
+{{end}}
 
 if [[ -n "{{.SSHKey}}" ]]; then
   mkdir -p /root/.ssh
   echo "{{.SSHKey}}" | tee -a /root/.ssh/authorized_keys
+  # Some providers (e.g. DigitalOcean) force a root password change on
+  # first login, which blocks even key-auth SSH sessions. Clear it.
+  chage -d "$(date +%Y-%m-%d)" root 2>/dev/null || true
 fi
 
 curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
