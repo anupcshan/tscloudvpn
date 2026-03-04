@@ -169,7 +169,7 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, req providers.Create
 	}
 
 	oses = xslices.Filter(oses, func(os govultr.OS) bool {
-		return os.Family == "debian" && os.Arch == "x64" && strings.HasPrefix(os.Name, "Debian 12 x64")
+		return os.Family == "ubuntu" && os.Arch == "x64" && strings.HasPrefix(os.Name, "Ubuntu 24.04")
 	})
 
 	if len(oses) == 0 {

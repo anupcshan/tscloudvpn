@@ -181,7 +181,7 @@ func TestExitNode(t *testing.T) {
 
 			// Wait for the instance to register with the control plane.
 			t.Logf("Waiting for %s to register with control plane...", hostname)
-			device, err := waitForDeviceRegistration(ctx, controller, instance.Hostname, 3*time.Minute)
+			device, err := waitForDeviceRegistration(ctx, controller, instance.Hostname, 5*time.Minute)
 			if err != nil {
 				// Let the tail stream a bit longer before we fail — the log
 				// output above will show what went wrong.

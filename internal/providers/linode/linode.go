@@ -65,7 +65,7 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, req providers.Creat
 		Label:    fmt.Sprintf("tscloudvpn-%s", req.Region),
 		Region:   req.Region,
 		Type:     "g6-nanode-1",
-		Image:    "linode/debian12",
+		Image:    "linode/ubuntu24.04",
 		RootPass: generateRandomPassword(),
 		Tags:     []string{"tscloudvpn", l.ownerTag},
 		Metadata: &linodego.InstanceMetadataOptions{

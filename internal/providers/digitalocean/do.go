@@ -77,7 +77,7 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, req providers
 		Region: req.Region,
 		Size:   d.regionSizeCache[req.Region].SizeSlug, // Using cheapest size for the region from cache
 		Image: godo.DropletCreateImage{
-			Slug: "debian-12-x64",
+			Slug: "ubuntu-24-04-x64",
 		},
 		UserData: req.UserData,
 		Tags:     []string{"tscloudvpn", d.ownerTag},

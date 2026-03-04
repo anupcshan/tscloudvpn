@@ -28,10 +28,10 @@ import (
 
 const (
 	providerName  = "azure"
-	publisher     = "Debian"
-	offer         = "debian-12"
-	skuX64        = "12-gen2"
-	skuArm64      = "12-arm64"
+	publisher     = "Canonical"
+	offer         = "ubuntu-24_04-lts"
+	skuX64        = "server"
+	skuArm64      = "server-arm64"
 	version       = "latest"
 	cacheDuration = 24 * time.Hour // Cache regions and pricing for 24 hours
 

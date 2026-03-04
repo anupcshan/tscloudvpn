@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	debianLatestImageSSMPath = "/aws/service/debian/release/12/latest/arm64"
+	ubuntuLatestImageSSMPath = "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
 	providerName             = "ec2"
 	securityGroupName        = "tscloudvpn-sg"
 	// Tailscale uses this port for inbound connections to the Tailscaled - see https://tailscale.com/kb/1257/connection-types#hard-nat
@@ -280,7 +280,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, req providers.CreateRe
 	e.mu.Unlock()
 
 	imageParam, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
-		Name: aws.String(debianLatestImageSSMPath),
+		Name: aws.String(ubuntuLatestImageSSMPath),
 	})
 	if err != nil {
 		return providers.Instance{}, err

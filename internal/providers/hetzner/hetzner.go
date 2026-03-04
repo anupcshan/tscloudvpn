@@ -98,7 +98,7 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, req providers.Crea
 	createOpts := hcloud.ServerCreateOpts{
 		Name:       fmt.Sprintf("tscloudvpn-%s", req.Region),
 		ServerType: &hcloud.ServerType{ID: regionST.ServerTypeID},
-		Image:      &hcloud.Image{Name: "debian-12"},
+		Image:      &hcloud.Image{Name: "ubuntu-24.04"},
 		Location:   &hcloud.Location{Name: req.Region},
 		UserData:   req.UserData,
 		Labels: map[string]string{

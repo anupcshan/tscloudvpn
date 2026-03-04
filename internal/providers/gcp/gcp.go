@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	debianLatestImage = "projects/debian-cloud/global/images/family/debian-12"
+	ubuntuLatestImage = "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64"
 	providerName      = "gcp"
 	cacheDuration     = 24 * time.Hour // Cache machine types for 24 hours
 	firewallRuleName    = "tscloudvpn-allow-vpn"
@@ -654,7 +654,7 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, req providers.CreateRe
 					AutoDelete: true,
 					Boot:       true,
 					InitializeParams: &compute.AttachedDiskInitializeParams{
-						SourceImage: debianLatestImage,
+						SourceImage: ubuntuLatestImage,
 					},
 				},
 			},

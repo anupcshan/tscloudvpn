@@ -538,7 +538,7 @@ cloudblockdev + ZFS + filebrowser + R2 persistence works across VM
 lifecycles. Boot time ~1.5min on Ubuntu (vs ~7min on Debian due to ZFS
 DKMS compilation). Landing as focused commits:
 
-- [ ] **Commit 8: Switch all providers to Ubuntu 24.04.**
+- [x] **Commit 8: Switch all providers to Ubuntu 24.04.**
   All 7 providers currently use Debian 12. Switch to Ubuntu 24.04:
   EC2 SSM path, DO slug, Vultr OS filter, Linode image ID, Hetzner
   image name, GCP image family, Azure publisher/offer/SKU. Update
