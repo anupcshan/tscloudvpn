@@ -30,6 +30,11 @@ type Config struct {
 		} `yaml:"headscale"`
 	} `yaml:"control"`
 
+	Cloudflare struct {
+		AccountID string `yaml:"account_id"`
+		APIToken  string `yaml:"api_token"`
+	} `yaml:"cloudflare"`
+
 	Providers struct {
 		DigitalOcean struct {
 			Token string `yaml:"token"`
@@ -152,6 +157,9 @@ func LoadFromEnv() (*Config, error) {
 		}
 		cfg.Control.Headscale.UserID = id
 	}
+
+	cfg.Cloudflare.AccountID = os.Getenv("CLOUDFLARE_ACCOUNT_ID")
+	cfg.Cloudflare.APIToken = os.Getenv("CLOUDFLARE_API_TOKEN")
 
 	cfg.Providers.DigitalOcean.Token = os.Getenv("DIGITALOCEAN_TOKEN")
 

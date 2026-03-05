@@ -16,6 +16,7 @@ import (
 	httputils "github.com/anupcshan/tscloudvpn/internal/http"
 	"github.com/anupcshan/tscloudvpn/internal/instances"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/anupcshan/tscloudvpn/internal/r2"
 	"github.com/anupcshan/tscloudvpn/internal/services"
 	"github.com/anupcshan/tscloudvpn/internal/status"
 	"github.com/anupcshan/tscloudvpn/internal/utils"
@@ -38,6 +39,7 @@ func NewManager(
 	cloudProviders map[string]providers.Provider,
 	tsLocalClient tsclient.TailscaleClient,
 	controlApi controlapi.ControlApi,
+	r2TokenManager *r2.TokenManager,
 ) *Manager {
 	lazyListRegionsMap := make(map[string]func() []providers.Region)
 
@@ -51,7 +53,7 @@ func NewManager(
 		)
 	}
 
-	instanceRegistry := instances.NewRegistry(logger, sshKey, controlApi, tsLocalClient, cloudProviders)
+	instanceRegistry := instances.NewRegistry(logger, sshKey, controlApi, tsLocalClient, cloudProviders, r2TokenManager)
 	instanceRegistry.Start(ctx)
 
 	m := &Manager{

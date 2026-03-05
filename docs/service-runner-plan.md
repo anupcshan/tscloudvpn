@@ -581,13 +581,54 @@ DKMS compilation). Landing as focused commits:
   `controllerEntry` instead of taking them as args.
 
 - [ ] **Commit 10: Cloudflare config + R2 client.**
-  New `internal/r2/r2.go`: `TokenManager` with `CreateVolume` (create
-  bucket + scoped API token, derive S3 creds via SHA-256 of token
-  value) and `RevokeToken` (find token by name, delete it). One R2
-  bucket per volume (`tscloudvpn-vol-{name}`). Permission group IDs
+  New `internal/r2/r2.go`: `TokenManager` with two methods:
+
+  - `Acquire(volumeName, vmHostname)` — ensures bucket
+    `tscloudvpn-vol-{name}` exists (idempotent), revokes any
+    existing token for this volume, creates a new scoped R2 S3
+    token, returns S3 credentials.
+  - `Release(volumeName)` — revokes the active token (fencing).
+
+  One R2 bucket per volume for least-privilege isolation — a
+  compromised VM can only access its own volume's data.
+
+  **Cloudflare API surface (verified):**
+
+  Create bucket:
+  ```
+  POST /accounts/{account_id}/r2/buckets
+  Body: {"name": "tscloudvpn-vol-{name}"}
+  ```
+
+  Create scoped token (account-owned):
+  ```
+  POST /accounts/{account_id}/tokens
+  Body: {
+    "name": "tscloudvpn-vol-{name}",
+    "policies": [{
+      "effect": "allow",
+      "permission_groups": [{"id": "<bucket-item-write-uuid>"}],
+      "resources": {
+        "com.cloudflare.edge.r2.bucket.<account_id>_default_<bucket>": "*"
+      }
+    }]
+  }
+  ```
+
+  S3 credentials derived from response:
+  - Access Key ID = `result.id` (the token ID)
+  - Secret Access Key = `SHA-256(result.value)`
+
+  Permission group ID for "Workers R2 Storage Bucket Item Write"
   looked up at runtime via `GET /user/tokens/permission_groups` and
-  cached. Resource scope: `com.cloudflare.edge.r2.bucket.{acct}_default_{bucket}`.
-  Config: `cloudflare.account_id` + `cloudflare.api_token`. Wired
+  cached.
+
+  Revoke token: `DELETE /accounts/{account_id}/tokens/{token_id}`.
+
+  R2 S3 endpoint: `https://{account_id}.r2.cloudflarestorage.com`.
+
+  Config: `cloudflare.account_id` + `cloudflare.api_token` (master
+  token with "API Tokens: Edit" + "R2: Edit" permissions). Wired
   through app → server → manager → registry (nil if not configured).
 
 - [ ] **Commit 11: R2 wiring in registry lifecycle.**

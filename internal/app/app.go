@@ -10,6 +10,7 @@ import (
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/anupcshan/tscloudvpn/internal/r2"
 	"github.com/anupcshan/tscloudvpn/internal/server"
 	"github.com/anupcshan/tscloudvpn/internal/tsclient"
 )
@@ -80,11 +81,18 @@ func (a *App) Initialize(ctx context.Context) error {
 		return err
 	}
 
+	var r2TokenManager *r2.TokenManager
+	if a.config.Cloudflare.AccountID != "" && a.config.Cloudflare.APIToken != "" {
+		r2TokenManager = r2.NewTokenManager(a.config.Cloudflare.AccountID, a.config.Cloudflare.APIToken)
+		log.Println("Cloudflare R2 configured for persistent volumes")
+	}
+
 	a.server = server.New(&server.Config{
 		CloudProviders: cloudProviders,
 		TSLocalClient:  tsclient.NewLocalClient(tsLocalClient, a.tsnetServer.HTTPClient()),
 		Controller:     controller,
 		SSHKey:         a.config.SSH.PublicKey,
+		R2TokenManager: r2TokenManager,
 	})
 
 	return nil

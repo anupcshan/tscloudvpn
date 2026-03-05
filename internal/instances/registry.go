@@ -9,6 +9,7 @@ import (
 
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/anupcshan/tscloudvpn/internal/r2"
 	"github.com/anupcshan/tscloudvpn/internal/services"
 	"github.com/anupcshan/tscloudvpn/internal/tsclient"
 )
@@ -27,13 +28,14 @@ type controllerEntry struct {
 
 // Registry manages all instance controllers
 type Registry struct {
-	mu          sync.RWMutex
-	controllers map[string]*controllerEntry // key: "service-name" (e.g. "exit-do-nyc1")
-	logger      *log.Logger
-	sshKey      string
-	controlApi  controlapi.ControlApi
-	tsClient    tsclient.TailscaleClient
-	providers   map[string]providers.Provider
+	mu             sync.RWMutex
+	controllers    map[string]*controllerEntry // key: "service-name" (e.g. "exit-do-nyc1")
+	logger         *log.Logger
+	sshKey         string
+	controlApi     controlapi.ControlApi
+	tsClient       tsclient.TailscaleClient
+	providers      map[string]providers.Provider
+	r2TokenManager *r2.TokenManager // nil if Cloudflare not configured
 }
 
 func registryKey(service, name string) string {
@@ -48,14 +50,16 @@ func NewRegistry(
 	controlApi controlapi.ControlApi,
 	tsClient tsclient.TailscaleClient,
 	providers map[string]providers.Provider,
+	r2TokenManager *r2.TokenManager,
 ) *Registry {
 	return &Registry{
-		controllers: make(map[string]*controllerEntry),
-		logger:      logger,
-		sshKey:      sshKey,
-		controlApi:  controlApi,
-		tsClient:    tsClient,
-		providers:   providers,
+		controllers:    make(map[string]*controllerEntry),
+		logger:         logger,
+		sshKey:         sshKey,
+		controlApi:     controlApi,
+		tsClient:       tsClient,
+		providers:      providers,
+		r2TokenManager: r2TokenManager,
 	}
 }
 

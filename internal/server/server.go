@@ -9,6 +9,7 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/controlapi"
 	httputils "github.com/anupcshan/tscloudvpn/internal/http"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
+	"github.com/anupcshan/tscloudvpn/internal/r2"
 	"github.com/anupcshan/tscloudvpn/internal/tsclient"
 	"tailscale.com/client/local"
 	"tailscale.com/tsnet"
@@ -20,6 +21,7 @@ type Config struct {
 	TSLocalClient  tsclient.TailscaleClient
 	Controller     controlapi.ControlApi
 	SSHKey         string
+	R2TokenManager *r2.TokenManager // nil if Cloudflare not configured
 }
 
 // Server handles HTTP requests for the application
@@ -33,7 +35,7 @@ func New(config *Config) *Server {
 	logger := log.New(log.Writer(), "[server] ", log.Flags())
 	return &Server{
 		config:  config,
-		manager: NewManager(context.Background(), logger, config.SSHKey, config.CloudProviders, config.TSLocalClient, config.Controller),
+		manager: NewManager(context.Background(), logger, config.SSHKey, config.CloudProviders, config.TSLocalClient, config.Controller, config.R2TokenManager),
 	}
 }
 

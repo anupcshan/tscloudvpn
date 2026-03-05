@@ -189,7 +189,7 @@ func TestIntegration_RegistryWithFakeProvider_BasicLifecycle(t *testing.T) {
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
+	registry := NewRegistry(logger, "", controlApi, nil, providerMap, nil)
 	defer registry.Shutdown()
 
 	// Test instance creation via registry
@@ -278,7 +278,7 @@ func TestIntegration_RegistryWithFakeProvider_MultipleInstances(t *testing.T) {
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, "", controlApi, nil, providers)
+	registry := NewRegistry(logger, "", controlApi, nil, providers, nil)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -393,7 +393,7 @@ func TestIntegration_RegistryWithFakeProvider_CreateFailure(t *testing.T) {
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
+	registry := NewRegistry(logger, "", controlApi, nil, providerMap, nil)
 	defer registry.Shutdown()
 
 	// Create instance - registry returns nil immediately, failure happens async
@@ -434,7 +434,7 @@ func TestIntegration_RegistryWithFakeProvider_ProviderFailures(t *testing.T) {
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, "", controlApi, nil, providers)
+	registry := NewRegistry(logger, "", controlApi, nil, providers, nil)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -533,7 +533,7 @@ func TestIntegration_RegistryWithFakeProvider_DiscoverExistingInstances(t *testi
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, "", controlApi, tsClient, providers)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providers, nil)
 	defer registry.Shutdown()
 	registry.Start(context.Background())
 
@@ -593,7 +593,7 @@ func TestIntegration_RegistryWithFakeProvider_SlowOperations(t *testing.T) {
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
+	registry := NewRegistry(logger, "", controlApi, nil, providerMap, nil)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -663,7 +663,7 @@ func TestIntegration_RegistryDelete_CloudDeletionFailure_StillSucceeds(t *testin
 	})
 	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
 
-	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap, nil)
 	defer registry.Shutdown()
 
 	// Discover the existing instance so it's tracked in the registry
@@ -715,7 +715,7 @@ func TestIntegration_RegistryDelete_DeviceNotInTailscale(t *testing.T) {
 		"fake": fakeProvider,
 	}
 
-	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
+	registry := NewRegistry(logger, "", controlApi, nil, providerMap, nil)
 	defer registry.Shutdown()
 
 	// Create instance via registry

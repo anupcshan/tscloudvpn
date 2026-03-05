@@ -127,7 +127,7 @@ func TestRegistry_CreateAndDeleteInstance(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, "", controlApi, nil, providers)
+	registry := NewRegistry(logger, "", controlApi, nil, providers, nil)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -183,7 +183,7 @@ func TestRegistry_GetAllInstanceStatuses(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, "", controlApi, nil, providers)
+	registry := NewRegistry(logger, "", controlApi, nil, providers, nil)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -266,7 +266,7 @@ func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, "", controlApi, tsClient, providers)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providers, nil)
 	defer registry.Shutdown()
 	registry.Start(context.Background())
 
@@ -321,7 +321,7 @@ func TestRegistry_PeriodicDiscovery(t *testing.T) {
 	})
 	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
 
-	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap, nil)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -372,7 +372,7 @@ func TestRegistry_PeriodicDiscovery_Idempotent(t *testing.T) {
 	})
 	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
 
-	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap, nil)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -421,7 +421,7 @@ func TestRegistry_Discovery_SkipsUntaggedDevices(t *testing.T) {
 	})
 	tsClient.AddPeer("mock-test-region", netip.MustParseAddr("100.64.0.1"))
 
-	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap, nil)
 	defer registry.Shutdown()
 
 	registry.discoverInstances(context.Background())
@@ -454,7 +454,7 @@ func TestRegistry_Discovery_SkipsUnknownProvider(t *testing.T) {
 		"mock": &MockProvider{hostname: "mock-test-region"},
 	}
 
-	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap, nil)
 	defer registry.Shutdown()
 
 	registry.discoverInstances(context.Background())
@@ -579,7 +579,7 @@ func TestRegistry_IdleShutdownCallback(t *testing.T) {
 		"mock": provider,
 	}
 
-	registry := NewRegistry(logger, "", controlApi, nil, providerMap)
+	registry := NewRegistry(logger, "", controlApi, nil, providerMap, nil)
 	defer registry.Shutdown()
 
 	ctx := context.Background()
@@ -617,7 +617,7 @@ func TestDiscoveredController_RemovedWhenPeerDisappears(t *testing.T) {
 	}
 	providerMap := map[string]providers.Provider{"mock": provider}
 
-	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap, nil)
 	defer registry.Shutdown()
 
 	// Simulate a device in the control plane and a visible peer
@@ -656,7 +656,7 @@ func TestDiscoveredController_StaleStatsNotAppliedToNewInstance(t *testing.T) {
 	}
 	providerMap := map[string]providers.Provider{"mock": provider}
 
-	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap, nil)
 	defer registry.Shutdown()
 
 	// Phase 1: First instance appears and gets stats
@@ -723,7 +723,7 @@ func TestDiscoveredController_IdleShutdownCallbackNotFiredAfterPeerGone(t *testi
 	}
 	providerMap := map[string]providers.Provider{"mock": provider}
 
-	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap)
+	registry := NewRegistry(logger, "", controlApi, tsClient, providerMap, nil)
 	defer registry.Shutdown()
 
 	// Set up a discovered instance with stats that would trigger idle shutdown
@@ -780,7 +780,7 @@ func TestRegistry_CreateInstance_ContextCancellation(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry(logger, "", controlApi, nil, providers)
+	registry := NewRegistry(logger, "", controlApi, nil, providers, nil)
 	defer registry.Shutdown()
 
 	// Create a context that we'll cancel immediately
