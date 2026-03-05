@@ -264,10 +264,6 @@ func (m *MockProviderWithTimestamp) ListRegions(ctx context.Context) ([]provider
 	return regions, nil
 }
 
-func (m *MockProviderWithTimestamp) Hostname(region string) providers.HostName {
-	return m.hostname
-}
-
 func (m *MockProviderWithTimestamp) GetRegionHourlyEstimate(region string) float64 {
 	return 0.05
 }

@@ -22,12 +22,12 @@ import (
 )
 
 const (
-	ubuntuLatestImage = "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64"
-	providerName      = "gcp"
-	cacheDuration     = 24 * time.Hour // Cache machine types for 24 hours
+	ubuntuLatestImage   = "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64"
+	providerName        = "gcp"
+	cacheDuration       = 24 * time.Hour // Cache machine types for 24 hours
 	firewallRuleName    = "tscloudvpn-allow-vpn"
 	sshFirewallRuleName = "tscloudvpn-allow-ssh"
-	networkTag        = "tscloudvpn"
+	networkTag          = "tscloudvpn"
 	// Tailscale uses this port for inbound connections - see https://tailscale.com/kb/1257/connection-types#hard-nat
 	tailscaledInboundPort = "41641"
 )
@@ -135,6 +135,17 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 
 func gcpInstanceHostname(region string) string {
 	return fmt.Sprintf("gcp-%s", region)
+}
+
+func (g *gcpProvider) buildLabels(extra map[string]string) map[string]string {
+	labels := map[string]string{
+		"tscloudvpn":       "true",
+		"tscloudvpn-owner": g.sanitizeLabelValue(g.ownerID),
+	}
+	for k, v := range extra {
+		labels[g.sanitizeLabelValue(k)] = g.sanitizeLabelValue(v)
+	}
+	return labels
 }
 
 // sanitizeLabelValue converts a string to a valid GCP label value
@@ -622,8 +633,6 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, req providers.CreateRe
 		return providers.Instance{}, err
 	}
 
-	hostname := gcpInstanceHostname(req.Region)
-
 	// Ensure firewall rule exists for Tailscale inbound port
 	if err := g.getOrCreateFirewallRule(ctx); err != nil {
 		return providers.Instance{}, fmt.Errorf("failed to setup firewall rule: %w", err)
@@ -658,10 +667,7 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, req providers.CreateRe
 					},
 				},
 			},
-			Labels: map[string]string{
-				"tscloudvpn":       "true",
-				"tscloudvpn-owner": g.sanitizeLabelValue(g.ownerID),
-			},
+			Labels: g.buildLabels(req.Tags),
 			NetworkInterfaces: []*compute.NetworkInterface{
 				{
 					AccessConfigs: []*compute.AccessConfig{
@@ -715,7 +721,7 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, req providers.CreateRe
 		// Success
 		log.Printf("Launched instance %s (machine type: %s)", name, mt.MachineType)
 		return providers.Instance{
-			Hostname:     hostname,
+			Hostname:     req.Hostname,
 			ProviderID:   name,
 			ProviderName: providerName,
 			HourlyCost:   mt.HourlyCost,
@@ -785,9 +791,13 @@ func (g *gcpProvider) ListInstances(ctx context.Context, region string) ([]provi
 
 		for _, instance := range instanceList.Items {
 			if instance.Status != "TERMINATED" {
+				hostname := gcpInstanceHostname(region)
+				if name, ok := instance.Labels[g.sanitizeLabelValue(providers.NameTagKey)]; ok {
+					hostname = name
+				}
 				createdAt, _ := time.Parse(time.RFC3339, instance.CreationTimestamp)
 				instanceIDs = append(instanceIDs, providers.Instance{
-					Hostname:     gcpInstanceHostname(region),
+					Hostname:     hostname,
 					ProviderID:   instance.Name,
 					ProviderName: providerName,
 					CreatedAt:    createdAt,
@@ -867,10 +877,6 @@ func (g *gcpProvider) ListAllInstances(ctx context.Context) ([]providers.Instanc
 	}
 
 	return instanceIDs, nil
-}
-
-func (g *gcpProvider) Hostname(region string) providers.HostName {
-	return providers.HostName(gcpInstanceHostname(region))
 }
 
 // GetRegionHourlyEstimate returns the hourly price for the cheapest available instance in the specified region

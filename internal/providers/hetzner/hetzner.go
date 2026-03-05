@@ -72,6 +72,17 @@ func hetznerInstanceHostname(region string) string {
 	return fmt.Sprintf("hetzner-%s", region)
 }
 
+func (h *hetznerProvider) buildLabels(extra map[string]string) map[string]string {
+	labels := map[string]string{
+		"tscloudvpn":          "true",
+		providers.OwnerTagKey: h.ownerID,
+	}
+	for k, v := range extra {
+		labels[sanitizeLabelValue(k)] = sanitizeLabelValue(v)
+	}
+	return labels
+}
+
 func (h *hetznerProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
 	// Ensure region server type cache is populated
 	h.regionServerTypeCacheLock.Lock()
@@ -86,8 +97,6 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, req providers.Crea
 	}
 	h.regionServerTypeCacheLock.Unlock()
 
-	hostname := hetznerInstanceHostname(req.Region)
-
 	// Get the cheapest server type for this region
 	regionST, ok := h.regionServerTypeCache[req.Region]
 	if !ok {
@@ -101,10 +110,7 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, req providers.Crea
 		Image:      &hcloud.Image{Name: "ubuntu-24.04"},
 		Location:   &hcloud.Location{Name: req.Region},
 		UserData:   req.UserData,
-		Labels: map[string]string{
-			"tscloudvpn":          "true",
-			providers.OwnerTagKey: h.ownerID,
-		},
+		Labels:     h.buildLabels(req.Tags),
 	}
 
 	result, _, err := h.client.Server.Create(ctx, createOpts)
@@ -115,7 +121,7 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, req providers.Crea
 	log.Printf("Launched instance %d", result.Server.ID)
 
 	return providers.Instance{
-		Hostname:     hostname,
+		Hostname:     req.Hostname,
 		ProviderID:   strconv.FormatInt(result.Server.ID, 10),
 		ProviderName: "hetzner",
 		HourlyCost:   regionST.HourlyCost,
@@ -193,8 +199,12 @@ func (h *hetznerProvider) ListInstances(ctx context.Context, region string) ([]p
 	var instances []providers.Instance
 	for _, server := range servers {
 		if server.Datacenter.Location.Name == region {
+			hostname := hetznerInstanceHostname(region)
+			if name, ok := server.Labels[sanitizeLabelValue(providers.NameTagKey)]; ok {
+				hostname = name
+			}
 			instances = append(instances, providers.Instance{
-				Hostname:     hetznerInstanceHostname(region),
+				Hostname:     hostname,
 				ProviderID:   strconv.FormatInt(server.ID, 10),
 				ProviderName: "hetzner",
 				CreatedAt:    server.Created,
@@ -220,10 +230,6 @@ func (h *hetznerProvider) ListRegions(ctx context.Context) ([]providers.Region, 
 		})
 	}
 	return result, nil
-}
-
-func (h *hetznerProvider) Hostname(region string) providers.HostName {
-	return providers.HostName(hetznerInstanceHostname(region))
 }
 
 func (h *hetznerProvider) loadRegionServerTypes(ctx context.Context) (map[string]regionServerType, error) {

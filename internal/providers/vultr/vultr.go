@@ -130,6 +130,14 @@ func vultrInstanceHostname(region string) string {
 	return fmt.Sprintf("vultr-%s", region)
 }
 
+func (v *vultrProvider) buildTags(extra map[string]string) []string {
+	tags := []string{"tscloudvpn", v.ownerTag}
+	for k, val := range extra {
+		tags = append(tags, fmt.Sprintf("%s:%s", k, val))
+	}
+	return tags
+}
+
 func (v *vultrProvider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	err := v.vultrClient.Instance.Delete(ctx, instanceID.ProviderID)
 	if err != nil {
@@ -142,7 +150,7 @@ func (v *vultrProvider) DeleteInstance(ctx context.Context, instanceID providers
 
 func (v *vultrProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
 	region := req.Region
-	hostname := vultrInstanceHostname(region)
+	hostname := req.Hostname
 
 	// Get cached plan ID for the region
 	v.regionSizeCacheLock.RLock()
@@ -182,7 +190,7 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, req providers.Create
 		Region:     region,
 		Label:      "tscloudvpn",
 		Hostname:   hostname,
-		Tags:       []string{"tscloudvpn", v.ownerTag},
+		Tags:       v.buildTags(req.Tags),
 		Plan:       regionSize.PlanID,
 		UserData:   base64.StdEncoding.EncodeToString([]byte(req.UserData)),
 		OsID:       oses[0].ID,
@@ -250,7 +258,7 @@ func (v *vultrProvider) ListInstances(ctx context.Context, region string) ([]pro
 	for _, instance := range instances {
 		createdAt, _ := time.Parse(time.RFC3339, instance.DateCreated)
 		instanceIDs = append(instanceIDs, providers.Instance{
-			Hostname:     vultrInstanceHostname(region),
+			Hostname:     providers.ExtractInstanceName(instance.Tags, vultrInstanceHostname(region)),
 			ProviderID:   instance.ID,
 			ProviderName: providerName,
 			CreatedAt:    createdAt,
@@ -259,10 +267,6 @@ func (v *vultrProvider) ListInstances(ctx context.Context, region string) ([]pro
 	}
 
 	return instanceIDs, nil
-}
-
-func (v *vultrProvider) Hostname(region string) providers.HostName {
-	return providers.HostName(vultrInstanceHostname(region))
 }
 
 // GetRegionHourlyEstimate returns the hourly price for the cheapest plan in the region

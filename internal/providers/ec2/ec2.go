@@ -90,6 +90,17 @@ func ec2InstanceHostname(region string) string {
 	return fmt.Sprintf("ec2-%s", region)
 }
 
+func (e *ec2Provider) buildTags(extra map[string]string) []types.Tag {
+	tags := []types.Tag{
+		{Key: aws.String("tscloudvpn"), Value: aws.String("true")},
+		{Key: aws.String(providers.OwnerTagKey), Value: aws.String(e.ownerID)},
+	}
+	for k, v := range extra {
+		tags = append(tags, types.Tag{Key: aws.String(k), Value: aws.String(v)})
+	}
+	return tags
+}
+
 func (e *ec2Provider) ListRegions(ctx context.Context) ([]providers.Region, error) {
 	// Any region works. Pick something close to where this process is running to minimize latency.
 	e.mu.Lock()
@@ -288,8 +299,6 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, req providers.CreateRe
 
 	log.Printf("Found image id %s in region %s", aws.ToString(imageParam.Parameter.Value), req.Region)
 
-	hostname := ec2InstanceHostname(req.Region)
-
 	// Get or create security group
 	sgID, err := e.getOrCreateSecurityGroup(ctx, client)
 	if err != nil {
@@ -312,10 +321,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, req providers.CreateRe
 		TagSpecifications: []types.TagSpecification{
 			{
 				ResourceType: "instance",
-				Tags: []types.Tag{
-					{Key: aws.String("tscloudvpn"), Value: aws.String("true")},
-					{Key: aws.String(providers.OwnerTagKey), Value: aws.String(e.ownerID)},
-				},
+				Tags:         e.buildTags(req.Tags),
 			},
 		},
 		UserData: aws.String(base64.StdEncoding.EncodeToString([]byte(req.UserData))),
@@ -328,7 +334,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, req providers.CreateRe
 	log.Printf("Launched instance %s", aws.ToString(output.Instances[0].InstanceId))
 
 	return providers.Instance{
-		Hostname:     hostname,
+		Hostname:     req.Hostname,
 		ProviderID:   aws.ToString(output.Instances[0].InstanceId),
 		ProviderName: "ec2",
 		HourlyCost:   e.GetRegionHourlyEstimate(req.Region),
@@ -403,8 +409,15 @@ func (e *ec2Provider) ListInstances(ctx context.Context, region string) ([]provi
 	for _, reservation := range listInstances.Reservations {
 		for _, instance := range reservation.Instances {
 			if instance.State.Name != types.InstanceStateNameTerminated {
+				hostname := ec2InstanceHostname(region)
+				for _, tag := range instance.Tags {
+					if aws.ToString(tag.Key) == providers.NameTagKey {
+						hostname = aws.ToString(tag.Value)
+						break
+					}
+				}
 				instanceIDs = append(instanceIDs, providers.Instance{
-					Hostname:     ec2InstanceHostname(region),
+					Hostname:     hostname,
 					ProviderID:   aws.ToString(instance.InstanceId),
 					ProviderName: providerName,
 					CreatedAt:    aws.ToTime(instance.LaunchTime),
@@ -415,10 +428,6 @@ func (e *ec2Provider) ListInstances(ctx context.Context, region string) ([]provi
 	}
 
 	return instanceIDs, nil
-}
-
-func (e *ec2Provider) Hostname(region string) providers.HostName {
-	return providers.HostName(ec2InstanceHostname(region))
 }
 
 func withRegion(region string) func(options *pricing.Options) {

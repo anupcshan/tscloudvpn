@@ -40,10 +40,12 @@ const (
 
 // CreateRequest contains everything a provider needs to create an instance.
 type CreateRequest struct {
-	Region   string
-	UserData string // Rendered init script
-	SSHKey   string // SSH public key (used by Azure OS profile; other providers can ignore)
-	Debug    bool   // When true, open SSH port in firewalls and delay ERR shutdown
+	Hostname string            // Tailscale hostname (e.g. "do-nyc1", "photos")
+	Region   string            // Cloud provider region
+	UserData string            // Rendered init script
+	SSHKey   string            // SSH public key for providers that require one to create a VM
+	Debug    bool              // When true, open SSH port in firewalls and delay ERR shutdown
+	Tags     map[string]string // Cloud resource tags (service type, instance name, etc.)
 }
 
 type Provider interface {
@@ -52,7 +54,6 @@ type Provider interface {
 	GetInstanceStatus(ctx context.Context, region string) (InstanceStatus, error)
 	ListInstances(ctx context.Context, region string) ([]Instance, error)
 	ListRegions(ctx context.Context) ([]Region, error)
-	Hostname(region string) HostName
 	GetRegionHourlyEstimate(region string) float64 // Get hourly price for a region
 }
 
@@ -82,6 +83,10 @@ func Register(name string, label string, providerFactory ProviderFactory) {
 const (
 	// OwnerTagKey is the tag/label key used to identify the tscloudvpn instance that owns a cloud resource
 	OwnerTagKey = "tscloudvpn-owner"
+	// ServiceTagKey identifies the service type of a cloud resource (e.g. "exit", "files")
+	ServiceTagKey = "tscloudvpn-service"
+	// NameTagKey identifies the instance name of a cloud resource (e.g. "do-nyc1", "photos")
+	NameTagKey = "tscloudvpn-instance-name"
 )
 
 var (
@@ -90,6 +95,19 @@ var (
 	ProviderFactoryRegistry = make(map[string]ProviderFactory)
 	ProviderLabels          = make(map[string]string)
 )
+
+// ExtractInstanceName extracts the instance name from a "key:value" flat tag list,
+// for providers that don't support structured key-value tags (DO, Vultr, Linode).
+// Returns fallback for VMs created before tagging was introduced.
+func ExtractInstanceName(tags []string, fallback string) string {
+	prefix := NameTagKey + ":"
+	for _, tag := range tags {
+		if strings.HasPrefix(tag, prefix) {
+			return strings.TrimPrefix(tag, prefix)
+		}
+	}
+	return fallback
+}
 
 // InitScriptData contains the template variables for the init script.
 type InitScriptData struct {

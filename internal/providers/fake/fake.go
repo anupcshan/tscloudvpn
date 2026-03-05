@@ -14,6 +14,7 @@ import (
 // InstanceState represents the internal state of a fake instance
 type InstanceState struct {
 	ID        string
+	Hostname  string
 	Region    string
 	Status    providers.InstanceStatus
 	CreatedAt time.Time
@@ -97,11 +98,16 @@ func (f *FakeProvider) CreateInstance(ctx context.Context, req providers.CreateR
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	hostname := req.Hostname
+	if hostname == "" {
+		hostname = fmt.Sprintf("fake-%s", region)
+	}
+
 	// Check if instance already exists
 	if existing, exists := f.instances[region]; exists {
 		if existing.Status == providers.InstanceStatusRunning {
 			return providers.Instance{
-				Hostname:     string(f.Hostname(region)),
+				Hostname:     existing.Hostname,
 				ProviderID:   existing.ID,
 				ProviderName: "fake",
 				HourlyCost:   f.config.PricePerHour,
@@ -116,6 +122,7 @@ func (f *FakeProvider) CreateInstance(ctx context.Context, req providers.CreateR
 	// Create new instance
 	instance := &InstanceState{
 		ID:        instanceID,
+		Hostname:  hostname,
 		Region:    region,
 		Status:    providers.InstanceStatusRunning,
 		CreatedAt: time.Now(),
@@ -124,7 +131,7 @@ func (f *FakeProvider) CreateInstance(ctx context.Context, req providers.CreateR
 	f.instances[region] = instance
 
 	return providers.Instance{
-		Hostname:     string(f.Hostname(region)),
+		Hostname:     hostname,
 		ProviderID:   instanceID,
 		ProviderName: "fake",
 		HourlyCost:   f.config.PricePerHour,
@@ -192,11 +199,6 @@ func (f *FakeProvider) ListRegions(ctx context.Context) ([]providers.Region, err
 	}, nil
 }
 
-// Hostname returns the hostname for a region
-func (f *FakeProvider) Hostname(region string) providers.HostName {
-	return providers.HostName(fmt.Sprintf("fake-%s", region))
-}
-
 // GetRegionHourlyEstimate returns the configured price for any region
 func (f *FakeProvider) GetRegionHourlyEstimate(region string) float64 {
 	f.mu.RLock()
@@ -231,8 +233,12 @@ func (f *FakeProvider) ListInstances(ctx context.Context, region string) ([]prov
 	var instances []providers.Instance
 	for instanceRegion, instance := range f.instances {
 		if instanceRegion == region && instance.Status == providers.InstanceStatusRunning {
+			hostname := instance.Hostname
+			if hostname == "" {
+				hostname = fmt.Sprintf("fake-%s", region)
+			}
 			instances = append(instances, providers.Instance{
-				Hostname:     string(f.Hostname(region)),
+				Hostname:     hostname,
 				ProviderID:   instance.ID,
 				ProviderName: "fake",
 				CreatedAt:    instance.CreatedAt,

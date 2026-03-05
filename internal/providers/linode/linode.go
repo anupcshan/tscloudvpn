@@ -43,6 +43,14 @@ func linodeInstanceHostname(region string) string {
 	return fmt.Sprintf("linode-%s", region)
 }
 
+func (l *linodeProvider) buildTags(extra map[string]string) []string {
+	tags := []string{"tscloudvpn", l.ownerTag}
+	for k, v := range extra {
+		tags = append(tags, fmt.Sprintf("%s:%s", k, v))
+	}
+	return tags
+}
+
 func (l *linodeProvider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	linodeID, err := strconv.Atoi(instanceID.ProviderID)
 	if err != nil {
@@ -59,15 +67,13 @@ func (l *linodeProvider) DeleteInstance(ctx context.Context, instanceID provider
 }
 
 func (l *linodeProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
-	hostname := linodeInstanceHostname(req.Region)
-
 	createOpts := linodego.InstanceCreateOptions{
 		Label:    fmt.Sprintf("tscloudvpn-%s", req.Region),
 		Region:   req.Region,
 		Type:     "g6-nanode-1",
 		Image:    "linode/ubuntu24.04",
 		RootPass: generateRandomPassword(),
-		Tags:     []string{"tscloudvpn", l.ownerTag},
+		Tags:     l.buildTags(req.Tags),
 		Metadata: &linodego.InstanceMetadataOptions{
 			UserData: base64.StdEncoding.EncodeToString([]byte(req.UserData)),
 		},
@@ -81,7 +87,7 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, req providers.Creat
 	log.Printf("Launched Linode instance %d", instance.ID)
 
 	return providers.Instance{
-		Hostname:     hostname,
+		Hostname:     req.Hostname,
 		ProviderID:   strconv.Itoa(instance.ID),
 		ProviderName: "linode",
 		HourlyCost:   l.GetRegionHourlyEstimate(req.Region),
@@ -140,7 +146,7 @@ func (l *linodeProvider) ListInstances(ctx context.Context, region string) ([]pr
 	for _, instance := range instances {
 		if instance.Region == region {
 			instanceIDs = append(instanceIDs, providers.Instance{
-				Hostname:     linodeInstanceHostname(region),
+				Hostname:     providers.ExtractInstanceName(instance.Tags, linodeInstanceHostname(region)),
 				ProviderID:   strconv.Itoa(instance.ID),
 				ProviderName: "linode",
 				CreatedAt:    *instance.Created,
@@ -169,10 +175,6 @@ func (l *linodeProvider) ListRegions(ctx context.Context) ([]providers.Region, e
 		})
 	}
 	return result, nil
-}
-
-func (l *linodeProvider) Hostname(region string) providers.HostName {
-	return providers.HostName(linodeInstanceHostname(region))
 }
 
 // GetRegionHourlyEstimate returns the hourly price for the g6-nanode-1 instance

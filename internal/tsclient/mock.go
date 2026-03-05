@@ -13,8 +13,8 @@ type MockClient struct {
 	mu             sync.RWMutex
 	peers          map[string]PeerInfo
 	pingLatency    time.Duration
-	nodeStats      *NodeStatsResult           // if set, FetchNodeStats returns this
-	nodeIdentities map[string]*NodeIdentity   // per-hostname identity responses
+	nodeStats      *NodeStatsResult         // if set, FetchNodeStats returns this
+	nodeIdentities map[string]*NodeIdentity // per-hostname identity responses
 }
 
 // NewMockClient creates a MockClient with no peers and 10ms default ping latency.

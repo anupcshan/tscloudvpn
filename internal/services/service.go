@@ -8,6 +8,13 @@ import (
 	"github.com/anupcshan/tscloudvpn/internal/providers"
 )
 
+// InstanceNameInput provides the inputs for constructing an instance name.
+type InstanceNameInput struct {
+	UserProvidedName string // from API request (persistent services)
+	Provider         string
+	Region           string
+}
+
 // ServiceType defines a category of service that runs on cloud VMs.
 type ServiceType struct {
 	// Name is the DNS-safe short identifier used in hostnames and URLs.
@@ -15,6 +22,11 @@ type ServiceType struct {
 
 	// Label is the human-readable name shown in the UI.
 	Label string
+
+	// InstanceName constructs the instance name (and Tailscale hostname)
+	// from the given input. Exit nodes use provider-region, persistent
+	// services use the user-provided name.
+	InstanceName func(InstanceNameInput) string
 
 	// InitScript is the cloud-init template text (text/template format).
 	InitScript string
@@ -78,8 +90,11 @@ func ByName(name string) *ServiceType {
 
 // ExitNode is the service type for Tailscale exit nodes.
 var ExitNode = ServiceType{
-	Name:           "exit",
-	Label:          "Exit Node",
+	Name:  "exit",
+	Label: "Exit Node",
+	InstanceName: func(in InstanceNameInput) string {
+		return in.Provider + "-" + in.Region
+	},
 	InitScript:     providers.InitData,
 	TailscaleFlags: []string{"--advertise-exit-node", "--advertise-connector"},
 	Tags:           []string{"tag:untrusted"},

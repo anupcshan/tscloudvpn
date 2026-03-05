@@ -12,6 +12,9 @@ type Info[T any] struct {
 	Detail        T
 }
 
+// InstanceNamer returns the instance name for a provider/region pair.
+type InstanceNamer func(provider, region string) string
+
 // WrapWithInfo wraps the given detail with status information computed from
 // cloud providers, regions, and the set of peer hostnames visible in Tailscale
 func WrapWithInfo[T any](
@@ -19,6 +22,7 @@ func WrapWithInfo[T any](
 	cloudProviders map[string]providers.Provider,
 	lazyListRegionsMap map[string]func() []providers.Region,
 	peerHostnames []string,
+	namer InstanceNamer,
 ) Info[T] {
 	regionCount := 0
 	peerSet := make(map[providers.HostName]struct{}, len(peerHostnames))
@@ -30,8 +34,8 @@ func WrapWithInfo[T any](
 	for providerName, f := range lazyListRegionsMap {
 		for _, region := range f() {
 			regionCount++
-			hostname := cloudProviders[providerName].Hostname(region.Code)
-			if _, ok := peerSet[hostname]; ok {
+			instanceName := providers.HostName(namer(providerName, region.Code))
+			if _, ok := peerSet[instanceName]; ok {
 				activeNodes++
 			}
 		}

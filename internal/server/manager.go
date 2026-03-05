@@ -67,6 +67,7 @@ func NewManager(
 type mappedRegion struct {
 	Service           string
 	ServiceLabel      string
+	InstanceName      string
 	Provider          string
 	ProviderLabel     string
 	Region            string
@@ -104,7 +105,8 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 	// Get all instance statuses from the registry
 	allInstanceStatuses := m.instanceRegistry.GetAllInstanceStatuses()
 
-	serviceName := services.ExitNode.Name
+	svcType := &services.ExitNode
+	serviceName := svcType.Name
 
 	for providerName, provider := range m.cloudProviders {
 		provider := provider
@@ -113,7 +115,11 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 		regions := m.lazyListRegionsMap[providerName]()
 
 		for _, region := range regions {
-			key := fmt.Sprintf("%s-%s-%s", serviceName, providerName, region.Code)
+			instanceName := svcType.InstanceName(services.InstanceNameInput{
+				Provider: providerName,
+				Region:   region.Code,
+			})
+			key := fmt.Sprintf("%s-%s", serviceName, instanceName)
 			instanceStatus, hasInstance := allInstanceStatuses[key]
 
 			var sinceCreated string
@@ -149,7 +155,8 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 
 			mappedRegions = append(mappedRegions, mappedRegion{
 				Service:           serviceName,
-				ServiceLabel:      services.ExitNode.Label,
+				ServiceLabel:      svcType.Label,
+				InstanceName:      instanceName,
 				Provider:          providerName,
 				ProviderLabel:     providers.ProviderLabels[providerName],
 				Region:            region.Code,
@@ -173,7 +180,10 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 		return mappedRegions[i].Region < mappedRegions[j].Region
 	})
 
-	return status.WrapWithInfo(mappedRegions, m.cloudProviders, m.lazyListRegionsMap, peerHostnames), nil
+	namer := func(provider, region string) string {
+		return svcType.InstanceName(services.InstanceNameInput{Provider: provider, Region: region})
+	}
+	return status.WrapWithInfo(mappedRegions, m.cloudProviders, m.lazyListRegionsMap, peerHostnames, namer), nil
 }
 
 func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controller controlapi.ControlApi) {
@@ -194,7 +204,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				if region.HasNode {
 					continue
 				}
-				instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Service, region.Provider, region.Region)
+				instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Service, region.InstanceName)
 				if err != nil || instanceStatus.State != instances.StateLaunching {
 					continue
 				}
@@ -221,7 +231,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				if region.HasNode {
 					continue
 				}
-				instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Service, region.Provider, region.Region)
+				instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Service, region.InstanceName)
 				if err != nil || instanceStatus.State != instances.StateFailed {
 					continue
 				}
@@ -335,7 +345,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, opURL)
 				} else {
 					// Check if instance is being launched or failed
-					instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Service, region.Provider, region.Region)
+					instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Service, region.InstanceName)
 					disabledFragment := ""
 					if err == nil && instanceStatus.State == instances.StateLaunching {
 						data[hasNodeKey] = fmt.Sprintf(`<span class="pill pill-blue">launching %s...</span>`, durafmt.ParseShort(time.Since(instanceStatus.LaunchedAt)).InternationalString())
@@ -384,17 +394,21 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 		}
 	})
 
-	svcName := services.ExitNode.Name
+	exitSvc := &services.ExitNode
 	for providerName := range m.cloudProviders {
 		providerName := providerName
 
 		lazyListRegions := m.lazyListRegionsMap[providerName]
 		for _, region := range lazyListRegions() {
 			region := region
-			mux.HandleFunc(fmt.Sprintf("/services/%s/providers/%s/regions/%s", svcName, providerName, region.Code), func(w http.ResponseWriter, r *http.Request) {
+			instanceName := exitSvc.InstanceName(services.InstanceNameInput{
+				Provider: providerName,
+				Region:   region.Code,
+			})
+			mux.HandleFunc(fmt.Sprintf("/services/%s/providers/%s/regions/%s", exitSvc.Name, providerName, region.Code), func(w http.ResponseWriter, r *http.Request) {
 				switch r.Method {
 				case "DELETE":
-					err := m.instanceRegistry.DeleteInstance(svcName, providerName, region.Code)
+					err := m.instanceRegistry.DeleteInstance(exitSvc.Name, instanceName)
 					if err != nil {
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write([]byte(err.Error()))
@@ -409,7 +423,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 					ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer cancelFunc()
 
-					err := m.instanceRegistry.CreateInstance(ctx, svcName, providerName, region.Code)
+					err := m.instanceRegistry.CreateInstance(ctx, exitSvc.Name, instanceName, providerName, region.Code)
 					if err != nil {
 						logger.Printf("Failed to create instance: %s", err)
 						w.Write([]byte(err.Error()))

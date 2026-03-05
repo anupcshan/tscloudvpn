@@ -164,6 +164,18 @@ func azureInstanceHostname(region string) string {
 	return fmt.Sprintf("azure-%s", region)
 }
 
+func (a *azureProvider) buildTags(region string, extra map[string]string) map[string]*string {
+	tags := map[string]*string{
+		"created-by":          to.Ptr("tscloudvpn"),
+		"region":              to.Ptr(region),
+		providers.OwnerTagKey: to.Ptr(a.ownerID),
+	}
+	for k, v := range extra {
+		tags[k] = to.Ptr(v)
+	}
+	return tags
+}
+
 func (a *azureProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
 	if err := a.ensureVMTypeCache(); err != nil {
 		return providers.Instance{}, fmt.Errorf("failed to load VM pricing: %w", err)
@@ -177,7 +189,6 @@ func (a *azureProvider) CreateInstance(ctx context.Context, req providers.Create
 		return providers.Instance{}, fmt.Errorf("no VM types available for region %s", req.Region)
 	}
 
-	hostname := azureInstanceHostname(req.Region)
 	vmName := fmt.Sprintf("tscloudvpn-%s", req.Region)
 
 	// Base64 encode the cloud-init data
@@ -247,11 +258,7 @@ func (a *azureProvider) CreateInstance(ctx context.Context, req providers.Create
 					},
 				},
 			},
-			Tags: map[string]*string{
-				"created-by":          to.Ptr("tscloudvpn"),
-				"region":              to.Ptr(req.Region),
-				providers.OwnerTagKey: to.Ptr(a.ownerID),
-			},
+			Tags: a.buildTags(req.Region, req.Tags),
 		}
 
 		poller, err := a.computeClient.BeginCreateOrUpdate(ctx, a.resourceGroup, vmName, vmParams, nil)
@@ -270,7 +277,7 @@ func (a *azureProvider) CreateInstance(ctx context.Context, req providers.Create
 
 		log.Printf("Created Azure VM %s in region %s (size: %s)", vmName, req.Region, mt.VMSize)
 		return providers.Instance{
-			Hostname:     hostname,
+			Hostname:     req.Hostname,
 			ProviderID:   vmName,
 			ProviderName: providerName,
 			HourlyCost:   mt.HourlyCost,
@@ -442,9 +449,16 @@ func (a *azureProvider) ListInstances(ctx context.Context, region string) ([]pro
 		createdAt = *vm.Properties.TimeCreated
 	}
 
+	hostname := azureInstanceHostname(region)
+	if vm.Tags != nil {
+		if name, ok := vm.Tags[providers.NameTagKey]; ok && name != nil {
+			hostname = *name
+		}
+	}
+
 	return []providers.Instance{
 		{
-			Hostname:     azureInstanceHostname(region),
+			Hostname:     hostname,
 			ProviderID:   vmName,
 			ProviderName: providerName,
 			CreatedAt:    createdAt,
@@ -472,10 +486,6 @@ func (a *azureProvider) ListRegions(ctx context.Context) ([]providers.Region, er
 	}
 
 	return result, nil
-}
-
-func (a *azureProvider) Hostname(region string) providers.HostName {
-	return providers.HostName(azureInstanceHostname(region))
 }
 
 func (a *azureProvider) GetRegionHourlyEstimate(region string) float64 {

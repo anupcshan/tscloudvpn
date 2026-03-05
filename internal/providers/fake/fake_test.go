@@ -102,16 +102,6 @@ func TestFakeProvider_ListRegions(t *testing.T) {
 	}
 }
 
-func TestFakeProvider_Hostname(t *testing.T) {
-	fakeProvider := NewWithConfig(DefaultConfig())
-
-	hostname := fakeProvider.Hostname("us-east")
-	expected := "fake-us-east"
-	if string(hostname) != expected {
-		t.Errorf("Expected hostname %s, got %s", expected, hostname)
-	}
-}
-
 func TestFakeProvider_GetRegionHourlyEstimate(t *testing.T) {
 	fakeProvider := NewWithConfig(DefaultConfig())
 

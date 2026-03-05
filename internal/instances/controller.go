@@ -151,16 +151,16 @@ const (
 
 // InstanceStatus represents the current state of an instance
 type InstanceStatus struct {
-	Hostname     providers.HostName
+	InstanceName string // instance name, used as Tailscale hostname and registry key
 	Service      string
 	ServiceLabel string
 	Provider     string
 	Region       string
-	State      InstanceState
-	IsRunning  bool
-	CreatedAt  time.Time
-	LaunchedAt time.Time
-	PingStats  struct {
+	State        InstanceState
+	IsRunning    bool
+	CreatedAt    time.Time
+	LaunchedAt   time.Time
+	PingStats    struct {
 		SuccessRate      float64
 		AvgLatency       time.Duration
 		StdDev           time.Duration
@@ -258,7 +258,6 @@ func (c *Controller) Status() InstanceStatus {
 	defer c.mu.RUnlock()
 
 	status := InstanceStatus{
-		Hostname: c.hostname,
 		State:      c.state,
 		IsRunning:  c.state == StateRunning,
 		CreatedAt:  c.createdAt,

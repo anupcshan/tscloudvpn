@@ -56,6 +56,14 @@ func doInstanceHostname(region string) string {
 	return fmt.Sprintf("do-%s", region)
 }
 
+func (d *digitaloceanProvider) buildTags(extra map[string]string) []string {
+	tags := []string{"tscloudvpn", d.ownerTag}
+	for k, v := range extra {
+		tags = append(tags, fmt.Sprintf("%s:%s", k, v))
+	}
+	return tags
+}
+
 func (d *digitaloceanProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
 	// Ensure region size cache is populated
 	d.regionSizeCacheLock.Lock()
@@ -70,8 +78,6 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, req providers
 	}
 	d.regionSizeCacheLock.Unlock()
 
-	hostname := doInstanceHostname(req.Region)
-
 	createRequest := &godo.DropletCreateRequest{
 		Name:   fmt.Sprintf("tscloudvpn-%s", req.Region),
 		Region: req.Region,
@@ -80,7 +86,7 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, req providers
 			Slug: "ubuntu-24-04-x64",
 		},
 		UserData: req.UserData,
-		Tags:     []string{"tscloudvpn", d.ownerTag},
+		Tags:     d.buildTags(req.Tags),
 	}
 
 	droplet, _, err := d.client.Droplets.Create(ctx, createRequest)
@@ -91,7 +97,7 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, req providers
 	log.Printf("Launched instance %d", droplet.ID)
 
 	return providers.Instance{
-		Hostname:     hostname,
+		Hostname:     req.Hostname,
 		ProviderID:   strconv.Itoa(droplet.ID),
 		ProviderName: "do",
 		HourlyCost:   d.GetRegionHourlyEstimate(req.Region),
@@ -161,7 +167,7 @@ func (d *digitaloceanProvider) ListInstances(ctx context.Context, region string)
 		if droplet.Region.Slug == region {
 			createdAt, _ := time.Parse(time.RFC3339, droplet.Created)
 			instances = append(instances, providers.Instance{
-				Hostname:     doInstanceHostname(region),
+				Hostname:     providers.ExtractInstanceName(droplet.Tags, doInstanceHostname(region)),
 				ProviderID:   strconv.Itoa(droplet.ID),
 				ProviderName: "do",
 				CreatedAt:    createdAt,
@@ -190,10 +196,6 @@ func (d *digitaloceanProvider) ListRegions(ctx context.Context) ([]providers.Reg
 		})
 	}
 	return result, nil
-}
-
-func (d *digitaloceanProvider) Hostname(region string) providers.HostName {
-	return providers.HostName(doInstanceHostname(region))
 }
 
 func (d *digitaloceanProvider) loadRegionSizes() (map[string]regionSize, error) {

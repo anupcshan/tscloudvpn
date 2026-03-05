@@ -141,12 +141,13 @@ func TestExitNode(t *testing.T) {
 			key, err := controller.CreateKey(ctx, []string{"tag:untrusted"})
 			require.NoError(t, err, "Failed to create auth key")
 
-			hostname := string(provider.Hostname(region))
+			hostname := name + "-" + region
 			userData, err := providers.RenderUserData(hostname, key, sshPubKey, "exit", name, region, true)
 			require.NoError(t, err, "Failed to render user data")
 
 			t.Logf("Creating %s exit node in %s", name, region)
 			instance, err := provider.CreateInstance(ctx, providers.CreateRequest{
+				Hostname: hostname,
 				Region:   region,
 				UserData: userData,
 				SSHKey:   sshPubKey,

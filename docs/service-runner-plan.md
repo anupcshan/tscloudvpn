@@ -546,23 +546,41 @@ DKMS compilation). Landing as focused commits:
   of `debian/bookworm`). Ubuntu ships ZFS as a prebuilt kernel module
   — no DKMS needed.
 
-- [ ] **Commit 9: Init script rendering refactor.**
-  `RenderUserData` takes init script template as parameter (currently
-  hardcodes `InitData`). Use `svcType.InitScript` in registry's
-  `createCloudInstance`. Extend `InitScriptData` with R2 credential
-  fields (`R2AccessKeyID`, `R2SecretAccessKey`, `R2Endpoint`,
-  `R2Bucket`, `VolumeSize`, `VolumeName`). Add
-  `RenderUserDataWithPersistence` that accepts a pre-populated
-  `InitScriptData`. No behavior change for exit nodes.
+- [x] **Commit 9: Named instances, cloud resource tags, hostname unification.**
 
-- [ ] **Commit 10: Named instances in registry.**
-  Add `instanceName` parameter to `CreateInstance`, `DeleteInstance`,
-  `GetInstanceStatus`. `registryKey` returns `{service}-{name}` for
-  persistent services (name non-empty), `{service}-{provider}-{region}`
-  for ephemeral. Add `name` field to `controllerEntry`, `InstanceName`
-  to `InstanceStatus`. All existing callers pass `""`.
+  **Instance naming.** Registry key simplified to `{service}-{name}`
+  universally. Instance name construction owned by `ServiceType` via
+  `InstanceName func(InstanceNameInput) string`, where:
 
-- [ ] **Commit 11: Cloudflare config + R2 client.**
+  ```go
+  type InstanceNameInput struct {
+      UserProvidedName string // from API request (persistent services)
+      Provider         string
+      Region           string
+  }
+  ```
+
+  Exit nodes: `func(in) string { return in.Provider + "-" + in.Region }`.
+  File server: `func(in) string { return in.UserProvidedName }`.
+  The manager calls `svcType.InstanceName(...)` — no hardcoded naming
+  logic outside the ServiceType.
+
+  **Hostname = instance name.** `Hostname()` removed from `Provider`
+  interface. The instance name IS the Tailscale hostname, passed
+  through `CreateRequest.Hostname` and `RenderUserData`. Controller
+  matches peers by instance name. `Hostname` removed from
+  `InstanceStatus` (derived, not stored). `HostName` type retained
+  internally for controller peer matching.
+
+  **Cloud resource tags.** All 7 providers tag cloud VMs with
+  `tscloudvpn-service` and `tscloudvpn-instance-name` via
+  `CreateRequest.Tags`. `ListInstances` reads the instance name tag
+  back (falling back to the old `{provider}-{region}` pattern for
+  VMs created before this change). `DeleteInstance` and
+  `GetInstanceStatus` look up provider/region from stored
+  `controllerEntry` instead of taking them as args.
+
+- [ ] **Commit 10: Cloudflare config + R2 client.**
   New `internal/r2/r2.go`: `TokenManager` with `CreateVolume` (create
   bucket + scoped API token, derive S3 creds via SHA-256 of token
   value) and `RevokeToken` (find token by name, delete it). One R2
@@ -572,14 +590,14 @@ DKMS compilation). Landing as focused commits:
   Config: `cloudflare.account_id` + `cloudflare.api_token`. Wired
   through app → server → manager → registry (nil if not configured).
 
-- [ ] **Commit 12: R2 wiring in registry lifecycle.**
+- [ ] **Commit 11: R2 wiring in registry lifecycle.**
   In `createCloudInstance`: if `svcType.Persistence != nil` and R2 is
   configured, call `CreateVolume` then `RenderUserDataWithPersistence`
   with credentials. In `DeleteInstance`: revoke R2 token before
   deleting from control plane/cloud (instant fencing). Bucket and
   data are preserved for future resume.
 
-- [ ] **Commit 13: File server ServiceType + init script.**
+- [ ] **Commit 12: File server ServiceType + init script rendering refactor.**
   `var FileServer = ServiceType{Name: "files", Label: "File Server", ...}`
   with `Persistence: &PersistenceConfig{MountPoint: "/data", Size: "10G"}`,
   `IdleTimeout: 2h`, `Tags: ["tag:untrusted"]`. Init script
@@ -591,16 +609,20 @@ DKMS compilation). Landing as focused commits:
   or `zpool create` for new volumes. Phase 4: download filebrowser
   (v2.61.0), init DB, run on port 80 bound to tailscale IP. Phase 5:
   stats server on 8245, idle detection via filebrowser I/O activity.
-  Add to `services.All` catalog.
+  Add to `services.All` catalog. Also: `RenderUserData` takes init
+  script template as parameter (currently hardcodes `InitData`), use
+  `svcType.InitScript` in registry's `createCloudInstance`. Extend
+  `InitScriptData` with R2 credential fields. Add
+  `RenderUserDataWithPersistence`. No behavior change for exit nodes.
 
-- [ ] **Commit 14: API routes + minimal UI.**
+- [ ] **Commit 13: API routes + minimal UI.**
   Routes: `PUT /services/files/instances/{name}/providers/{provider}/regions/{region}`
   and `DELETE /services/files/instances/{name}` (looks up provider/region
   from running instance status). UI: "Launch File Server" section with
   name text input, provider/region dropdown, create button. Uses
   `fetch()` (not HTMX) since the form is different from exit nodes.
 
-- [ ] **Commit 15: Cleanup.**
+- [ ] **Commit 14: Cleanup.**
   Cloud provider instance tags include service type. GC handles new
   registry key format. identity.json includes instance name for
   discovery of persistent services. Restore init script ERR/EXIT

@@ -20,6 +20,7 @@ const discoveryInterval = time.Second
 type controllerEntry struct {
 	controller *Controller
 	service    string
+	name       string // instance name, used as Tailscale hostname and registry key
 	provider   string
 	region     string
 }
@@ -27,7 +28,7 @@ type controllerEntry struct {
 // Registry manages all instance controllers
 type Registry struct {
 	mu          sync.RWMutex
-	controllers map[string]*controllerEntry // key: "service-provider-region"
+	controllers map[string]*controllerEntry // key: "service-name" (e.g. "exit-do-nyc1")
 	logger      *log.Logger
 	sshKey      string
 	controlApi  controlapi.ControlApi
@@ -35,8 +36,8 @@ type Registry struct {
 	providers   map[string]providers.Provider
 }
 
-func registryKey(service, provider, region string) string {
-	return fmt.Sprintf("%s-%s-%s", service, provider, region)
+func registryKey(service, name string) string {
+	return fmt.Sprintf("%s-%s", service, name)
 }
 
 // NewRegistry creates a new instance registry. Call Start() to begin
@@ -84,9 +85,10 @@ func (r *Registry) runDiscoveryLoop(ctx context.Context) {
 	}
 }
 
-// CreateInstance creates a new instance with its controller
-func (r *Registry) CreateInstance(ctx context.Context, serviceName, providerName, region string) error {
-	key := registryKey(serviceName, providerName, region)
+// CreateInstance creates a new instance with its controller.
+// instanceName is the Tailscale hostname and registry key, constructed by ServiceType.InstanceName.
+func (r *Registry) CreateInstance(ctx context.Context, serviceName, instanceName, providerName, region string) error {
+	key := registryKey(serviceName, instanceName)
 
 	r.mu.Lock()
 	// Check if controller already exists
@@ -121,15 +123,14 @@ func (r *Registry) CreateInstance(ctx context.Context, serviceName, providerName
 		return fmt.Errorf("unknown provider: %s", providerName)
 	}
 
-	hostname := provider.Hostname(region)
-
 	// Create controller for monitoring (does not start health loop yet)
-	controller := NewController(context.Background(), r.logger, hostname, svcType, r.tsClient)
-	controller.onIdleShutdown = r.makeIdleShutdownCallback(serviceName, providerName, region)
+	controller := NewController(context.Background(), r.logger, providers.HostName(instanceName), svcType, r.tsClient)
+	controller.onIdleShutdown = r.makeIdleShutdownCallback(serviceName, instanceName)
 	controller.SetLaunching()
 	r.controllers[key] = &controllerEntry{
 		controller: controller,
 		service:    serviceName,
+		name:       instanceName,
 		provider:   providerName,
 		region:     region,
 	}
@@ -137,7 +138,7 @@ func (r *Registry) CreateInstance(ctx context.Context, serviceName, providerName
 
 	// Start instance creation in background
 	go func() {
-		instance, err := r.createCloudInstance(context.Background(), svcType, providerName, provider, region)
+		instance, err := r.createCloudInstance(context.Background(), svcType, instanceName, providerName, provider, region)
 		if err != nil {
 			r.logger.Printf("Failed to create instance %s: %s", key, err)
 			controller.SetFailed(err)
@@ -154,25 +155,29 @@ func (r *Registry) CreateInstance(ctx context.Context, serviceName, providerName
 
 // createCloudInstance handles the cloud provisioning: create auth key,
 // render init script, call provider.
-func (r *Registry) createCloudInstance(ctx context.Context, svcType *services.ServiceType, providerName string, provider providers.Provider, region string) (providers.Instance, error) {
+func (r *Registry) createCloudInstance(ctx context.Context, svcType *services.ServiceType, instanceName, providerName string, provider providers.Provider, region string) (providers.Instance, error) {
 	authKey, err := r.controlApi.CreateKey(ctx, svcType.Tags)
 	if err != nil {
 		return providers.Instance{}, err
 	}
 
-	hostname := string(provider.Hostname(region))
-	userData, err := providers.RenderUserData(hostname, authKey, r.sshKey, svcType.Name, providerName, region, false)
+	userData, err := providers.RenderUserData(instanceName, authKey, r.sshKey, svcType.Name, providerName, region, false)
 	if err != nil {
 		return providers.Instance{}, err
 	}
 
 	createdInstance, err := provider.CreateInstance(ctx, providers.CreateRequest{
+		Hostname: instanceName,
 		Region:   region,
 		UserData: userData,
 		SSHKey:   r.sshKey,
+		Tags: map[string]string{
+			providers.ServiceTagKey: svcType.Name,
+			providers.NameTagKey:    instanceName,
+		},
 	})
 	if err != nil {
-		r.logger.Printf("Failed to launch instance %s: %s", hostname, err)
+		r.logger.Printf("Failed to launch instance %s: %s", instanceName, err)
 		return providers.Instance{}, err
 	}
 
@@ -180,9 +185,10 @@ func (r *Registry) createCloudInstance(ctx context.Context, svcType *services.Se
 	return createdInstance, nil
 }
 
-// DeleteInstance deletes an instance and its controller
-func (r *Registry) DeleteInstance(serviceName, providerName, region string) error {
-	key := registryKey(serviceName, providerName, region)
+// DeleteInstance deletes an instance and its controller.
+// Provider and region are looked up from the stored controller entry.
+func (r *Registry) DeleteInstance(serviceName, instanceName string) error {
+	key := registryKey(serviceName, instanceName)
 
 	r.mu.Lock()
 	entry, exists := r.controllers[key]
@@ -198,20 +204,20 @@ func (r *Registry) DeleteInstance(serviceName, providerName, region string) erro
 		return nil
 	}
 
-	// Look up provider
-	provider, exists := r.providers[providerName]
+	// Look up provider from stored metadata
+	provider, exists := r.providers[entry.provider]
 	if !exists {
 		entry.controller.Stop()
-		return fmt.Errorf("unknown provider: %s", providerName)
+		return fmt.Errorf("unknown provider: %s", entry.provider)
 	}
 
-	hostname := provider.Hostname(region)
+	hostname := providers.HostName(entry.name)
 
 	// Step 1: Delete from Tailscale/Headscale
 	r.deleteFromControlPlane(hostname)
 
 	// Step 2: Delete from cloud provider
-	r.deleteFromCloudProvider(provider, region, hostname)
+	r.deleteFromCloudProvider(provider, entry.region, hostname)
 
 	entry.controller.Stop()
 	return nil
@@ -259,9 +265,10 @@ func (r *Registry) deleteFromCloudProvider(provider providers.Provider, region s
 	}
 }
 
-// GetInstanceStatus returns the status of a specific instance
-func (r *Registry) GetInstanceStatus(serviceName, providerName, region string) (InstanceStatus, error) {
-	key := registryKey(serviceName, providerName, region)
+// GetInstanceStatus returns the status of a specific instance.
+// Provider and region are looked up from the stored controller entry.
+func (r *Registry) GetInstanceStatus(serviceName, instanceName string) (InstanceStatus, error) {
+	key := registryKey(serviceName, instanceName)
 
 	r.mu.RLock()
 	entry, exists := r.controllers[key]
@@ -276,6 +283,7 @@ func (r *Registry) GetInstanceStatus(serviceName, providerName, region string) (
 	if svc := services.ByName(entry.service); svc != nil {
 		status.ServiceLabel = svc.Label
 	}
+	status.InstanceName = entry.name
 	status.Provider = entry.provider
 	status.Region = entry.region
 	return status, nil
@@ -293,6 +301,7 @@ func (r *Registry) GetAllInstanceStatuses() map[string]InstanceStatus {
 		if svc := services.ByName(entry.service); svc != nil {
 			status.ServiceLabel = svc.Label
 		}
+		status.InstanceName = entry.name
 		status.Provider = entry.provider
 		status.Region = entry.region
 		statuses[key] = status
@@ -303,11 +312,11 @@ func (r *Registry) GetAllInstanceStatuses() map[string]InstanceStatus {
 // makeIdleShutdownCallback returns a function that deletes the given instance
 // when called. It runs the deletion in a separate goroutine to avoid blocking
 // the health check loop.
-func (r *Registry) makeIdleShutdownCallback(serviceName, providerName, region string) func() {
+func (r *Registry) makeIdleShutdownCallback(serviceName, instanceName string) func() {
 	return func() {
 		go func() {
-			if err := r.DeleteInstance(serviceName, providerName, region); err != nil {
-				r.logger.Printf("Idle shutdown delete failed for %s: %v", registryKey(serviceName, providerName, region), err)
+			if err := r.DeleteInstance(serviceName, instanceName); err != nil {
+				r.logger.Printf("Idle shutdown delete failed for %s: %v", registryKey(serviceName, instanceName), err)
 			}
 		}()
 	}
@@ -316,8 +325,8 @@ func (r *Registry) makeIdleShutdownCallback(serviceName, providerName, region st
 // makePeerGoneCallback returns a function that stops and removes the controller
 // when the peer disappears. Used for discovered controllers only — they have no
 // attachment to the VM and should stop watching when the peer is gone.
-func (r *Registry) makePeerGoneCallback(serviceName, providerName, region string) func() {
-	key := registryKey(serviceName, providerName, region)
+func (r *Registry) makePeerGoneCallback(serviceName, instanceName string) func() {
+	key := registryKey(serviceName, instanceName)
 	return func() {
 		// Run in a goroutine to avoid deadlocking the health check loop
 		// (Stop waits for the goroutine that's calling this callback).
@@ -418,7 +427,11 @@ func (r *Registry) discoverInstances(ctx context.Context) {
 			continue
 		}
 
-		key := registryKey(identity.Service, identity.Provider, identity.Region)
+		instanceName := svcType.InstanceName(services.InstanceNameInput{
+			Provider: identity.Provider,
+			Region:   identity.Region,
+		})
+		key := registryKey(identity.Service, instanceName)
 
 		r.mu.Lock()
 		// Double-check under write lock
@@ -439,8 +452,8 @@ func (r *Registry) discoverInstances(ctx context.Context) {
 
 			// Create controller for monitoring only
 			controller := NewController(context.Background(), r.logger, hostname, svcType, r.tsClient)
-			controller.onIdleShutdown = r.makeIdleShutdownCallback(identity.Service, identity.Provider, identity.Region)
-			controller.onPeerGone = r.makePeerGoneCallback(identity.Service, identity.Provider, identity.Region)
+			controller.onIdleShutdown = r.makeIdleShutdownCallback(identity.Service, instanceName)
+			controller.onPeerGone = r.makePeerGoneCallback(identity.Service, instanceName)
 
 			// Mark as running and set creation time and actual cost
 			controller.mu.Lock()
@@ -455,6 +468,7 @@ func (r *Registry) discoverInstances(ctx context.Context) {
 			r.controllers[key] = &controllerEntry{
 				controller: controller,
 				service:    identity.Service,
+				name:       instanceName,
 				provider:   identity.Provider,
 				region:     identity.Region,
 			}

@@ -41,10 +41,6 @@ func (m *MockProvider) ListRegions(ctx context.Context) ([]providers.Region, err
 	return []providers.Region{{Code: "test-region", LongName: "Test Region"}}, nil
 }
 
-func (m *MockProvider) Hostname(region string) providers.HostName {
-	return m.hostname
-}
-
 func (m *MockProvider) GetRegionHourlyEstimate(region string) float64 {
 	return 0.05
 }
@@ -113,9 +109,6 @@ func TestController_NewController(t *testing.T) {
 	}
 
 	status := controller.Status()
-	if status.Hostname != "test-instance" {
-		t.Errorf("Expected hostname 'test-instance', got %s", status.Hostname)
-	}
 	if status.State != StateIdle {
 		t.Errorf("Expected instance state to be StateIdle, got %d", status.State)
 	}
@@ -140,13 +133,13 @@ func TestRegistry_CreateAndDeleteInstance(t *testing.T) {
 	ctx := context.Background()
 
 	// Test creating an instance
-	err := registry.CreateInstance(ctx, "exit", "mock", "test-region")
+	err := registry.CreateInstance(ctx, "exit", "mock-test-region", "mock", "test-region")
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
 
 	// Test getting instance status
-	status, err := registry.GetInstanceStatus("exit", "mock", "test-region")
+	status, err := registry.GetInstanceStatus("exit", "mock-test-region")
 	if err != nil {
 		t.Fatalf("Failed to get instance status: %v", err)
 	}
@@ -164,13 +157,13 @@ func TestRegistry_CreateAndDeleteInstance(t *testing.T) {
 	})
 
 	// Test deleting the instance
-	err = registry.DeleteInstance("exit", "mock", "test-region")
+	err = registry.DeleteInstance("exit", "mock-test-region")
 	if err != nil {
 		t.Fatalf("Failed to delete instance: %v", err)
 	}
 
 	// Verify instance is gone
-	_, err = registry.GetInstanceStatus("exit", "mock", "test-region")
+	_, err = registry.GetInstanceStatus("exit", "mock-test-region")
 	if err == nil {
 		t.Error("Expected error when getting status of deleted instance")
 	}
@@ -196,12 +189,12 @@ func TestRegistry_GetAllInstanceStatuses(t *testing.T) {
 	ctx := context.Background()
 
 	// Create instances
-	err := registry.CreateInstance(ctx, "exit", "mock1", "test-region")
+	err := registry.CreateInstance(ctx, "exit", "mock1-test-region", "mock1", "test-region")
 	if err != nil {
 		t.Fatalf("Failed to create instance 1: %v", err)
 	}
 
-	err = registry.CreateInstance(ctx, "exit", "mock2", "test-region")
+	err = registry.CreateInstance(ctx, "exit", "mock2-test-region", "mock2", "test-region")
 	if err != nil {
 		t.Fatalf("Failed to create instance 2: %v", err)
 	}
@@ -296,7 +289,7 @@ func TestRegistry_DiscoverExistingInstances(t *testing.T) {
 
 	// Test that creating an instance that already exists doesn't duplicate it
 	ctx := context.Background()
-	err := registry.CreateInstance(ctx, "exit", "mock1", "test-region")
+	err := registry.CreateInstance(ctx, "exit", "mock1-test-region", "mock1", "test-region")
 	if err != nil {
 		t.Errorf("Creating existing instance should not fail: %v", err)
 	}
@@ -348,7 +341,7 @@ func TestRegistry_PeriodicDiscovery(t *testing.T) {
 	registry.discoverInstances(ctx)
 	require.Equal(t, 1, len(registry.GetAllInstanceStatuses()))
 
-	status, err := registry.GetInstanceStatus("exit", "mock", "test-region")
+	status, err := registry.GetInstanceStatus("exit", "mock-test-region")
 	require.NoError(t, err)
 	require.Equal(t, StateRunning, status.State)
 	require.False(t, status.CreatedAt.IsZero())
@@ -435,7 +428,7 @@ func TestRegistry_Discovery_SkipsUntaggedDevices(t *testing.T) {
 
 	// Only the tagged device should be discovered
 	require.Equal(t, 1, len(registry.GetAllInstanceStatuses()))
-	_, err := registry.GetInstanceStatus("exit", "mock", "test-region")
+	_, err := registry.GetInstanceStatus("exit", "mock-test-region")
 	require.NoError(t, err)
 }
 
@@ -590,7 +583,7 @@ func TestRegistry_IdleShutdownCallback(t *testing.T) {
 	defer registry.Shutdown()
 
 	ctx := context.Background()
-	err := registry.CreateInstance(ctx, "exit", "mock", "test-region")
+	err := registry.CreateInstance(ctx, "exit", "mock-test-region", "mock", "test-region")
 	require.NoError(t, err)
 
 	// Manually set the callback to a test channel to verify it's wired
@@ -686,7 +679,7 @@ func TestDiscoveredController_StaleStatsNotAppliedToNewInstance(t *testing.T) {
 
 	// Wait for health check to fetch stats
 	require.Eventually(t, func() bool {
-		status, err := registry.GetInstanceStatus("exit", "mock", "test-region")
+		status, err := registry.GetInstanceStatus("exit", "mock-test-region")
 		return err == nil && status.NodeStats != nil
 	}, 5*time.Second, 50*time.Millisecond,
 		"Stats should be fetched")
@@ -794,7 +787,7 @@ func TestRegistry_CreateInstance_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Start instance creation
-	err := registry.CreateInstance(ctx, "exit", "mock", "test-region")
+	err := registry.CreateInstance(ctx, "exit", "mock-test-region", "mock", "test-region")
 	if err != nil {
 		t.Fatalf("Failed to create instance: %v", err)
 	}
@@ -803,7 +796,7 @@ func TestRegistry_CreateInstance_ContextCancellation(t *testing.T) {
 	cancel()
 
 	// Verify that instance creation wasn't affected by context cancellation
-	status, err := registry.GetInstanceStatus("exit", "mock", "test-region")
+	status, err := registry.GetInstanceStatus("exit", "mock-test-region")
 	if err != nil {
 		t.Fatalf("Failed to get instance status: %v", err)
 	}
