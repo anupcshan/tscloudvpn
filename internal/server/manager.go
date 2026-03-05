@@ -88,9 +88,32 @@ type mappedRegion struct {
 	CreatedTS  time.Time
 	LaunchedTS time.Time
 	NodeStats  *instances.NodeStats
+	Links      []resolvedLink
 }
 
-func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], error) {
+// resolvedLink is a ServiceLink with the hostname substituted.
+type resolvedLink struct {
+	Label  string
+	URL    string // Format with hostname filled in
+	Render string // "link" or "copy"
+}
+
+// pageTemplateData holds all data for the main page template.
+type pageTemplateData struct {
+	ProviderCount int
+	RegionCount   int
+	ActiveNodes   int
+	Services      []serviceTabData
+}
+
+// serviceTabData holds region data for one service type tab.
+type serviceTabData struct {
+	Name    string
+	Label   string
+	Regions []mappedRegion
+}
+
+func (m *Manager) GetStatus(ctx context.Context, svcType *services.ServiceType) (status.Info[[]mappedRegion], error) {
 	var zero status.Info[[]mappedRegion]
 	var mappedRegions []mappedRegion
 
@@ -107,7 +130,6 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 	// Get all instance statuses from the registry
 	allInstanceStatuses := m.instanceRegistry.GetAllInstanceStatuses()
 
-	svcType := &services.ExitNode
 	serviceName := svcType.Name
 
 	for providerName, provider := range m.cloudProviders {
@@ -171,6 +193,7 @@ func (m *Manager) GetStatus(ctx context.Context) (status.Info[[]mappedRegion], e
 				PriceCentsPerHour: priceCentsPerHour,
 				PingStats:         pingStats,
 				NodeStats:         nodeStats,
+				Links:             resolveLinks(svcType.Links, instanceName),
 			})
 		}
 	}
@@ -286,8 +309,9 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				fmt.Fprintf(&html, `<span>cost <span class="val">$%.2f</span> (%.2fc/hr)</span>`, runningCostDollars, node.PriceCentsPerHour)
 				fmt.Fprintf(&html, `<span>success <span class="val">%.0f%%</span></span>`, node.PingStats.SuccessRate*100)
 				if node.NodeStats != nil {
-					fmt.Fprintf(&html, `<span>traffic <span class="val">%s</span></span>`,
-						formatBytes(node.NodeStats.ForwardedBytes))
+					for _, stat := range node.NodeStats.StatsDisplay {
+						fmt.Fprintf(&html, `<span>%s <span class="val">%s</span></span>`, stat.Label, stat.Value)
+					}
 					idleDuration := time.Since(node.NodeStats.LastActive)
 					if idleDuration < 5*time.Minute {
 						fmt.Fprintf(&html, `<span class="pill pill-green">active</span>`)
@@ -297,6 +321,17 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 					}
 				}
 				html.WriteString(`</div>`)
+				if len(node.Links) > 0 {
+					html.WriteString(`<div class="node-meta" style="margin-top:4px">`)
+					for _, link := range node.Links {
+						if link.Render == "link" {
+							fmt.Fprintf(&html, `<a href="%s" class="node-link" target="_blank">%s ↗</a>`, link.URL, link.Label)
+						} else {
+							fmt.Fprintf(&html, `<span class="node-copy" onclick="navigator.clipboard.writeText('%s')" title="Click to copy">%s</span>`, link.URL, link.URL)
+						}
+					}
+					html.WriteString(`</div>`)
+				}
 				html.WriteString(`</div>`)
 				fmt.Fprintf(&html, `<button class="btn btn-danger" hx-ext="disable-element" `+
 					`hx-disable-element="self" hx-delete="/services/%s/providers/%s/regions/%s">Delete</button>`,
@@ -311,14 +346,50 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 		}
 
 		for {
-			status, err := m.GetStatus(ctx)
-			if err != nil {
-				log.Printf("Error getting status: %s", err)
-				continue
+			// Collect regions across all service types
+			var allRegions []mappedRegion
+			data := make(map[string]string)
+
+			for _, svcType := range services.All {
+				svcStatus, err := m.GetStatus(ctx, svcType)
+				if err != nil {
+					log.Printf("Error getting status for %s: %s", svcType.Name, err)
+					continue
+				}
+
+				allRegions = append(allRegions, svcStatus.Detail...)
+
+				// Per-region status/button updates for this service type
+				for _, region := range svcStatus.Detail {
+					hasNodeKey := fmt.Sprintf("%s-%s-%s-hasnode", region.Service, region.Provider, region.Region)
+					buttonKey := fmt.Sprintf("%s-%s-%s-button", region.Service, region.Provider, region.Region)
+					opURL := fmt.Sprintf("/services/%s/providers/%s/regions/%s", region.Service, region.Provider, region.Region)
+					if region.HasNode {
+						pillClass := "pill-green"
+						if region.PingStats.SuccessRate < 0.80 {
+							pillClass = "pill-yellow"
+						}
+
+						data[hasNodeKey] = fmt.Sprintf(`<span class="pill %s">running %s</span>`, pillClass, region.SinceCreated)
+						data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, opURL)
+					} else {
+						instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Service, region.InstanceName)
+						disabledFragment := ""
+						if err == nil && instanceStatus.State == instances.StateLaunching {
+							data[hasNodeKey] = fmt.Sprintf(`<span class="pill pill-blue">launching %s...</span>`, durafmt.ParseShort(time.Since(instanceStatus.LaunchedAt)).InternationalString())
+							disabledFragment = "disabled"
+						} else if err == nil && instanceStatus.State == instances.StateFailed {
+							data[hasNodeKey] = `<span class="pill pill-red">failed</span>`
+						} else {
+							data[hasNodeKey] = ""
+						}
+						data[buttonKey] = fmt.Sprintf(`<button class="btn btn-create" hx-ext="disable-element" hx-disable-element="self" hx-put="%s" %s>Create</button>`, opURL, disabledFragment)
+					}
+				}
 			}
 
-			// Generate running nodes table HTML
-			runningNodesHTML := buildRunningNodesTableHTML(status.Detail)
+			// Running nodes table (aggregated across all services)
+			runningNodesHTML := buildRunningNodesTableHTML(allRegions)
 			runningNodesKey := "running-nodes-table"
 			if dataCache[runningNodesKey] != runningNodesHTML {
 				fmt.Fprintf(w, "event: %s\n", runningNodesKey)
@@ -327,38 +398,12 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				dataCache[runningNodesKey] = runningNodesHTML
 			}
 
-			data := map[string]string{
-				"active-nodes":   fmt.Sprintf("%d", status.ActiveNodes),
-				"region-count":   fmt.Sprintf("%d", status.RegionCount),
-				"provider-count": fmt.Sprintf("%d", status.ProviderCount),
-			}
-
-			for _, region := range status.Detail {
-				hasNodeKey := fmt.Sprintf("%s-%s-%s-hasnode", region.Service, region.Provider, region.Region)
-				buttonKey := fmt.Sprintf("%s-%s-%s-button", region.Service, region.Provider, region.Region)
-				opURL := fmt.Sprintf("/services/%s/providers/%s/regions/%s", region.Service, region.Provider, region.Region)
-				if region.HasNode {
-					pillClass := "pill-green"
-					if region.PingStats.SuccessRate < 0.80 {
-						pillClass = "pill-yellow"
-					}
-
-					data[hasNodeKey] = fmt.Sprintf(`<span class="pill %s">running %s</span>`, pillClass, region.SinceCreated)
-					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, opURL)
-				} else {
-					// Check if instance is being launched or failed
-					instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Service, region.InstanceName)
-					disabledFragment := ""
-					if err == nil && instanceStatus.State == instances.StateLaunching {
-						data[hasNodeKey] = fmt.Sprintf(`<span class="pill pill-blue">launching %s...</span>`, durafmt.ParseShort(time.Since(instanceStatus.LaunchedAt)).InternationalString())
-						disabledFragment = "disabled"
-					} else if err == nil && instanceStatus.State == instances.StateFailed {
-						data[hasNodeKey] = `<span class="pill pill-red">failed</span>`
-					} else {
-						data[hasNodeKey] = ""
-					}
-					data[buttonKey] = fmt.Sprintf(`<button class="btn btn-create" hx-ext="disable-element" hx-disable-element="self" hx-put="%s" %s>Create</button>`, opURL, disabledFragment)
-				}
+			// Header stats use exit node counts (primary service)
+			exitStatus, err := m.GetStatus(ctx, &services.ExitNode)
+			if err == nil {
+				data["active-nodes"] = fmt.Sprintf("%d", exitStatus.ActiveNodes)
+				data["region-count"] = fmt.Sprintf("%d", exitStatus.RegionCount)
+				data["provider-count"] = fmt.Sprintf("%d", exitStatus.ProviderCount)
 			}
 
 			for k, v := range data {
@@ -383,84 +428,100 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 	}))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		status, err := m.GetStatus(ctx)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(err.Error()))
-			return
+		// Build page data with all service types
+		var pageData pageTemplateData
+
+		for _, svcType := range services.All {
+			svcStatus, err := m.GetStatus(ctx, svcType)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(err.Error()))
+				return
+			}
+			pageData.Services = append(pageData.Services, serviceTabData{
+				Name:    svcType.Name,
+				Label:   svcType.Label,
+				Regions: svcStatus.Detail,
+			})
+			// Use exit node stats for header
+			if svcType.Name == "exit" {
+				pageData.ProviderCount = svcStatus.ProviderCount
+				pageData.RegionCount = svcStatus.RegionCount
+				pageData.ActiveNodes = svcStatus.ActiveNodes
+			}
 		}
 
-		if err := templates.ExecuteTemplate(w, "list_regions.tmpl", status); err != nil {
+		if err := templates.ExecuteTemplate(w, "list_regions.tmpl", pageData); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(err.Error()))
 		}
 	})
 
-	exitSvc := &services.ExitNode
-	for providerName := range m.cloudProviders {
-		providerName := providerName
+	// Register routes for all service types
+	for _, svcType := range services.All {
+		svcType := svcType
+		for providerName := range m.cloudProviders {
+			providerName := providerName
 
-		lazyListRegions := m.lazyListRegionsMap[providerName]
-		for _, region := range lazyListRegions() {
-			region := region
-			instanceName := exitSvc.InstanceName(services.InstanceNameInput{
-				Provider: providerName,
-				Region:   region.Code,
-			})
-			mux.HandleFunc(fmt.Sprintf("/services/%s/providers/%s/regions/%s", exitSvc.Name, providerName, region.Code), func(w http.ResponseWriter, r *http.Request) {
-				switch r.Method {
-				case "DELETE":
-					err := m.instanceRegistry.DeleteInstance(exitSvc.Name, instanceName)
-					if err != nil {
-						w.WriteHeader(http.StatusInternalServerError)
-						w.Write([]byte(err.Error()))
-						return
+			lazyListRegions := m.lazyListRegionsMap[providerName]
+			for _, region := range lazyListRegions() {
+				region := region
+				instanceName := svcType.InstanceName(services.InstanceNameInput{
+					Provider: providerName,
+					Region:   region.Code,
+				})
+				mux.HandleFunc(fmt.Sprintf("/services/%s/providers/%s/regions/%s", svcType.Name, providerName, region.Code), func(w http.ResponseWriter, r *http.Request) {
+					switch r.Method {
+					case "DELETE":
+						err := m.instanceRegistry.DeleteInstance(svcType.Name, instanceName)
+						if err != nil {
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write([]byte(err.Error()))
+							return
+						}
+						fmt.Fprint(w, "ok")
+
+					case "PUT":
+						w.Header().Set("Content-Type", "text/plain")
+						w.Header().Set("Transfer-Encoding", "chunked")
+						logger := log.New(io.MultiWriter(httputils.NewFlushWriter(w), os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
+						ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
+						defer cancelFunc()
+
+						err := m.instanceRegistry.CreateInstance(ctx, svcType.Name, instanceName, providerName, region.Code)
+						if err != nil {
+							logger.Printf("Failed to create instance: %s", err)
+							w.Write([]byte(err.Error()))
+						} else {
+							logger.Printf("Instance creation initiated")
+							w.Write([]byte("ok"))
+						}
+
+					default:
+						fmt.Fprintf(w, "Method %s not implemented", r.Method)
 					}
-					fmt.Fprint(w, "ok")
-
-				case "PUT":
-					w.Header().Set("Content-Type", "text/plain")
-					w.Header().Set("Transfer-Encoding", "chunked")
-					logger := log.New(io.MultiWriter(httputils.NewFlushWriter(w), os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
-					ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
-					defer cancelFunc()
-
-					err := m.instanceRegistry.CreateInstance(ctx, exitSvc.Name, instanceName, providerName, region.Code)
-					if err != nil {
-						logger.Printf("Failed to create instance: %s", err)
-						w.Write([]byte(err.Error()))
-					} else {
-						logger.Printf("Instance creation initiated")
-						w.Write([]byte("ok"))
-					}
-
-				default:
-					fmt.Fprintf(w, "Method %s not implemented", r.Method)
-				}
-			})
+				})
+			}
 		}
 	}
 
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets.Assets))))
 }
 
-// formatBytes formats a byte count as a human-readable string.
-func formatBytes(b int64) string {
-	const (
-		kb = 1024
-		mb = kb * 1024
-		gb = mb * 1024
-	)
-	switch {
-	case b >= gb:
-		return fmt.Sprintf("%.1f GB", float64(b)/float64(gb))
-	case b >= mb:
-		return fmt.Sprintf("%.1f MB", float64(b)/float64(mb))
-	case b >= kb:
-		return fmt.Sprintf("%.1f KB", float64(b)/float64(kb))
-	default:
-		return fmt.Sprintf("%d B", b)
+// resolveLinks substitutes the hostname into each ServiceLink's Format string.
+func resolveLinks(links []services.ServiceLink, hostname string) []resolvedLink {
+	if len(links) == 0 {
+		return nil
 	}
+	resolved := make([]resolvedLink, len(links))
+	for i, l := range links {
+		resolved[i] = resolvedLink{
+			Label:  l.Label,
+			URL:    fmt.Sprintf(l.Format, hostname),
+			Render: l.Render,
+		}
+	}
+	return resolved
 }
 
 // Shutdown stops all instance controllers and cleans up resources

@@ -479,9 +479,7 @@ func (g *gcpProvider) ensureMachineTypeCache() error {
 }
 
 func (g *gcpProvider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
-	// Extract region from hostname (e.g., "gcp-us-central1" -> "us-central1")
-	region := strings.TrimPrefix(instanceID.Hostname, "gcp-")
-	zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, region)).Do()
+	zones, err := compute.NewZonesService(g.service).List(g.projectId).Context(ctx).Filter(fmt.Sprintf(`name="%s-*"`, instanceID.Region)).Do()
 	if err != nil {
 		return err
 	}
@@ -724,6 +722,7 @@ func (g *gcpProvider) CreateInstance(ctx context.Context, req providers.CreateRe
 			Hostname:     req.Hostname,
 			ProviderID:   name,
 			ProviderName: providerName,
+			Region:       req.Region,
 			HourlyCost:   mt.HourlyCost,
 		}, nil
 	}
@@ -800,6 +799,7 @@ func (g *gcpProvider) ListInstances(ctx context.Context, region string) ([]provi
 					Hostname:     hostname,
 					ProviderID:   instance.Name,
 					ProviderName: providerName,
+					Region:       region,
 					CreatedAt:    createdAt,
 					HourlyCost:   g.lookupMachineTypeCost(instance.MachineType, region),
 				})
@@ -869,6 +869,7 @@ func (g *gcpProvider) ListAllInstances(ctx context.Context) ([]providers.Instanc
 					Hostname:     gcpInstanceHostname(region),
 					ProviderID:   instance.Name,
 					ProviderName: providerName,
+					Region:       region,
 					CreatedAt:    createdAt,
 					HourlyCost:   g.lookupMachineTypeCost(instance.MachineType, region),
 				})

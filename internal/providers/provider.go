@@ -24,9 +24,10 @@ type InstanceStatus int
 type HostName string
 
 type Instance struct {
-	Hostname     string    // e.g., "ec2-us-west-2", "do-nyc1"
+	Hostname     string    // e.g., "ec2-us-west-2", "speedtest-ec2-us-west-2"
 	ProviderID   string    // e.g., "i-1234567890abcdef0", "123456789"
 	ProviderName string    // e.g., "ec2", "do", "linode", "gcp", "vultr", "hetzner"
+	Region       string    // e.g., "us-west-2", "nyc1" — cloud provider region
 	CreatedAt    time.Time // Instance creation time from cloud provider (for GC grace period)
 	HourlyCost   float64   // Actual hourly cost of the instance
 }
@@ -119,10 +120,10 @@ type InitScriptData struct {
 	Debug    bool   // When true, delay ERR shutdown for SSH diagnostics
 }
 
-// RenderUserData renders the init script template with the given parameters.
-func RenderUserData(hostname string, key *controlapi.PreauthKey, sshKey string, service string, provider string, region string, debug bool) (string, error) {
+// RenderUserData renders the given init script template with the given parameters.
+func RenderUserData(templateText string, hostname string, key *controlapi.PreauthKey, sshKey string, service string, provider string, region string, debug bool) (string, error) {
 	var buf bytes.Buffer
-	if err := template.Must(template.New("tmpl").Parse(InitData)).Execute(&buf, InitScriptData{
+	if err := template.Must(template.New("tmpl").Parse(templateText)).Execute(&buf, InitScriptData{
 		Args: fmt.Sprintf(
 			`%s --hostname=%s`,
 			strings.Join(key.GetCLIArgs(), " "),

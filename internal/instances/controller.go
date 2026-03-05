@@ -132,11 +132,12 @@ func (ph *PingHistory) GetStats() (successRate float64, avgLatency time.Duration
 	return successRate, avgLatency, stddev, timeSinceFailure, connectionType
 }
 
-// NodeStats contains traffic statistics fetched from an exit node.
+// NodeStats contains statistics fetched from a managed node.
 type NodeStats struct {
-	ForwardedBytes int64     // Bytes forwarded through the exit node (from iptables ts-forward chain)
-	LastActive     time.Time // When IP-forwarded traffic was last observed
-	ReceivedAt     time.Time // When the control plane received this report
+	ForwardedBytes int64                  // Bytes forwarded (exit nodes only, from iptables ts-forward chain)
+	LastActive     time.Time              // When the service was last active
+	ReceivedAt     time.Time              // When the control plane received this report
+	StatsDisplay   []services.StatDisplay // Service-specific stats for the UI
 }
 
 // InstanceState represents the lifecycle state of an instance
@@ -287,6 +288,9 @@ func (c *Controller) fetchStats(hostname providers.HostName) {
 		ForwardedBytes: result.ForwardedBytes,
 		LastActive:     result.LastActive,
 		ReceivedAt:     time.Now(),
+	}
+	if c.serviceType.FormatStats != nil {
+		stats.StatsDisplay = c.serviceType.FormatStats(result.RawBody)
 	}
 
 	c.mu.Lock()

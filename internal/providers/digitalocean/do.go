@@ -100,6 +100,7 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, req providers
 		Hostname:     req.Hostname,
 		ProviderID:   strconv.Itoa(droplet.ID),
 		ProviderName: "do",
+		Region:       req.Region,
 		HourlyCost:   d.GetRegionHourlyEstimate(req.Region),
 	}, nil
 }
@@ -170,6 +171,7 @@ func (d *digitaloceanProvider) ListInstances(ctx context.Context, region string)
 				Hostname:     providers.ExtractInstanceName(droplet.Tags, doInstanceHostname(region)),
 				ProviderID:   strconv.Itoa(droplet.ID),
 				ProviderName: "do",
+				Region:       region,
 				CreatedAt:    createdAt,
 				HourlyCost:   d.GetRegionHourlyEstimate(region),
 			})

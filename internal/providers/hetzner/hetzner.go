@@ -124,6 +124,7 @@ func (h *hetznerProvider) CreateInstance(ctx context.Context, req providers.Crea
 		Hostname:     req.Hostname,
 		ProviderID:   strconv.FormatInt(result.Server.ID, 10),
 		ProviderName: "hetzner",
+		Region:       req.Region,
 		HourlyCost:   regionST.HourlyCost,
 	}, nil
 }
@@ -207,6 +208,7 @@ func (h *hetznerProvider) ListInstances(ctx context.Context, region string) ([]p
 				Hostname:     hostname,
 				ProviderID:   strconv.FormatInt(server.ID, 10),
 				ProviderName: "hetzner",
+				Region:       region,
 				CreatedAt:    server.Created,
 				HourlyCost:   h.GetRegionHourlyEstimate(region),
 			})

@@ -280,6 +280,7 @@ func (a *azureProvider) CreateInstance(ctx context.Context, req providers.Create
 			Hostname:     req.Hostname,
 			ProviderID:   vmName,
 			ProviderName: providerName,
+			Region:       req.Region,
 			HourlyCost:   mt.HourlyCost,
 		}, nil
 	}
@@ -461,6 +462,7 @@ func (a *azureProvider) ListInstances(ctx context.Context, region string) ([]pro
 			Hostname:     hostname,
 			ProviderID:   vmName,
 			ProviderName: providerName,
+			Region:       region,
 			CreatedAt:    createdAt,
 			HourlyCost:   a.GetRegionHourlyEstimate(region),
 		},

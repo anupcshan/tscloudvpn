@@ -19,10 +19,11 @@ type PingResult struct {
 	ConnectionType string // "direct" or "relayed via <DERP region>"
 }
 
-// NodeStatsResult contains traffic statistics fetched from an exit node.
+// NodeStatsResult contains statistics fetched from a managed node.
 type NodeStatsResult struct {
 	ForwardedBytes int64
 	LastActive     time.Time
+	RawBody        []byte // raw JSON for service-specific FormatStats
 }
 
 // NodeIdentity contains the static identity of a managed VM,

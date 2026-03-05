@@ -1,0 +1,192 @@
+#!/bin/bash -eux
+
+{{if .Debug}}
+trap 'echo "DEBUG: error at line $LINENO" >&2; sleep 300' ERR
+{{else}}
+trap 'sudo /sbin/poweroff' ERR EXIT
+{{end}}
+
+if [[ -n "{{.SSHKey}}" ]]; then
+  mkdir -p /root/.ssh
+  echo "{{.SSHKey}}" | tee -a /root/.ssh/authorized_keys
+  chage -d "$(date +%Y-%m-%d)" root 2>/dev/null || true
+fi
+
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+
+sudo apt-get update -o Dir::Etc::sourcelist="sources.list.d/tailscale.list" \
+  -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
+
+sudo apt-get install -y --no-install-recommends tailscale jq curl || {
+  sudo sed -i 's/Components:.*/Components: main/' /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+  sudo sed -i 's/ universe//g; s/ multiverse//g; s/ restricted//g' /etc/apt/sources.list 2>/dev/null || true
+  sudo sed -i '/^deb/ { /main/!d }' /etc/apt/sources.list 2>/dev/null || true
+  sudo apt-get update
+  sudo apt-get install -y --no-install-recommends tailscale jq curl
+}
+
+sudo sed -i 's/FLAGS=""/FLAGS="--state=mem: --verbose=1"/' /etc/default/tailscaled
+sudo systemctl restart tailscaled.service
+
+timeout 5m sudo tailscale up --accept-routes {{.Args}}
+
+set +x
+
+# Wait for tailscale IP
+TS_IP=$(tailscale ip -4)
+while ! ip addr show dev tailscale0 2>/dev/null | grep -q "$TS_IP"; do
+  sleep 1
+done
+
+# Download speedtest-go (arch-aware)
+ARCH=$(dpkg --print-architecture)
+case "$ARCH" in
+  amd64) GOARCH=amd64 ;;
+  arm64) GOARCH=arm64 ;;
+  *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+esac
+
+SPEEDTEST_VERSION="1.1.5"
+SPEEDTEST_URL="https://github.com/librespeed/speedtest-go/releases/download/v${SPEEDTEST_VERSION}/speedtest-go_${SPEEDTEST_VERSION}_linux_${GOARCH}.tar.gz"
+
+cd /opt
+curl -fsSL "$SPEEDTEST_URL" | tar xz
+chmod +x /opt/speedtest-backend
+
+# Write custom single-server index.html (the embedded default is a
+# multi-server example that tries to load a server list and fails).
+# Also fetch the JS workers from the release tag source.
+mkdir -p /opt/assets
+curl -fsSL "https://raw.githubusercontent.com/librespeed/speedtest-go/v${SPEEDTEST_VERSION}/web/assets/speedtest.js" -o /opt/assets/speedtest.js
+curl -fsSL "https://raw.githubusercontent.com/librespeed/speedtest-go/v${SPEEDTEST_VERSION}/web/assets/speedtest_worker.js" -o /opt/assets/speedtest_worker.js
+# Copy the JS workers from the embedded assets by extracting them via
+# the running binary — but simpler: just write a minimal index.html
+# that works in single-server mode with relative backend/ URLs.
+cat > /opt/assets/index.html <<'INDEXHTML'
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Speed Test</title>
+<script src="speedtest.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0e0e10; color: #e4e4e7; font-family: -apple-system, system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+  .container { text-align: center; max-width: 600px; width: 100%; padding: 2em; }
+  h1 { font-size: 1.5em; margin-bottom: 1.5em; font-weight: 400; color: #71717a; }
+  .results { display: grid; grid-template-columns: 1fr 1fr; gap: 2em; margin: 2em 0; }
+  .metric { padding: 1em; }
+  .metric .label { font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.1em; color: #71717a; margin-bottom: 0.5em; }
+  .metric .value { font-size: 2.5em; font-weight: 300; font-family: ui-monospace, monospace; }
+  .metric .unit { font-size: 0.7em; color: #71717a; margin-left: 0.2em; }
+  .secondary { display: flex; justify-content: center; gap: 3em; margin: 1em 0; }
+  .secondary .metric .value { font-size: 1.5em; }
+  .ip { font-size: 0.8em; color: #71717a; margin-top: 1em; font-family: ui-monospace, monospace; }
+  #btn { font-size: 1em; padding: 0.8em 2.5em; border-radius: 6px; border: 1px solid rgba(74,222,128,0.3); background: rgba(74,222,128,0.1); color: #4ade80; cursor: pointer; font-family: ui-monospace, monospace; transition: all 0.15s; }
+  #btn:hover { background: rgba(74,222,128,0.2); }
+  #btn.running { background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.3); color: #f87171; }
+  .progress { width: 100%; height: 3px; background: #2a2a30; border-radius: 2px; margin-top: 2em; overflow: hidden; }
+  .progress-bar { height: 100%; background: #4ade80; width: 0%; transition: width 0.2s; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Speed Test</h1>
+  <button id="btn" onclick="startStop()">Start</button>
+  <div class="results">
+    <div class="metric"><div class="label">Download</div><div class="value" id="dl">—</div><div class="unit">Mbps</div></div>
+    <div class="metric"><div class="label">Upload</div><div class="value" id="ul">—</div><div class="unit">Mbps</div></div>
+  </div>
+  <div class="secondary">
+    <div class="metric"><div class="label">Ping</div><div class="value" id="ping">—</div><div class="unit">ms</div></div>
+    <div class="metric"><div class="label">Jitter</div><div class="value" id="jit">—</div><div class="unit">ms</div></div>
+  </div>
+  <div class="progress"><div class="progress-bar" id="prog"></div></div>
+  <div class="ip" id="ip"></div>
+</div>
+<script>
+var s = new Speedtest();
+s.setParameter("telemetry_level", "disabled");
+function fmt(v) { v = +v; return v < 10 ? v.toFixed(2) : v < 100 ? v.toFixed(1) : v.toFixed(0); }
+function startStop() {
+  if (s.getState() == 3) { s.abort(); return; }
+  var btn = document.getElementById("btn");
+  btn.textContent = "Abort"; btn.className = "running";
+  document.getElementById("dl").textContent = "...";
+  document.getElementById("ul").textContent = "...";
+  document.getElementById("ping").textContent = "...";
+  document.getElementById("jit").textContent = "...";
+  s.onupdate = function(d) {
+    if (d.dlStatus) document.getElementById("dl").textContent = fmt(d.dlStatus);
+    if (d.ulStatus) document.getElementById("ul").textContent = fmt(d.ulStatus);
+    if (d.pingStatus) document.getElementById("ping").textContent = fmt(d.pingStatus);
+    if (d.jitterStatus) document.getElementById("jit").textContent = fmt(d.jitterStatus);
+    var p = 0;
+    if (d.testState == 1) p = d.dlProgress;
+    else if (d.testState == 2) p = d.pingProgress;
+    else if (d.testState == 3) p = d.ulProgress;
+    else if (d.testState >= 4) p = 1;
+    document.getElementById("prog").style.width = (p * 100) + "%";
+    if (d.clientIp) document.getElementById("ip").textContent = d.clientIp;
+  };
+  s.onend = function(aborted) {
+    btn.textContent = "Start"; btn.className = "";
+    document.getElementById("prog").style.width = aborted ? "0%" : "100%";
+  };
+  s.start();
+}
+</script>
+</body>
+</html>
+INDEXHTML
+
+# Write settings.toml — bind to tailscale IP, port 80, use custom assets
+cat > /opt/settings.toml <<SETTINGS
+bind_address="$TS_IP"
+listen_port=80
+server_lat=0
+server_lng=0
+ipinfo_api_key=""
+assets_path="/opt/assets"
+statistics_password=""
+redact_ip_addresses=false
+database_type="none"
+enable_tls=false
+enable_http2=false
+SETTINGS
+
+# Start speedtest-go in background
+/opt/speedtest-backend &
+
+# Stats/identity endpoint on port 8245
+mkdir -p /tmp/stats
+echo "{\"last_active\": $(date +%s), \"total_bytes\": 0}" > /tmp/stats/stats.json
+
+cat > /tmp/stats/identity.json <<IDENTITY
+{"service": "{{.Service}}", "provider": "{{.Provider}}", "region": "{{.Region}}"}
+IDENTITY
+
+(cd /tmp/stats && python3 -m http.server 8245 --bind "$TS_IP") &
+
+# Track activity and total throughput on the tailscale interface.
+lastActiveTime=$(date "+%s")
+
+while sleep 30; do
+  now=$(date "+%s")
+
+  # Count established TCP connections to port 80
+  activeConns=$(ss -tn state established '( sport = :80 )' 2>/dev/null | tail -n +2 | wc -l)
+  if [ "$activeConns" -gt 0 ]; then
+    lastActiveTime=$now
+  fi
+
+  # Total bytes (rx + tx) on tailscale0
+  read rxBytes < /sys/class/net/tailscale0/statistics/rx_bytes
+  read txBytes < /sys/class/net/tailscale0/statistics/tx_bytes
+  totalBytes=$((rxBytes + txBytes))
+
+  echo "{\"last_active\": $lastActiveTime, \"total_bytes\": $totalBytes}" > /tmp/stats/stats.json.tmp
+  mv /tmp/stats/stats.json.tmp /tmp/stats/stats.json
+done

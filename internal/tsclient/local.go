@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/netip"
 	"time"
@@ -76,17 +77,23 @@ func (c *LocalClient) FetchNodeStats(ctx context.Context, hostname string) (Node
 		return NodeStatsResult{}, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return NodeStatsResult{}, err
+	}
+
 	var payload struct {
 		ForwardedBytes int64 `json:"forwarded_bytes"`
 		LastActive     int64 `json:"last_active"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return NodeStatsResult{}, err
 	}
 
 	return NodeStatsResult{
 		ForwardedBytes: payload.ForwardedBytes,
 		LastActive:     time.Unix(payload.LastActive, 0),
+		RawBody:        body,
 	}, nil
 }
 

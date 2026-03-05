@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/netip"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
@@ -237,9 +236,8 @@ func (e *ec2Provider) addSSHPortRule(ctx context.Context, client *ec2.Client, gr
 func (e *ec2Provider) DebugSSHUser() string { return "root" }
 
 func (e *ec2Provider) GetPublicIP(ctx context.Context, instance providers.Instance) (netip.Addr, error) {
-	region := strings.TrimPrefix(instance.Hostname, "ec2-")
 	e.mu.Lock()
-	e.cfg.Region = region
+	e.cfg.Region = instance.Region
 	client := ec2.NewFromConfig(e.cfg)
 	e.mu.Unlock()
 
@@ -266,9 +264,7 @@ func (e *ec2Provider) GetPublicIP(ctx context.Context, instance providers.Instan
 
 func (e *ec2Provider) DeleteInstance(ctx context.Context, instanceID providers.Instance) error {
 	e.mu.Lock()
-	// Extract region from hostname (e.g., "ec2-us-west-2" -> "us-west-2")
-	region := strings.TrimPrefix(instanceID.Hostname, "ec2-")
-	e.cfg.Region = region
+	e.cfg.Region = instanceID.Region
 	client := ec2.NewFromConfig(e.cfg)
 	e.mu.Unlock()
 
@@ -337,6 +333,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, req providers.CreateRe
 		Hostname:     req.Hostname,
 		ProviderID:   aws.ToString(output.Instances[0].InstanceId),
 		ProviderName: "ec2",
+		Region:       req.Region,
 		HourlyCost:   e.GetRegionHourlyEstimate(req.Region),
 	}, nil
 }
@@ -420,6 +417,7 @@ func (e *ec2Provider) ListInstances(ctx context.Context, region string) ([]provi
 					Hostname:     hostname,
 					ProviderID:   aws.ToString(instance.InstanceId),
 					ProviderName: providerName,
+					Region:       region,
 					CreatedAt:    aws.ToTime(instance.LaunchTime),
 					HourlyCost:   e.GetRegionHourlyEstimate(region),
 				})

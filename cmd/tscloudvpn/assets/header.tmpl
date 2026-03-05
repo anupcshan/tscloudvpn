@@ -215,6 +215,37 @@
       cursor: not-allowed;
     }
 
+    /* -- Service tabs -- */
+    .service-tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+
+    .service-tab {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 500;
+      padding: 7px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .service-tab:hover {
+      border-color: #3a3a44;
+      color: var(--text);
+    }
+
+    .service-tab.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+      border-color: rgba(74,222,128,0.2);
+    }
+
     /* -- Search -- */
     .search-wrap {
       position: relative;
@@ -323,6 +354,29 @@
       min-width: 48px;
       text-align: right;
     }
+
+    .node-link {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--info);
+      text-decoration: none;
+    }
+
+    .node-link:hover { text-decoration: underline; }
+
+    .node-copy {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 2px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+
+    .node-copy:hover { border-color: var(--accent); }
 
     .no-nodes {
       color: var(--muted);

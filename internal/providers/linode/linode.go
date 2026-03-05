@@ -90,6 +90,7 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, req providers.Creat
 		Hostname:     req.Hostname,
 		ProviderID:   strconv.Itoa(instance.ID),
 		ProviderName: "linode",
+		Region:       req.Region,
 		HourlyCost:   l.GetRegionHourlyEstimate(req.Region),
 	}, nil
 }
@@ -149,6 +150,7 @@ func (l *linodeProvider) ListInstances(ctx context.Context, region string) ([]pr
 				Hostname:     providers.ExtractInstanceName(instance.Tags, linodeInstanceHostname(region)),
 				ProviderID:   strconv.Itoa(instance.ID),
 				ProviderName: "linode",
+				Region:       region,
 				CreatedAt:    *instance.Created,
 				HourlyCost:   l.GetRegionHourlyEstimate(region),
 			})

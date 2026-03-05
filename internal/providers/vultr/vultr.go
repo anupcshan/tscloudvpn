@@ -204,6 +204,7 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, req providers.Create
 		Hostname:     hostname,
 		ProviderID:   instance.ID,
 		ProviderName: "vultr",
+		Region:       region,
 		HourlyCost:   regionSize.HourlyCost,
 	}, nil
 }
@@ -261,6 +262,7 @@ func (v *vultrProvider) ListInstances(ctx context.Context, region string) ([]pro
 			Hostname:     providers.ExtractInstanceName(instance.Tags, vultrInstanceHostname(region)),
 			ProviderID:   instance.ID,
 			ProviderName: providerName,
+			Region:       region,
 			CreatedAt:    createdAt,
 			HourlyCost:   v.GetRegionHourlyEstimate(region),
 		})

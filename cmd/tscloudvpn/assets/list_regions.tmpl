@@ -8,39 +8,48 @@
   </div>
 </section>
 
-<!-- Region Picker -->
+<!-- Service Tabs + Region Picker -->
 <section>
   <h2>Launch Node</h2>
+  <div class="service-tabs">
+    {{ range $i, $svc := .Services }}
+    <button class="service-tab{{ if eq $i 0 }} active{{ end }}" onclick="switchTab('{{ $svc.Name }}', this)">{{ $svc.Label }}</button>
+    {{ end }}
+  </div>
   <div class="search-wrap">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
     </svg>
     <input id="search" type="text" placeholder="Filter regions..." autocomplete="off">
   </div>
-  <div id="providers">
-    {{ range groupByProvider .Detail }}
-    <div class="provider-group" data-provider="{{ .Provider }}">
-      <div class="provider-header" onclick="toggleProvider(this)">
-        <span class="provider-name">{{ .Label }}</span>
-        <span class="provider-count">{{ len .Regions }} region{{ if ne (len .Regions) 1 }}s{{ end }}</span>
-        <svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <path d="m6 9 6 6 6-6"/>
-        </svg>
-      </div>
-      <div class="provider-body">
-        {{ range .Regions }}
-        <div class="region-row" data-name="{{ .LongName }}">
-          <span class="region-name">{{ .LongName }}</span>
-          <span class="region-price">{{ printf "%.2f" .PriceCentsPerHour }}c/hr</span>
-          <span class="region-status" sse-swap="{{ .Service }}-{{ .Provider }}-{{ .Region }}-hasnode"></span>
-          <span class="region-action" sse-swap="{{ .Service }}-{{ .Provider }}-{{ .Region }}-button"></span>
+  {{ range $i, $svc := .Services }}
+  <div class="service-panel" id="panel-{{ $svc.Name }}" {{ if ne $i 0 }}style="display:none"{{ end }}>
+    <div class="providers">
+      {{ range groupByProvider $svc.Regions }}
+      <div class="provider-group" data-provider="{{ .Provider }}">
+        <div class="provider-header" onclick="toggleProvider(this)">
+          <span class="provider-name">{{ .Label }}</span>
+          <span class="provider-count">{{ len .Regions }} region{{ if ne (len .Regions) 1 }}s{{ end }}</span>
+          <svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
         </div>
-        {{ end }}
+        <div class="provider-body">
+          {{ range .Regions }}
+          <div class="region-row" data-name="{{ .LongName }}">
+            <span class="region-name">{{ .LongName }}</span>
+            <span class="region-price">{{ printf "%.2f" .PriceCentsPerHour }}c/hr</span>
+            <span class="region-status" sse-swap="{{ .Service }}-{{ .Provider }}-{{ .Region }}-hasnode"></span>
+            <span class="region-action" sse-swap="{{ .Service }}-{{ .Provider }}-{{ .Region }}-button"></span>
+          </div>
+          {{ end }}
+        </div>
       </div>
+      {{ end }}
     </div>
-    {{ end }}
+    <div class="empty" style="display:none">No regions match your search.</div>
   </div>
-  <div id="empty" class="empty" style="display:none">No regions match your search.</div>
+  {{ end }}
 </section>
 
 <script>
@@ -49,11 +58,26 @@ function toggleProvider(header) {
   header.nextElementSibling.classList.toggle('open');
 }
 
+function switchTab(serviceName, btn) {
+  document.querySelectorAll('.service-tab').forEach(function(t) { t.classList.remove('active'); });
+  btn.classList.add('active');
+  document.querySelectorAll('.service-panel').forEach(function(p) { p.style.display = 'none'; });
+  document.getElementById('panel-' + serviceName).style.display = '';
+  // Clear search when switching tabs
+  var search = document.getElementById('search');
+  search.value = '';
+  search.dispatchEvent(new Event('input'));
+}
+
 document.getElementById('search').addEventListener('input', function() {
   var q = this.value.toLowerCase();
+  // Only filter the visible panel
+  var activePanel = document.querySelector('.service-panel[style=""], .service-panel:not([style*="display: none"]):not([style*="display:none"])');
+  if (!activePanel) return;
+
   var anyVisible = false;
 
-  document.querySelectorAll('.provider-group').forEach(function(group) {
+  activePanel.querySelectorAll('.provider-group').forEach(function(group) {
     var rows = group.querySelectorAll('.region-row');
     var visibleCount = 0;
 
@@ -68,7 +92,6 @@ document.getElementById('search').addEventListener('input', function() {
     group.style.display = visibleCount > 0 ? '' : 'none';
     if (visibleCount > 0) anyVisible = true;
 
-    // Auto-expand groups when searching, collapse when cleared
     var header = group.querySelector('.provider-header');
     var body = group.querySelector('.provider-body');
     if (q.length > 0 && visibleCount > 0) {
@@ -79,12 +102,11 @@ document.getElementById('search').addEventListener('input', function() {
       body.classList.remove('open');
     }
 
-    // Update visible count in header
     group.querySelector('.provider-count').textContent =
       visibleCount + ' region' + (visibleCount !== 1 ? 's' : '');
   });
 
-  document.getElementById('empty').style.display = anyVisible ? 'none' : 'block';
+  activePanel.querySelector('.empty').style.display = anyVisible ? 'none' : 'block';
 });
 </script>
 

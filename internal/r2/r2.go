@@ -38,7 +38,7 @@ const (
 // S3Credentials holds the credentials a VM needs to access its R2 bucket via S3.
 type S3Credentials struct {
 	AccessKeyID     string
-	SecretAccessKey  string
+	SecretAccessKey string
 	Endpoint        string // https://{account_id}.r2.cloudflarestorage.com
 	Bucket          string
 }
@@ -49,7 +49,7 @@ type TokenManager struct {
 	apiToken  string
 	client    *http.Client
 
-	mu                    sync.Mutex
+	mu                     sync.Mutex
 	bucketItemWriteGroupID string // cached permission group ID
 }
 
@@ -216,10 +216,10 @@ func (tm *TokenManager) createScopedToken(ctx context.Context, tokenName, bucket
 	hash := sha256.Sum256([]byte(createResp.Result.Value))
 
 	return &S3Credentials{
-		AccessKeyID:    createResp.Result.ID,
+		AccessKeyID:     createResp.Result.ID,
 		SecretAccessKey: hex.EncodeToString(hash[:]),
-		Endpoint:       fmt.Sprintf("https://%s.r2.cloudflarestorage.com", tm.accountID),
-		Bucket:         bucketName,
+		Endpoint:        fmt.Sprintf("https://%s.r2.cloudflarestorage.com", tm.accountID),
+		Bucket:          bucketName,
 	}, nil
 }
 

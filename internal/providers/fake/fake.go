@@ -110,6 +110,7 @@ func (f *FakeProvider) CreateInstance(ctx context.Context, req providers.CreateR
 				Hostname:     existing.Hostname,
 				ProviderID:   existing.ID,
 				ProviderName: "fake",
+				Region:       region,
 				HourlyCost:   f.config.PricePerHour,
 			}, nil
 		}
@@ -134,6 +135,7 @@ func (f *FakeProvider) CreateInstance(ctx context.Context, req providers.CreateR
 		Hostname:     hostname,
 		ProviderID:   instanceID,
 		ProviderName: "fake",
+		Region:       region,
 		HourlyCost:   f.config.PricePerHour,
 	}, nil
 }
@@ -241,6 +243,7 @@ func (f *FakeProvider) ListInstances(ctx context.Context, region string) ([]prov
 				Hostname:     hostname,
 				ProviderID:   instance.ID,
 				ProviderName: "fake",
+				Region:       region,
 				CreatedAt:    instance.CreatedAt,
 				HourlyCost:   f.config.PricePerHour,
 			})

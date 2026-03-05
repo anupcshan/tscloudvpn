@@ -165,7 +165,7 @@ func (r *Registry) createCloudInstance(ctx context.Context, svcType *services.Se
 		return providers.Instance{}, err
 	}
 
-	userData, err := providers.RenderUserData(instanceName, authKey, r.sshKey, svcType.Name, providerName, region, false)
+	userData, err := providers.RenderUserData(svcType.InitScript, instanceName, authKey, r.sshKey, svcType.Name, providerName, region, false)
 	if err != nil {
 		return providers.Instance{}, err
 	}
