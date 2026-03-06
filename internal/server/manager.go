@@ -87,6 +87,8 @@ type mappedRegion struct {
 	}
 	CreatedTS  time.Time
 	LaunchedTS time.Time
+	State      instances.InstanceState
+	LastError  string
 	NodeStats  *instances.NodeStats
 	Links      []resolvedLink
 }
@@ -159,17 +161,23 @@ func (m *Manager) GetStatus(ctx context.Context, svcType *services.ServiceType) 
 			}
 
 			var nodeStats *instances.NodeStats
-			if hasInstance && instanceStatus.IsRunning {
-				createdTS = instanceStatus.CreatedAt
+			var state instances.InstanceState
+			var lastError string
+			if hasInstance {
+				state = instanceStatus.State
+				lastError = instanceStatus.LastError
 				launchedTS = instanceStatus.LaunchedAt
-				if !createdTS.IsZero() {
-					sinceCreated = durafmt.ParseShort(time.Since(createdTS)).InternationalString()
+				if instanceStatus.IsRunning {
+					createdTS = instanceStatus.CreatedAt
+					if !createdTS.IsZero() {
+						sinceCreated = durafmt.ParseShort(time.Since(createdTS)).InternationalString()
+					}
+					if !launchedTS.IsZero() {
+						sinceLaunched = durafmt.ParseShort(time.Since(launchedTS)).InternationalString()
+					}
+					pingStats = instanceStatus.PingStats
+					nodeStats = instanceStatus.NodeStats
 				}
-				if !launchedTS.IsZero() {
-					sinceLaunched = durafmt.ParseShort(time.Since(launchedTS)).InternationalString()
-				}
-				pingStats = instanceStatus.PingStats
-				nodeStats = instanceStatus.NodeStats
 			}
 
 			priceCentsPerHour := provider.GetRegionHourlyEstimate(region.Code) * 100
@@ -188,6 +196,8 @@ func (m *Manager) GetStatus(ctx context.Context, svcType *services.ServiceType) 
 				HasNode:           hasInstance && instanceStatus.IsRunning,
 				CreatedTS:         createdTS,
 				LaunchedTS:        launchedTS,
+				State:             state,
+				LastError:         lastError,
 				SinceCreated:      sinceCreated,
 				SinceLaunched:     sinceLaunched,
 				PriceCentsPerHour: priceCentsPerHour,
@@ -229,12 +239,11 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				if region.HasNode {
 					continue
 				}
-				instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Service, region.InstanceName)
-				if err != nil || instanceStatus.State != instances.StateLaunching {
+				if region.State != instances.StateLaunching {
 					continue
 				}
 				hasCards = true
-				elapsed := durafmt.ParseShort(time.Since(instanceStatus.LaunchedAt)).InternationalString()
+				elapsed := durafmt.ParseShort(time.Since(region.LaunchedTS)).InternationalString()
 
 				html.WriteString(`<div class="node-card node-card-launching">`)
 				html.WriteString(`<div>`)
@@ -256,8 +265,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				if region.HasNode {
 					continue
 				}
-				instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Service, region.InstanceName)
-				if err != nil || instanceStatus.State != instances.StateFailed {
+				if region.State != instances.StateFailed {
 					continue
 				}
 				hasCards = true
@@ -271,7 +279,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				html.WriteString(`<span class="pill pill-red">failed</span>`)
 				html.WriteString(`</div>`)
 				html.WriteString(`<div class="node-meta" style="margin-top:6px">`)
-				fmt.Fprintf(&html, `<span>%s</span>`, instanceStatus.LastError)
+				fmt.Fprintf(&html, `<span>%s</span>`, region.LastError)
 				html.WriteString(`</div>`)
 				html.WriteString(`</div>`)
 				fmt.Fprintf(&html, `<button class="btn btn-danger" hx-ext="disable-element" `+
@@ -373,12 +381,11 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 						data[hasNodeKey] = fmt.Sprintf(`<span class="pill %s">running %s</span>`, pillClass, region.SinceCreated)
 						data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, opURL)
 					} else {
-						instanceStatus, err := m.instanceRegistry.GetInstanceStatus(region.Service, region.InstanceName)
 						disabledFragment := ""
-						if err == nil && instanceStatus.State == instances.StateLaunching {
-							data[hasNodeKey] = fmt.Sprintf(`<span class="pill pill-blue">launching %s...</span>`, durafmt.ParseShort(time.Since(instanceStatus.LaunchedAt)).InternationalString())
+						if region.State == instances.StateLaunching {
+							data[hasNodeKey] = fmt.Sprintf(`<span class="pill pill-blue">launching %s...</span>`, durafmt.ParseShort(time.Since(region.LaunchedTS)).InternationalString())
 							disabledFragment = "disabled"
-						} else if err == nil && instanceStatus.State == instances.StateFailed {
+						} else if region.State == instances.StateFailed {
 							data[hasNodeKey] = `<span class="pill pill-red">failed</span>`
 						} else {
 							data[hasNodeKey] = ""
