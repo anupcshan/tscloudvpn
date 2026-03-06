@@ -217,7 +217,7 @@ func (m *Manager) GetStatus(ctx context.Context, svcType *services.ServiceType) 
 				PriceCentsPerHour: priceCentsPerHour,
 				PingStats:         pingStats,
 				NodeStats:         nodeStats,
-				Links:             resolveLinks(svcType.Links, instanceName),
+				Links:             resolveLinks(svcType.Links, svcType.Hostname(instanceName)),
 			})
 		}
 	}
@@ -230,7 +230,8 @@ func (m *Manager) GetStatus(ctx context.Context, svcType *services.ServiceType) 
 	})
 
 	namer := func(provider, region string) string {
-		return svcType.InstanceName(services.InstanceNameInput{Provider: provider, Region: region})
+		instanceName := svcType.InstanceName(services.InstanceNameInput{Provider: provider, Region: region})
+		return svcType.Hostname(instanceName)
 	}
 	return status.WrapWithInfo(mappedRegions, m.cloudProviders, m.lazyListRegionsMap, peerHostnames, namer), nil
 }
@@ -587,7 +588,7 @@ func (m *Manager) getAllInstanceRegions() []mappedRegion {
 
 		var links []resolvedLink
 		if svcType != nil {
-			links = resolveLinks(svcType.Links, status.InstanceName)
+			links = resolveLinks(svcType.Links, svcType.Hostname(status.InstanceName))
 		}
 
 		regions = append(regions, mappedRegion{

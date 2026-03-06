@@ -32,7 +32,7 @@ type NodeIdentity struct {
 	Service  string `json:"service"`
 	Provider string `json:"provider"`
 	Region   string `json:"region"`
-	Name     string `json:"name"` // instance name (e.g., "photos", "do-nyc1")
+	Name     string `json:"name"` // service-scoped instance name (e.g., "documents", "do-nyc1")
 }
 
 // TailscaleClient abstracts the Tailscale local API client.

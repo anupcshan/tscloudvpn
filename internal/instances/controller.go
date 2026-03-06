@@ -152,7 +152,7 @@ const (
 
 // InstanceStatus represents the current state of an instance
 type InstanceStatus struct {
-	InstanceName string // instance name, used as Tailscale hostname and registry key
+	InstanceName string // service-scoped instance name (e.g. "do-nyc1", "documents")
 	Service      string
 	ServiceLabel string
 	Provider     string

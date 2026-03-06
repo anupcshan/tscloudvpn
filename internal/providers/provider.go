@@ -86,7 +86,7 @@ const (
 	OwnerTagKey = "tscloudvpn-owner"
 	// ServiceTagKey identifies the service type of a cloud resource (e.g. "exit", "files")
 	ServiceTagKey = "tscloudvpn-service"
-	// NameTagKey identifies the instance name of a cloud resource (e.g. "do-nyc1", "photos")
+	// NameTagKey identifies the service-scoped instance name of a cloud resource (e.g. "do-nyc1", "documents")
 	NameTagKey = "tscloudvpn-instance-name"
 )
 
@@ -117,12 +117,14 @@ type InitScriptData struct {
 	Service      string // Service type name (e.g., "exit")
 	Provider     string // Provider short name (e.g., "do")
 	Region       string // Region code (e.g., "nyc1")
-	InstanceName string // Instance name (e.g., "photos", "do-nyc1")
+	InstanceName string // Service-scoped instance name (e.g., "document", "do-nyc1")
 	Debug        bool   // When true, delay ERR shutdown for SSH diagnostics
 }
 
 // RenderUserData renders the given init script template with the given parameters.
-func RenderUserData(templateText string, hostname string, key *controlapi.PreauthKey, sshKey string, service string, provider string, region string, debug bool) (string, error) {
+// hostname is the Tailscale hostname (e.g. "speedtest-do-nyc1"), instanceName is
+// the service-scoped name (e.g. "do-nyc1").
+func RenderUserData(templateText string, hostname string, instanceName string, key *controlapi.PreauthKey, sshKey string, service string, provider string, region string, debug bool) (string, error) {
 	var buf bytes.Buffer
 	if err := template.Must(template.New("tmpl").Parse(templateText)).Execute(&buf, InitScriptData{
 		Args: fmt.Sprintf(
@@ -134,7 +136,7 @@ func RenderUserData(templateText string, hostname string, key *controlapi.Preaut
 		Service:      service,
 		Provider:     provider,
 		Region:       region,
-		InstanceName: hostname,
+		InstanceName: instanceName,
 		Debug:        debug,
 	}); err != nil {
 		return "", err

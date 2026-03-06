@@ -31,10 +31,15 @@ type ServiceType struct {
 	// Label is the human-readable name shown in the UI.
 	Label string
 
-	// InstanceName constructs the instance name (and Tailscale hostname)
-	// from the given input. Exit nodes use provider-region, persistent
-	// services use the user-provided name.
+	// InstanceName constructs the service-scoped instance name from the
+	// given input. Exit nodes use provider-region (e.g. "do-nyc1"),
+	// persistent services use the user-provided name (e.g. "documents").
 	InstanceName func(InstanceNameInput) string
+
+	// Hostname derives the globally-unique Tailscale hostname from the
+	// instance name. For exit nodes this is the identity (e.g. "do-nyc1"),
+	// for other services it prepends the service name (e.g. "speedtest-do-nyc1").
+	Hostname func(instanceName string) string
 
 	// InitScript is the cloud-init template text (text/template format).
 	InitScript string
@@ -129,6 +134,7 @@ var ExitNode = ServiceType{
 	InstanceName: func(in InstanceNameInput) string {
 		return in.Provider + "-" + in.Region
 	},
+	Hostname: func(instanceName string) string { return instanceName },
 	InitScript:     providers.InitData,
 	TailscaleFlags: []string{"--advertise-exit-node", "--advertise-connector"},
 	Tags:           []string{"tag:untrusted"},
@@ -144,8 +150,9 @@ var SpeedTest = ServiceType{
 	Name:  "speedtest",
 	Label: "Speed Test",
 	InstanceName: func(in InstanceNameInput) string {
-		return "speedtest-" + in.Provider + "-" + in.Region
+		return in.Provider + "-" + in.Region
 	},
+	Hostname: func(instanceName string) string { return "speedtest-" + instanceName },
 	InitScript:     speedtestInitData,
 	TailscaleFlags: nil,
 	Tags:           []string{"tag:untrusted"},
@@ -164,8 +171,9 @@ var FileServer = ServiceType{
 	Name:  "files",
 	Label: "File Server",
 	InstanceName: func(in InstanceNameInput) string {
-		return "files-" + in.UserProvidedName
+		return in.UserProvidedName
 	},
+	Hostname: func(instanceName string) string { return "files-" + instanceName },
 	InitScript:     fileserverInitData,
 	TailscaleFlags: nil,
 	Tags:           []string{"tag:untrusted"},

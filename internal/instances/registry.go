@@ -21,7 +21,7 @@ const discoveryInterval = time.Second
 type controllerEntry struct {
 	controller *Controller
 	service    string
-	name       string // instance name, used as Tailscale hostname and registry key
+	name       string // service-scoped instance name (e.g. "do-nyc1", "documents")
 	provider   string
 	region     string
 }
@@ -90,7 +90,7 @@ func (r *Registry) runDiscoveryLoop(ctx context.Context) {
 }
 
 // CreateInstance creates a new instance with its controller.
-// instanceName is the Tailscale hostname and registry key, constructed by ServiceType.InstanceName.
+// instanceName is the service-scoped name (e.g. "do-nyc1"), not the Tailscale hostname.
 func (r *Registry) CreateInstance(ctx context.Context, serviceName, instanceName, providerName, region string) error {
 	key := registryKey(serviceName, instanceName)
 
@@ -128,7 +128,8 @@ func (r *Registry) CreateInstance(ctx context.Context, serviceName, instanceName
 	}
 
 	// Create controller for monitoring (does not start health loop yet)
-	controller := NewController(context.Background(), r.logger, providers.HostName(instanceName), svcType, r.tsClient)
+	hostname := providers.HostName(svcType.Hostname(instanceName))
+	controller := NewController(context.Background(), r.logger, hostname, svcType, r.tsClient)
 	controller.onIdleShutdown = r.makeIdleShutdownCallback(serviceName, instanceName)
 	controller.SetLaunching()
 	r.controllers[key] = &controllerEntry{
@@ -165,13 +166,14 @@ func (r *Registry) createCloudInstance(ctx context.Context, svcType *services.Se
 		return providers.Instance{}, err
 	}
 
-	userData, err := providers.RenderUserData(svcType.InitScript, instanceName, authKey, r.sshKey, svcType.Name, providerName, region, false)
+	hostname := svcType.Hostname(instanceName)
+	userData, err := providers.RenderUserData(svcType.InitScript, hostname, instanceName, authKey, r.sshKey, svcType.Name, providerName, region, false)
 	if err != nil {
 		return providers.Instance{}, err
 	}
 
 	createdInstance, err := provider.CreateInstance(ctx, providers.CreateRequest{
-		Hostname: instanceName,
+		Hostname: hostname,
 		Region:   region,
 		UserData: userData,
 		SSHKey:   r.sshKey,
@@ -215,7 +217,13 @@ func (r *Registry) DeleteInstance(serviceName, instanceName string) error {
 		return fmt.Errorf("unknown provider: %s", entry.provider)
 	}
 
-	hostname := providers.HostName(entry.name)
+	svcType := services.ByName(entry.service)
+	if svcType == nil {
+		entry.controller.Stop()
+		return fmt.Errorf("unknown service: %s", entry.service)
+	}
+
+	hostname := providers.HostName(svcType.Hostname(entry.name))
 
 	// Step 1: Delete from Tailscale/Headscale
 	r.deleteFromControlPlane(hostname)
