@@ -24,6 +24,23 @@
   </div>
   {{ range $i, $svc := .Services }}
   <div class="service-panel" id="panel-{{ $svc.Name }}" {{ if ne $i 0 }}style="display:none"{{ end }}>
+    {{ if $svc.NamedInstances }}
+    <!-- Named instance form -->
+    <div class="named-form" id="form-{{ $svc.Name }}">
+      <div class="form-row">
+        <input type="text" class="form-input" id="name-{{ $svc.Name }}" placeholder="Instance name (e.g. photos, docs)" autocomplete="off">
+        <select class="form-select" id="provider-{{ $svc.Name }}" onchange="updateRegions('{{ $svc.Name }}')">
+          {{ range $svc.Providers }}
+          <option value="{{ .Name }}">{{ .Label }}</option>
+          {{ end }}
+        </select>
+        <select class="form-select" id="region-{{ $svc.Name }}">
+        </select>
+        <button class="btn btn-create" onclick="createNamedInstance('{{ $svc.Name }}')">Create</button>
+      </div>
+    </div>
+    {{ else }}
+    <!-- Region picker -->
     <div class="providers">
       {{ range groupByProvider $svc.Regions }}
       <div class="provider-group" data-provider="{{ .Provider }}">
@@ -48,6 +65,7 @@
       {{ end }}
     </div>
     <div class="empty" style="display:none">No regions match your search.</div>
+    {{ end }}
   </div>
   {{ end }}
 </section>
@@ -108,6 +126,46 @@ document.getElementById('search').addEventListener('input', function() {
 
   activePanel.querySelector('.empty').style.display = anyVisible ? 'none' : 'block';
 });
+
+// Region data for named instance dropdowns
+var regionData = {
+  {{ range $svc := .Services }}{{ if $svc.NamedInstances }}{{ range $svc.Providers }}
+  "{{ $svc.Name }}-{{ .Name }}": [{{ range .Regions }}{"code":"{{ .Code }}","name":"{{ .LongName }}"},{{ end }}],
+  {{ end }}{{ end }}{{ end }}
+};
+
+function updateRegions(svc) {
+  var provider = document.getElementById('provider-' + svc).value;
+  var sel = document.getElementById('region-' + svc);
+  var regions = regionData[svc + '-' + provider] || [];
+  sel.innerHTML = '';
+  regions.forEach(function(r) {
+    var opt = document.createElement('option');
+    opt.value = r.code;
+    opt.textContent = r.name;
+    sel.appendChild(opt);
+  });
+}
+
+function createNamedInstance(svc) {
+  var name = document.getElementById('name-' + svc).value.trim();
+  if (!name) { alert('Please enter an instance name'); return; }
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
+    alert('Name must be lowercase letters, numbers, and hyphens (no leading/trailing hyphens)');
+    return;
+  }
+  var provider = document.getElementById('provider-' + svc).value;
+  var region = document.getElementById('region-' + svc).value;
+  var url = '/services/' + svc + '/instances/' + name + '/providers/' + provider + '/regions/' + region;
+  fetch(url, {method: 'PUT'}).then(function(r) {
+    if (!r.ok) r.text().then(function(t) { alert('Error: ' + t); });
+  });
+}
+
+// Initialize region dropdowns for named services
+{{ range .Services }}{{ if .NamedInstances }}
+updateRegions('{{ .Name }}');
+{{ end }}{{ end }}
 </script>
 
 {{ template "footer.tmpl" . }}

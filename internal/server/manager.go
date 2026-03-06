@@ -110,9 +110,23 @@ type pageTemplateData struct {
 
 // serviceTabData holds region data for one service type tab.
 type serviceTabData struct {
+	Name           string
+	Label          string
+	NamedInstances bool
+	Regions        []mappedRegion
+	Providers      []providerOption // for named instance dropdowns
+}
+
+// providerOption is a provider+regions pair for the named instance UI dropdowns.
+type providerOption struct {
 	Name    string
 	Label   string
-	Regions []mappedRegion
+	Regions []regionOption
+}
+
+type regionOption struct {
+	Code     string
+	LongName string
 }
 
 func (m *Manager) GetStatus(ctx context.Context, svcType *services.ServiceType) (status.Info[[]mappedRegion], error) {
@@ -283,8 +297,8 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				html.WriteString(`</div>`)
 				html.WriteString(`</div>`)
 				fmt.Fprintf(&html, `<button class="btn btn-danger" hx-ext="disable-element" `+
-					`hx-disable-element="self" hx-delete="/services/%s/providers/%s/regions/%s">Dismiss</button>`,
-					region.Service, region.Provider, region.Region)
+					`hx-disable-element="self" hx-delete="/services/%s/instances/%s">Dismiss</button>`,
+					region.Service, region.InstanceName)
 				html.WriteString(`</div>`)
 			}
 
@@ -328,7 +342,6 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 						fmt.Fprintf(&html, `<span class="pill pill-yellow">idle %s</span>`, idle)
 					}
 				}
-				html.WriteString(`</div>`)
 				if len(node.Links) > 0 {
 					html.WriteString(`<div class="node-meta" style="margin-top:4px">`)
 					for _, link := range node.Links {
@@ -341,9 +354,10 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 					html.WriteString(`</div>`)
 				}
 				html.WriteString(`</div>`)
+				html.WriteString(`</div>`)
 				fmt.Fprintf(&html, `<button class="btn btn-danger" hx-ext="disable-element" `+
-					`hx-disable-element="self" hx-delete="/services/%s/providers/%s/regions/%s">Delete</button>`,
-					node.Service, node.Provider, node.Region)
+					`hx-disable-element="self" hx-delete="/services/%s/instances/%s">Delete</button>`,
+					node.Service, node.InstanceName)
 				html.WriteString(`</div>`)
 			}
 
@@ -354,24 +368,27 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 		}
 
 		for {
-			// Collect regions across all service types
-			var allRegions []mappedRegion
 			data := make(map[string]string)
 
+			// Running nodes table: built from registry (all service types)
+			allRegions := m.getAllInstanceRegions()
+
+			// Per-region SSE events: only for non-named services (region grid)
 			for _, svcType := range services.All {
+				if svcType.NamedInstances {
+					continue
+				}
 				svcStatus, err := m.GetStatus(ctx, svcType)
 				if err != nil {
 					log.Printf("Error getting status for %s: %s", svcType.Name, err)
 					continue
 				}
 
-				allRegions = append(allRegions, svcStatus.Detail...)
-
-				// Per-region status/button updates for this service type
 				for _, region := range svcStatus.Detail {
 					hasNodeKey := fmt.Sprintf("%s-%s-%s-hasnode", region.Service, region.Provider, region.Region)
 					buttonKey := fmt.Sprintf("%s-%s-%s-button", region.Service, region.Provider, region.Region)
-					opURL := fmt.Sprintf("/services/%s/providers/%s/regions/%s", region.Service, region.Provider, region.Region)
+					createURL := fmt.Sprintf("/services/%s/instances/%s/providers/%s/regions/%s", region.Service, region.InstanceName, region.Provider, region.Region)
+					deleteURL := fmt.Sprintf("/services/%s/instances/%s", region.Service, region.InstanceName)
 					if region.HasNode {
 						pillClass := "pill-green"
 						if region.PingStats.SuccessRate < 0.80 {
@@ -379,7 +396,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 						}
 
 						data[hasNodeKey] = fmt.Sprintf(`<span class="pill %s">running %s</span>`, pillClass, region.SinceCreated)
-						data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, opURL)
+						data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, deleteURL)
 					} else {
 						disabledFragment := ""
 						if region.State == instances.StateLaunching {
@@ -390,7 +407,7 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 						} else {
 							data[hasNodeKey] = ""
 						}
-						data[buttonKey] = fmt.Sprintf(`<button class="btn btn-create" hx-ext="disable-element" hx-disable-element="self" hx-put="%s" %s>Create</button>`, opURL, disabledFragment)
+						data[buttonKey] = fmt.Sprintf(`<button class="btn btn-create" hx-ext="disable-element" hx-disable-element="self" hx-put="%s" %s>Create</button>`, createURL, disabledFragment)
 					}
 				}
 			}
@@ -445,11 +462,16 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 				w.Write([]byte(err.Error()))
 				return
 			}
-			pageData.Services = append(pageData.Services, serviceTabData{
-				Name:    svcType.Name,
-				Label:   svcType.Label,
-				Regions: svcStatus.Detail,
-			})
+			tab := serviceTabData{
+				Name:           svcType.Name,
+				Label:          svcType.Label,
+				NamedInstances: svcType.NamedInstances,
+				Regions:        svcStatus.Detail,
+			}
+			if svcType.NamedInstances {
+				tab.Providers = m.buildProviderOptions()
+			}
+			pageData.Services = append(pageData.Services, tab)
 			// Use exit node stats for header
 			if svcType.Name == "exit" {
 				pageData.ProviderCount = svcStatus.ProviderCount
@@ -464,55 +486,159 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 		}
 	})
 
-	// Register routes for all service types
-	for _, svcType := range services.All {
-		svcType := svcType
-		for providerName := range m.cloudProviders {
-			providerName := providerName
+	// Create instance: PUT /services/{service}/instances/{name}/providers/{provider}/regions/{region}
+	// Delete instance: DELETE /services/{service}/instances/{name}
+	mux.HandleFunc("/services/", func(w http.ResponseWriter, r *http.Request) {
+		// Parse path: /services/{service}/instances/{name}[/providers/{provider}/regions/{region}]
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/services/"), "/")
 
-			lazyListRegions := m.lazyListRegionsMap[providerName]
-			for _, region := range lazyListRegions() {
-				region := region
-				instanceName := svcType.InstanceName(services.InstanceNameInput{
-					Provider: providerName,
-					Region:   region.Code,
-				})
-				mux.HandleFunc(fmt.Sprintf("/services/%s/providers/%s/regions/%s", svcType.Name, providerName, region.Code), func(w http.ResponseWriter, r *http.Request) {
-					switch r.Method {
-					case "DELETE":
-						err := m.instanceRegistry.DeleteInstance(svcType.Name, instanceName)
-						if err != nil {
-							w.WriteHeader(http.StatusInternalServerError)
-							w.Write([]byte(err.Error()))
-							return
-						}
-						fmt.Fprint(w, "ok")
-
-					case "PUT":
-						w.Header().Set("Content-Type", "text/plain")
-						w.Header().Set("Transfer-Encoding", "chunked")
-						logger := log.New(io.MultiWriter(httputils.NewFlushWriter(w), os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
-						ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
-						defer cancelFunc()
-
-						err := m.instanceRegistry.CreateInstance(ctx, svcType.Name, instanceName, providerName, region.Code)
-						if err != nil {
-							logger.Printf("Failed to create instance: %s", err)
-							w.Write([]byte(err.Error()))
-						} else {
-							logger.Printf("Instance creation initiated")
-							w.Write([]byte("ok"))
-						}
-
-					default:
-						fmt.Fprintf(w, "Method %s not implemented", r.Method)
-					}
-				})
-			}
+		if len(parts) < 3 || parts[1] != "instances" {
+			http.NotFound(w, r)
+			return
 		}
-	}
+
+		serviceName := parts[0]
+		instanceName := parts[2]
+
+		svcType := services.ByName(serviceName)
+		if svcType == nil {
+			http.Error(w, "unknown service: "+serviceName, http.StatusNotFound)
+			return
+		}
+
+		switch r.Method {
+		case "DELETE":
+			err := m.instanceRegistry.DeleteInstance(serviceName, instanceName)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(err.Error()))
+				return
+			}
+			fmt.Fprint(w, "ok")
+
+		case "PUT":
+			// Expect /providers/{provider}/regions/{region}
+			if len(parts) < 7 || parts[3] != "providers" || parts[5] != "regions" {
+				http.Error(w, "expected /services/{svc}/instances/{name}/providers/{p}/regions/{r}", http.StatusBadRequest)
+				return
+			}
+			providerName := parts[4]
+			region := parts[6]
+
+			// For non-named services, verify the name matches what InstanceName would generate
+			if !svcType.NamedInstances {
+				expectedName := svcType.InstanceName(services.InstanceNameInput{
+					Provider: providerName,
+					Region:   region,
+				})
+				if instanceName != expectedName {
+					http.Error(w, fmt.Sprintf("instance name mismatch: got %s, expected %s", instanceName, expectedName), http.StatusBadRequest)
+					return
+				}
+			}
+
+			w.Header().Set("Content-Type", "text/plain")
+			w.Header().Set("Transfer-Encoding", "chunked")
+			logger := log.New(io.MultiWriter(httputils.NewFlushWriter(w), os.Stderr), "", log.Lshortfile|log.Lmicroseconds)
+			ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancelFunc()
+
+			err := m.instanceRegistry.CreateInstance(ctx, serviceName, instanceName, providerName, region)
+			if err != nil {
+				logger.Printf("Failed to create instance: %s", err)
+				w.Write([]byte(err.Error()))
+			} else {
+				logger.Printf("Instance creation initiated")
+				w.Write([]byte("ok"))
+			}
+
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
 
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets.Assets))))
+}
+
+// getAllInstanceRegions builds mappedRegion entries from the registry for
+// all service types. Used for the running nodes table in the SSE handler.
+func (m *Manager) getAllInstanceRegions() []mappedRegion {
+	allStatuses := m.instanceRegistry.GetAllInstanceStatuses()
+	regions := make([]mappedRegion, 0, len(allStatuses))
+
+	for _, status := range allStatuses {
+		svcType := services.ByName(status.Service)
+
+		var sinceCreated, sinceLaunched string
+		if status.IsRunning && !status.CreatedAt.IsZero() {
+			sinceCreated = durafmt.ParseShort(time.Since(status.CreatedAt)).InternationalString()
+		}
+		if !status.LaunchedAt.IsZero() {
+			sinceLaunched = durafmt.ParseShort(time.Since(status.LaunchedAt)).InternationalString()
+		}
+
+		var priceCentsPerHour float64
+		if p, ok := m.cloudProviders[status.Provider]; ok {
+			priceCentsPerHour = p.GetRegionHourlyEstimate(status.Region) * 100
+		}
+		if status.HourlyCost > 0 {
+			priceCentsPerHour = status.HourlyCost * 100
+		}
+
+		var links []resolvedLink
+		if svcType != nil {
+			links = resolveLinks(svcType.Links, status.InstanceName)
+		}
+
+		regions = append(regions, mappedRegion{
+			Service:           status.Service,
+			ServiceLabel:      status.ServiceLabel,
+			InstanceName:      status.InstanceName,
+			Provider:          status.Provider,
+			ProviderLabel:     providers.ProviderLabels[status.Provider],
+			Region:            status.Region,
+			LongName:          status.Region, // registry doesn't have long names
+			HasNode:           status.IsRunning,
+			CreatedTS:         status.CreatedAt,
+			LaunchedTS:        status.LaunchedAt,
+			State:             status.State,
+			LastError:         status.LastError,
+			SinceCreated:      sinceCreated,
+			SinceLaunched:     sinceLaunched,
+			PriceCentsPerHour: priceCentsPerHour,
+			PingStats:         status.PingStats,
+			NodeStats:         status.NodeStats,
+			Links:             links,
+		})
+	}
+
+	sort.Slice(regions, func(i, j int) bool {
+		if regions[i].Service != regions[j].Service {
+			return regions[i].Service < regions[j].Service
+		}
+		return regions[i].InstanceName < regions[j].InstanceName
+	})
+
+	return regions
+}
+
+// buildProviderOptions builds the provider/region list for named instance dropdowns.
+func (m *Manager) buildProviderOptions() []providerOption {
+	var opts []providerOption
+	for providerName, lazyRegions := range m.lazyListRegionsMap {
+		regions := lazyRegions()
+		regionOpts := make([]regionOption, len(regions))
+		for i, r := range regions {
+			regionOpts[i] = regionOption{Code: r.Code, LongName: r.LongName}
+		}
+		opts = append(opts, providerOption{
+			Name:    providerName,
+			Label:   providers.ProviderLabels[providerName],
+			Regions: regionOpts,
+		})
+	}
+	sort.Slice(opts, func(i, j int) bool { return opts[i].Name < opts[j].Name })
+	return opts
 }
 
 // resolveLinks substitutes the hostname into each ServiceLink's Format string.

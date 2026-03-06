@@ -13,6 +13,9 @@ import (
 //go:embed speedtest_init.sh.tmpl
 var speedtestInitData string
 
+//go:embed fileserver_init.sh.tmpl
+var fileserverInitData string
+
 // InstanceNameInput provides the inputs for constructing an instance name.
 type InstanceNameInput struct {
 	UserProvidedName string // from API request (persistent services)
@@ -65,6 +68,11 @@ type ServiceType struct {
 	// Persistence, if non-nil, means this service uses a named volume.
 	Persistence *PersistenceConfig
 
+	// NamedInstances, if true, means the user provides the instance name
+	// (e.g., "photos", "docs"). If false, the name is derived from
+	// provider+region (e.g., "do-nyc1"). Controls UI rendering.
+	NamedInstances bool
+
 	// Links defines service endpoints shown in the UI for running instances.
 	Links []ServiceLink
 
@@ -102,7 +110,7 @@ type PersistenceConfig struct {
 }
 
 // All is the catalog of all known service types.
-var All = []*ServiceType{&ExitNode, &SpeedTest}
+var All = []*ServiceType{&ExitNode, &SpeedTest, &FileServer}
 
 // ByName returns the ServiceType with the given name, or nil if not found.
 func ByName(name string) *ServiceType {
@@ -148,6 +156,26 @@ var SpeedTest = ServiceType{
 	FormatStats:    formatSpeedTestStats,
 	Links: []ServiceLink{
 		{Label: "LibreSpeed", Format: "http://%s", Render: "link"},
+	},
+}
+
+// FileServer is the service type for filebrowser-based file servers.
+var FileServer = ServiceType{
+	Name:  "files",
+	Label: "File Server",
+	InstanceName: func(in InstanceNameInput) string {
+		return "files-" + in.UserProvidedName
+	},
+	InitScript:     fileserverInitData,
+	TailscaleFlags: nil,
+	Tags:           []string{"tag:untrusted"},
+	NamedInstances: true,
+	VMRequirements: VMRequirements{},
+	IdleTimeout:    2 * time.Hour,
+	StatsPath:      "/stats.json",
+	ParseStats:     parseLastActiveStats,
+	Links: []ServiceLink{
+		{Label: "File Browser", Format: "http://%s", Render: "link"},
 	},
 }
 

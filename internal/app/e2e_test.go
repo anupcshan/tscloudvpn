@@ -171,7 +171,8 @@ func (h *TestHarness) Cleanup() {
 // CreateInstance sends a PUT request to create an instance
 func (h *TestHarness) CreateInstance(providerName, region string) {
 	h.t.Helper()
-	req, err := http.NewRequest("PUT", fmt.Sprintf("%s/services/exit/providers/%s/regions/%s", h.ServerURL, providerName, region), nil)
+	instanceName := providerName + "-" + region
+	req, err := http.NewRequest("PUT", fmt.Sprintf("%s/services/exit/instances/%s/providers/%s/regions/%s", h.ServerURL, instanceName, providerName, region), nil)
 	require.NoError(h.t, err)
 	resp, err := h.HTTPClient.Do(req)
 	require.NoError(h.t, err)
@@ -183,7 +184,8 @@ func (h *TestHarness) CreateInstance(providerName, region string) {
 // DeleteInstance sends a DELETE request to remove an instance
 func (h *TestHarness) DeleteInstance(providerName, region string) {
 	h.t.Helper()
-	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/services/exit/providers/%s/regions/%s", h.ServerURL, providerName, region), nil)
+	instanceName := providerName + "-" + region
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/services/exit/instances/%s", h.ServerURL, instanceName), nil)
 	require.NoError(h.t, err)
 	resp, err := h.HTTPClient.Do(req)
 	require.NoError(h.t, err)

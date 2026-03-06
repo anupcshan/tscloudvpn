@@ -112,12 +112,13 @@ func ExtractInstanceName(tags []string, fallback string) string {
 
 // InitScriptData contains the template variables for the init script.
 type InitScriptData struct {
-	Args     string // Tailscale CLI arguments (--authkey, --hostname, etc.)
-	SSHKey   string // SSH public key for authorized_keys
-	Service  string // Service type name (e.g., "exit")
-	Provider string // Provider short name (e.g., "do")
-	Region   string // Region code (e.g., "nyc1")
-	Debug    bool   // When true, delay ERR shutdown for SSH diagnostics
+	Args         string // Tailscale CLI arguments (--authkey, --hostname, etc.)
+	SSHKey       string // SSH public key for authorized_keys
+	Service      string // Service type name (e.g., "exit")
+	Provider     string // Provider short name (e.g., "do")
+	Region       string // Region code (e.g., "nyc1")
+	InstanceName string // Instance name (e.g., "photos", "do-nyc1")
+	Debug        bool   // When true, delay ERR shutdown for SSH diagnostics
 }
 
 // RenderUserData renders the given init script template with the given parameters.
@@ -129,11 +130,12 @@ func RenderUserData(templateText string, hostname string, key *controlapi.Preaut
 			strings.Join(key.GetCLIArgs(), " "),
 			hostname,
 		),
-		SSHKey:   sshKey,
-		Service:  service,
-		Provider: provider,
-		Region:   region,
-		Debug:    debug,
+		SSHKey:       sshKey,
+		Service:      service,
+		Provider:     provider,
+		Region:       region,
+		InstanceName: hostname,
+		Debug:        debug,
 	}); err != nil {
 		return "", err
 	}

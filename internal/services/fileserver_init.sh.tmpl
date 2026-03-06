@@ -1,0 +1,90 @@
+#!/bin/bash -eux
+
+{{if .Debug}}
+trap 'echo "DEBUG: error at line $LINENO" >&2; sleep 300' ERR
+{{else}}
+trap 'sudo /sbin/poweroff' ERR EXIT
+{{end}}
+
+if [[ -n "{{.SSHKey}}" ]]; then
+  mkdir -p /root/.ssh
+  echo "{{.SSHKey}}" | tee -a /root/.ssh/authorized_keys
+  chage -d "$(date +%Y-%m-%d)" root 2>/dev/null || true
+fi
+
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+
+sudo apt-get update -o Dir::Etc::sourcelist="sources.list.d/tailscale.list" \
+  -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
+
+sudo apt-get install -y --no-install-recommends tailscale jq curl || {
+  sudo sed -i 's/Components:.*/Components: main/' /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+  sudo sed -i 's/ universe//g; s/ multiverse//g; s/ restricted//g' /etc/apt/sources.list 2>/dev/null || true
+  sudo sed -i '/^deb/ { /main/!d }' /etc/apt/sources.list 2>/dev/null || true
+  sudo apt-get update
+  sudo apt-get install -y --no-install-recommends tailscale jq curl
+}
+
+sudo sed -i 's/FLAGS=""/FLAGS="--state=mem: --verbose=1"/' /etc/default/tailscaled
+sudo systemctl restart tailscaled.service
+
+timeout 5m sudo tailscale up --accept-routes {{.Args}}
+
+set +x
+
+# Wait for tailscale IP
+TS_IP=$(tailscale ip -4)
+while ! ip addr show dev tailscale0 2>/dev/null | grep -q "$TS_IP"; do
+  sleep 1
+done
+
+# Create data directory (ephemeral for now — persistence via cloudnbd+ZFS later)
+mkdir -p /data
+
+# Download filebrowser
+ARCH=$(dpkg --print-architecture)
+case "$ARCH" in
+  amd64) FB_ARCH=amd64 ;;
+  arm64) FB_ARCH=arm64 ;;
+  *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+esac
+
+FB_VERSION="2.31.2"
+FB_URL="https://github.com/filebrowser/filebrowser/releases/download/v${FB_VERSION}/linux-${FB_ARCH}-filebrowser.tar.gz"
+
+cd /opt
+curl -fsSL "$FB_URL" | tar xz
+chmod +x /opt/filebrowser
+
+# Initialize filebrowser database and configure
+/opt/filebrowser config init --address "$TS_IP" --port 80 --root /data --database /opt/filebrowser.db
+/opt/filebrowser users add admin admin --database /opt/filebrowser.db
+
+# Start filebrowser in background
+/opt/filebrowser --database /opt/filebrowser.db &
+
+# Stats/identity endpoint on port 8245
+mkdir -p /tmp/stats
+echo "{\"last_active\": $(date +%s)}" > /tmp/stats/stats.json
+
+cat > /tmp/stats/identity.json <<IDENTITY
+{"service": "{{.Service}}", "provider": "{{.Provider}}", "region": "{{.Region}}", "name": "{{.InstanceName}}"}
+IDENTITY
+
+(cd /tmp/stats && python3 -m http.server 8245 --bind "$TS_IP") &
+
+# Track activity via TCP connections to port 80
+lastActiveTime=$(date "+%s")
+
+while sleep 30; do
+  now=$(date "+%s")
+
+  activeConns=$(ss -tn state established '( sport = :80 )' 2>/dev/null | tail -n +2 | wc -l)
+  if [ "$activeConns" -gt 0 ]; then
+    lastActiveTime=$now
+  fi
+
+  echo "{\"last_active\": $lastActiveTime}" > /tmp/stats/stats.json.tmp
+  mv /tmp/stats/stats.json.tmp /tmp/stats/stats.json
+done

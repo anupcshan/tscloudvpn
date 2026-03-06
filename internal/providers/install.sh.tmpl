@@ -59,7 +59,7 @@ echo "{\"forwarded_bytes\": 0, \"last_active\": $(date +%s)}" > /tmp/stats/stats
 
 # Write static identity file at boot (provider/region/service for discovery).
 cat > /tmp/stats/identity.json <<IDENTITY
-{"service": "{{.Service}}", "provider": "{{.Provider}}", "region": "{{.Region}}"}
+{"service": "{{.Service}}", "provider": "{{.Provider}}", "region": "{{.Region}}", "name": "{{.InstanceName}}"}
 IDENTITY
 
 # Wait for tailscale IP to be assignable on the interface before binding.

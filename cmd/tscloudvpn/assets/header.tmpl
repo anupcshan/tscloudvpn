@@ -378,6 +378,33 @@
 
     .node-copy:hover { border-color: var(--accent); }
 
+    /* -- Named instance form -- */
+    .named-form { margin-bottom: 12px; }
+
+    .form-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .form-input, .form-select {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .form-input { flex: 1; min-width: 160px; }
+    .form-select { min-width: 140px; }
+    .form-input:focus, .form-select:focus { border-color: var(--accent); }
+    .form-input::placeholder { color: var(--muted); }
+
     .no-nodes {
       color: var(--muted);
       font-size: 13px;

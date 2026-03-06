@@ -431,10 +431,15 @@ func (r *Registry) discoverInstances(ctx context.Context) {
 			continue
 		}
 
-		instanceName := svcType.InstanceName(services.InstanceNameInput{
-			Provider: identity.Provider,
-			Region:   identity.Region,
-		})
+		// Use the name from the identity endpoint. For VMs created before
+		// the name field was added, fall back to deriving from provider/region.
+		instanceName := identity.Name
+		if instanceName == "" {
+			instanceName = svcType.InstanceName(services.InstanceNameInput{
+				Provider: identity.Provider,
+				Region:   identity.Region,
+			})
+		}
 		key := registryKey(identity.Service, instanceName)
 
 		r.mu.Lock()

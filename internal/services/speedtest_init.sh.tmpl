@@ -165,7 +165,7 @@ mkdir -p /tmp/stats
 echo "{\"last_active\": $(date +%s), \"total_bytes\": 0}" > /tmp/stats/stats.json
 
 cat > /tmp/stats/identity.json <<IDENTITY
-{"service": "{{.Service}}", "provider": "{{.Provider}}", "region": "{{.Region}}"}
+{"service": "{{.Service}}", "provider": "{{.Provider}}", "region": "{{.Region}}", "name": "{{.InstanceName}}"}
 IDENTITY
 
 (cd /tmp/stats && python3 -m http.server 8245 --bind "$TS_IP") &
