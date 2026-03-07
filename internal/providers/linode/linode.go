@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net/netip"
+	"sort"
 	"strconv"
+	"sync"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
 	"github.com/anupcshan/tscloudvpn/internal/providers"
@@ -15,10 +17,21 @@ import (
 	"math/rand/v2"
 )
 
+// instanceTypeSpec holds the specs and pricing for one instance type.
+type instanceTypeSpec struct {
+	Name       string
+	VCPUs      int
+	RamMB      int
+	DiskMB     int
+	HourlyCost float64
+}
+
 type linodeProvider struct {
-	client   *linodego.Client
-	ownerID  string // Unique identifier for this tscloudvpn instance
-	ownerTag string // Tag combining owner key and value for filtering
+	client              *linodego.Client
+	ownerID             string // Unique identifier for this tscloudvpn instance
+	ownerTag            string // Tag combining owner key and value for filtering
+	listTypesOnce       sync.Once
+	regionInstanceTypes map[string][]instanceTypeSpec // region -> sorted by cost (cheapest first)
 }
 
 func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
@@ -32,11 +45,14 @@ func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
 	client := linodego.NewClient(oauth2Client)
 	ownerID := providers.GetOwnerID(cfg)
 
-	return &linodeProvider{
+	p := &linodeProvider{
 		client:   &client,
 		ownerID:  ownerID,
 		ownerTag: fmt.Sprintf("%s:%s", providers.OwnerTagKey, ownerID),
-	}, nil
+	}
+
+	go p.populateTypeCache()
+	return p, nil
 }
 
 func linodeInstanceHostname(region string) string {
@@ -70,7 +86,7 @@ func (l *linodeProvider) CreateInstance(ctx context.Context, req providers.Creat
 	createOpts := linodego.InstanceCreateOptions{
 		Label:    fmt.Sprintf("tscloudvpn-%s", req.Region),
 		Region:   req.Region,
-		Type:     "g6-nanode-1",
+		Type:     l.cheapestInstanceType(req.Region),
 		Image:    "linode/ubuntu24.04",
 		RootPass: generateRandomPassword(),
 		Tags:     l.buildTags(req.Tags),
@@ -179,23 +195,86 @@ func (l *linodeProvider) ListRegions(ctx context.Context) ([]providers.Region, e
 	return result, nil
 }
 
-// GetRegionHourlyEstimate returns the hourly price for the g6-nanode-1 instance
+// populateTypeCache fetches all Linode instance types and builds a per-region
+// list sorted by cost. Called once on first use.
+func (l *linodeProvider) populateTypeCache() {
+	l.listTypesOnce.Do(func() {
+		ctx := context.Background()
+
+		types, err := l.client.ListTypes(ctx, nil)
+		if err != nil {
+			log.Printf("Error listing Linode types: %v", err)
+			return
+		}
+
+		regions, err := l.client.ListRegions(ctx, nil)
+		if err != nil {
+			log.Printf("Error listing Linode regions for type cache: %v", err)
+			return
+		}
+
+		regionTypes := make(map[string][]instanceTypeSpec)
+
+		for _, region := range regions {
+			if region.Status != "ok" {
+				continue
+			}
+			for _, t := range types {
+				if t.Price == nil {
+					continue
+				}
+				price := float64(t.Price.Hourly)
+				for _, rp := range t.RegionPrices {
+					if rp.ID == region.ID {
+						price = float64(rp.Hourly)
+						break
+					}
+				}
+				regionTypes[region.ID] = append(regionTypes[region.ID], instanceTypeSpec{
+					Name:       t.ID,
+					VCPUs:      t.VCPUs,
+					RamMB:      t.Memory,
+					DiskMB:     t.Disk,
+					HourlyCost: price,
+				})
+			}
+		}
+
+		for region := range regionTypes {
+			sort.Slice(regionTypes[region], func(i, j int) bool {
+				return regionTypes[region][i].HourlyCost < regionTypes[region][j].HourlyCost
+			})
+		}
+
+		l.regionInstanceTypes = regionTypes
+		entries := 0
+		for _, v := range regionTypes {
+			entries += len(v)
+		}
+		log.Printf("Linode type cache populated: %d regions, %d entries", len(regionTypes), entries)
+	})
+}
+
+// GetRegionHourlyEstimate returns the hourly price for the cheapest instance type in the region.
 func (l *linodeProvider) GetRegionHourlyEstimate(region string) float64 {
-	typeInfo, err := l.client.GetType(context.Background(), "g6-nanode-1")
-	if err != nil {
-		// Log error but return the hardcoded price as fallback
-		log.Printf("Failed to get instance type pricing: %v", err)
+	l.populateTypeCache()
+
+	specs := l.regionInstanceTypes[region]
+	if len(specs) == 0 {
 		return 0
 	}
+	return specs[0].HourlyCost
+}
 
-	// Check for regional pricing
-	for _, rp := range typeInfo.RegionPrices {
-		if rp.ID == region {
-			return float64(rp.Hourly)
-		}
+// cheapestInstanceType returns the cheapest instance type ID for a region.
+func (l *linodeProvider) cheapestInstanceType(region string) string {
+	l.populateTypeCache()
+
+	specs := l.regionInstanceTypes[region]
+	if len(specs) == 0 {
+		return "g6-nanode-1"
 	}
-
-	return float64(typeInfo.Price.Hourly)
+	return specs[0].Name
 }
 
 func generateRandomPassword() string {

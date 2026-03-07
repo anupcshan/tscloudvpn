@@ -718,13 +718,13 @@ after the cache, in the orchestration layer.
 
 #### Commit sequence
 
-- [ ] **Commit 16: EC2 dynamic size selection.**
+- [x] **Commit 16: EC2 dynamic size selection.**
   Replace hardcoded `t4g.nano`. Fetch available instance types
   and prices, select cheapest per region. Same external interface
   — `ListRegions`, `GetRegionHourlyEstimate`, `CreateInstance`
   signatures unchanged. Internal refactor only.
 
-- [ ] **Commit 17: Linode dynamic size selection.**
+- [x] **Commit 17: Linode dynamic size selection.**
   Replace hardcoded `g6-nanode-1`. Fetch available types via
   `ListTypes`, select cheapest per region (with regional pricing).
   Same external interface, internal refactor only.
