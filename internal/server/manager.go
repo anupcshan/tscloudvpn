@@ -632,6 +632,7 @@ func (m *Manager) buildProviderOptions() []providerOption {
 		for i, r := range regions {
 			regionOpts[i] = regionOption{Code: r.Code, LongName: r.LongName}
 		}
+		sort.Slice(regionOpts, func(i, j int) bool { return regionOpts[i].LongName < regionOpts[j].LongName })
 		opts = append(opts, providerOption{
 			Name:    providerName,
 			Label:   providers.ProviderLabels[providerName],
