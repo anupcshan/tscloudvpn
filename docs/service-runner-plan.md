@@ -104,7 +104,7 @@ type VMRequirements struct {
 
 type PersistenceConfig struct {
     MountPoint string // "/data"
-    Size       string // "10G"
+    Size       string // "1T" (sparse — only written blocks consume storage)
     FSType     string // "zfs" (always ZFS for persistent services)
 }
 ```
@@ -178,7 +178,7 @@ A minimal service that validates the full stack:
 - Service type: `files`
 - Init script: tailscale + cloudnbd mount + filebrowser (single Go binary)
 - VM requirements: cheapest (same as exit node)
-- Persistence: 10G volume at `/data`
+- Persistence: 1T volume at `/data` (sparse — only written blocks consume R2 storage)
 - Idle detection: no HTTP requests for 2 hours
 - Named instances: `files-photos`, `files-docs`, etc.
 
@@ -580,7 +580,7 @@ DKMS compilation). Landing as focused commits:
   `GetInstanceStatus` look up provider/region from stored
   `controllerEntry` instead of taking them as args.
 
-- [ ] **Commit 10: Cloudflare config + R2 client.**
+- [x] **Commit 10: Cloudflare config + R2 client.**
   New `internal/r2/r2.go`: `TokenManager` with two methods:
 
   - `Acquire(volumeName, vmHostname)` — ensures bucket
@@ -631,42 +631,53 @@ DKMS compilation). Landing as focused commits:
   token with "API Tokens: Edit" + "R2: Edit" permissions). Wired
   through app → server → manager → registry (nil if not configured).
 
-- [ ] **Commit 11: R2 wiring in registry lifecycle.**
-  In `createCloudInstance`: if `svcType.Persistence != nil` and R2 is
-  configured, call `CreateVolume` then `RenderUserDataWithPersistence`
-  with credentials. In `DeleteInstance`: revoke R2 token before
-  deleting from control plane/cloud (instant fencing). Bucket and
-  data are preserved for future resume.
+- [x] **Commit 11: File Server service type, named instances, unified API routes.**
+  (Landed as consolidated commit d44fb0e, also covering original
+  commits 12–13.) FileServer ServiceType with `NamedInstances: true`,
+  filebrowser on ephemeral local `/data`. Unified API routes:
+  `PUT /services/{svc}/instances/{name}/providers/{p}/regions/{r}`,
+  `DELETE /services/{svc}/instances/{name}`. Named instance UI with
+  service tabs, name input, provider/region dropdowns. Running nodes
+  table driven from registry for all service types. Identity endpoint
+  includes instance name for discovery.
 
-- [ ] **Commit 12: File server ServiceType + init script rendering refactor.**
-  `var FileServer = ServiceType{Name: "files", Label: "File Server", ...}`
-  with `Persistence: &PersistenceConfig{MountPoint: "/data", Size: "10G"}`,
-  `IdleTimeout: 2h`, `Tags: ["tag:untrusted"]`. Init script
-  (`fileserver_init.sh.tmpl`, embedded): Phase 1: modprobe nbd,
-  download cloudblockdev (arch-aware amd64/arm64 from GitHub release
-  1772439544-6ebe4db), write YAML config with R2 creds, start
-  cloudblockdev in background. Phase 2: install tailscale + ZFS,
-  join tailnet. Phase 3: wait for /dev/nbd0, `zpool import -f data`
-  or `zpool create` for new volumes. Phase 4: download filebrowser
-  (v2.61.0), init DB, run on port 80 bound to tailscale IP. Phase 5:
-  stats server on 8245, idle detection via filebrowser I/O activity.
-  Add to `services.All` catalog. Also: `RenderUserData` takes init
-  script template as parameter (currently hardcodes `InitData`), use
-  `svcType.InitScript` in registry's `createCloudInstance`. Extend
-  `InitScriptData` with R2 credential fields. Add
-  `RenderUserDataWithPersistence`. No behavior change for exit nodes.
+- [x] **Commit 12: Speed Test service type + provider Region field.**
+  (Landed as bfe01a7.) LibreSpeed speed test as a second non-exit
+  service type. Provider `Region` struct gains human-readable label.
 
-- [ ] **Commit 13: API routes + minimal UI.**
-  Routes: `PUT /services/files/instances/{name}/providers/{provider}/regions/{region}`
-  and `DELETE /services/files/instances/{name}` (looks up provider/region
-  from running instance status). UI: "Launch File Server" section with
-  name text input, provider/region dropdown, create button. Uses
-  `fetch()` (not HTMX) since the form is different from exit nodes.
+- [x] **Commit 13: Separate instance name from Tailscale hostname.**
+  (Landed as 019354f.) `ServiceType.Hostname` derives the Tailscale
+  hostname from the instance name (identity for exit nodes, prefixed
+  for other services). Controller matches peers by hostname, not
+  instance name.
 
-- [ ] **Commit 14: Cleanup.**
-  Cloud provider instance tags include service type. GC handles new
-  registry key format. identity.json includes instance name for
-  discovery of persistent services. Restore init script ERR/EXIT
+- [ ] **Commit 14: R2 persistence for file server.**
+  Wire R2 TokenManager into registry lifecycle + update file server
+  init script for cloudblockdev+ZFS persistence. Two parts:
+
+  **Registry lifecycle.** In `createCloudInstance`: if
+  `svcType.Persistence != nil` and R2 is configured, call
+  `tokenManager.Acquire(instanceName, hostname)` and pass R2
+  credentials into init script rendering. In `DeleteInstance`:
+  call `tokenManager.Release(instanceName)` before deleting from
+  control plane/cloud (instant fencing). Bucket and data preserved
+  for future resume. `InitScriptData` extended with R2 credential
+  fields (`R2AccessKeyID`, `R2SecretAccessKey`, `R2Endpoint`,
+  `R2Bucket`, `VolumeSize`).
+
+  **File server init script.** `fileserver_init.sh.tmpl` updated:
+  Phase 1: modprobe nbd, download cloudblockdev (arch-aware
+  amd64/arm64 from GitHub release), write YAML config with R2
+  creds, start cloudblockdev in background. Phase 2: install
+  tailscale + ZFS, join tailnet. Phase 3: wait for /dev/nbd0,
+  `zpool import -f data` or `zpool create` for new volumes.
+  Phase 4: download filebrowser (v2.61.0), init DB, run on port 80
+  bound to tailscale IP. Phase 5: stats server on 8245, idle
+  detection via filebrowser I/O activity. No behavior change for
+  exit nodes or speed tests.
+
+- [ ] **Commit 15: Cleanup.**
+  GC handles new registry key format. Restore init script ERR/EXIT
   trap. Improve async error reporting in UI.
 
 ### ZFS for persistent services

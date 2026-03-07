@@ -182,6 +182,7 @@ var FileServer = ServiceType{
 	IdleTimeout:    2 * time.Hour,
 	StatsPath:      "/stats.json",
 	ParseStats:     parseLastActiveStats,
+	Persistence:    &PersistenceConfig{MountPoint: "/data", Size: "1T", FSType: "zfs"},
 	Links: []ServiceLink{
 		{Label: "File Browser", Format: "http://%s", Render: "link"},
 	},

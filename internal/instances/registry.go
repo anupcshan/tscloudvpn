@@ -158,16 +158,35 @@ func (r *Registry) CreateInstance(ctx context.Context, serviceName, instanceName
 	return nil
 }
 
-// createCloudInstance handles the cloud provisioning: create auth key,
-// render init script, call provider.
+// createCloudInstance handles the cloud provisioning: acquire R2 credentials
+// (if persistent), create auth key, render init script, call provider.
 func (r *Registry) createCloudInstance(ctx context.Context, svcType *services.ServiceType, instanceName, providerName string, provider providers.Provider, region string) (providers.Instance, error) {
+	// Acquire R2 credentials for persistent services
+	var r2Creds *providers.R2Credentials
+	var volumeSize string
+	if svcType.Persistence != nil && r.r2TokenManager != nil {
+		hostname := svcType.Hostname(instanceName)
+		volumeName := svcType.Name + "-" + instanceName
+		s3Creds, err := r.r2TokenManager.Acquire(ctx, volumeName, hostname)
+		if err != nil {
+			return providers.Instance{}, fmt.Errorf("acquire R2 credentials for %s: %w", instanceName, err)
+		}
+		r2Creds = &providers.R2Credentials{
+			AccessKeyID:     s3Creds.AccessKeyID,
+			SecretAccessKey: s3Creds.SecretAccessKey,
+			Endpoint:        s3Creds.Endpoint,
+			Bucket:          s3Creds.Bucket,
+		}
+		volumeSize = svcType.Persistence.Size
+	}
+
 	authKey, err := r.controlApi.CreateKey(ctx, svcType.Tags)
 	if err != nil {
 		return providers.Instance{}, err
 	}
 
 	hostname := svcType.Hostname(instanceName)
-	userData, err := providers.RenderUserData(svcType.InitScript, hostname, instanceName, authKey, r.sshKey, svcType.Name, providerName, region, false)
+	userData, err := providers.RenderUserData(svcType.InitScript, hostname, instanceName, authKey, r.sshKey, svcType.Name, providerName, region, false, r2Creds, volumeSize)
 	if err != nil {
 		return providers.Instance{}, err
 	}
@@ -225,7 +244,15 @@ func (r *Registry) DeleteInstance(serviceName, instanceName string) error {
 
 	hostname := providers.HostName(svcType.Hostname(entry.name))
 
-	// Step 1: Delete from Tailscale/Headscale
+	// Step 1: Revoke R2 token for persistent services (instant fencing)
+	if svcType.Persistence != nil && r.r2TokenManager != nil {
+		volumeName := svcType.Name + "-" + entry.name
+		if err := r.r2TokenManager.Release(context.Background(), volumeName); err != nil {
+			r.logger.Printf("Warning: failed to revoke R2 token for %s: %v", volumeName, err)
+		}
+	}
+
+	// Step 2: Delete from Tailscale/Headscale
 	r.deleteFromControlPlane(hostname)
 
 	// Step 2: Delete from cloud provider

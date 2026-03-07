@@ -119,14 +119,30 @@ type InitScriptData struct {
 	Region       string // Region code (e.g., "nyc1")
 	InstanceName string // Service-scoped instance name (e.g., "document", "do-nyc1")
 	Debug        bool   // When true, delay ERR shutdown for SSH diagnostics
+
+	// R2 persistence fields (empty for non-persistent services)
+	R2AccessKeyID     string
+	R2SecretAccessKey string
+	R2Endpoint        string // e.g., "https://{account_id}.r2.cloudflarestorage.com"
+	R2Bucket          string // e.g., "tscloudvpn-vol-documents"
+	VolumeSize        string // e.g., "1T"
 }
 
 // RenderUserData renders the given init script template with the given parameters.
 // hostname is the Tailscale hostname (e.g. "speedtest-do-nyc1"), instanceName is
-// the service-scoped name (e.g. "do-nyc1").
-func RenderUserData(templateText string, hostname string, instanceName string, key *controlapi.PreauthKey, sshKey string, service string, provider string, region string, debug bool) (string, error) {
-	var buf bytes.Buffer
-	if err := template.Must(template.New("tmpl").Parse(templateText)).Execute(&buf, InitScriptData{
+// the service-scoped name (e.g. "do-nyc1"). r2Creds and persistence may be nil
+// for non-persistent services.
+// R2Credentials holds the S3-compatible credentials for R2 persistence.
+// Passed through to InitScriptData for persistent services.
+type R2Credentials struct {
+	AccessKeyID     string
+	SecretAccessKey string
+	Endpoint        string
+	Bucket          string
+}
+
+func RenderUserData(templateText string, hostname string, instanceName string, key *controlapi.PreauthKey, sshKey string, service string, provider string, region string, debug bool, r2Creds *R2Credentials, volumeSize string) (string, error) {
+	data := InitScriptData{
 		Args: fmt.Sprintf(
 			`%s --hostname=%s`,
 			strings.Join(key.GetCLIArgs(), " "),
@@ -138,7 +154,17 @@ func RenderUserData(templateText string, hostname string, instanceName string, k
 		Region:       region,
 		InstanceName: instanceName,
 		Debug:        debug,
-	}); err != nil {
+		VolumeSize:   volumeSize,
+	}
+	if r2Creds != nil {
+		data.R2AccessKeyID = r2Creds.AccessKeyID
+		data.R2SecretAccessKey = r2Creds.SecretAccessKey
+		data.R2Endpoint = r2Creds.Endpoint
+		data.R2Bucket = r2Creds.Bucket
+	}
+
+	var buf bytes.Buffer
+	if err := template.Must(template.New("tmpl").Parse(templateText)).Execute(&buf, data); err != nil {
 		return "", err
 	}
 	return buf.String(), nil

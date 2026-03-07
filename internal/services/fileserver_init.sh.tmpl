@@ -12,19 +12,61 @@ if [[ -n "{{.SSHKey}}" ]]; then
   chage -d "$(date +%Y-%m-%d)" root 2>/dev/null || true
 fi
 
+# Phase 1: Start cloudblockdev (NBD → R2) early so the block device
+# initializes while we install packages.
+modprobe nbd
+
+ARCH=$(dpkg --print-architecture)
+case "$ARCH" in
+  amd64) CBD_ARCH=amd64 ;;
+  arm64) CBD_ARCH=arm64 ;;
+  *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+esac
+
+CBD_URL="https://github.com/anupcshan/cloudblockdev/releases/download/1772439544-6ebe4db/cloudblockdev-linux-${CBD_ARCH}"
+curl -fsSL "$CBD_URL" -o /usr/local/bin/cloudblockdev
+chmod +x /usr/local/bin/cloudblockdev
+
+mkdir -p /etc/cloudblockdev
+cat > /etc/cloudblockdev/config.yaml <<CBDCONFIG
+device:
+  size: {{.VolumeSize}}
+
+s3:
+  bucket: {{.R2Bucket}}
+  endpoint: {{.R2Endpoint}}
+  access_key: {{.R2AccessKeyID}}
+  secret_key: {{.R2SecretAccessKey}}
+  region: auto
+
+server:
+  listen: ""
+
+nbd:
+  enabled: true
+  index: 0
+  dead_conn_timeout: 120s
+CBDCONFIG
+
+/usr/local/bin/cloudblockdev serve -config /etc/cloudblockdev/config.yaml &
+CBD_PID=$!
+
+# Phase 2: Install tailscale + ZFS while cloudblockdev starts up.
 curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
 curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
 
 sudo apt-get update -o Dir::Etc::sourcelist="sources.list.d/tailscale.list" \
   -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
 
-sudo apt-get install -y --no-install-recommends tailscale jq curl || {
+sudo apt-get install -y --no-install-recommends tailscale jq curl zfsutils-linux || {
   sudo sed -i 's/Components:.*/Components: main/' /etc/apt/sources.list.d/*.sources 2>/dev/null || true
   sudo sed -i 's/ universe//g; s/ multiverse//g; s/ restricted//g' /etc/apt/sources.list 2>/dev/null || true
   sudo sed -i '/^deb/ { /main/!d }' /etc/apt/sources.list 2>/dev/null || true
   sudo apt-get update
-  sudo apt-get install -y --no-install-recommends tailscale jq curl
+  sudo apt-get install -y --no-install-recommends tailscale jq curl zfsutils-linux
 }
+
+modprobe zfs
 
 sudo sed -i 's/FLAGS=""/FLAGS="--state=mem: --verbose=1"/' /etc/default/tailscaled
 sudo systemctl restart tailscaled.service
@@ -39,17 +81,22 @@ while ! ip addr show dev tailscale0 2>/dev/null | grep -q "$TS_IP"; do
   sleep 1
 done
 
-# Create data directory (ephemeral for now — persistence via cloudnbd+ZFS later)
-mkdir -p /data
+# Phase 3: Wait for cloudblockdev NBD device, then import or create ZFS pool.
+echo "Waiting for /dev/nbd0 ..."
+timeout 120 bash -c 'while [ ! -b /dev/nbd0 ]; do sleep 1; done'
 
-# Download filebrowser
-ARCH=$(dpkg --print-architecture)
-case "$ARCH" in
-  amd64) FB_ARCH=amd64 ;;
-  arm64) FB_ARCH=arm64 ;;
-  *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
-esac
+# Try importing existing pool first (data survives across VM lifecycles).
+# -f handles the case where the previous VM didn't cleanly export.
+if ! zpool import -f data 2>/dev/null; then
+  echo "No existing pool found, creating new ZFS pool on /dev/nbd0"
+  zpool create -f -o ashift=12 -O mountpoint=/data -O atime=off -O compression=lz4 data /dev/nbd0
+fi
 
+# Ensure /data is the mountpoint
+zfs set mountpoint=/data data 2>/dev/null || true
+
+# Phase 4: Download filebrowser and run on persistent /data.
+FB_ARCH=$ARCH
 FB_VERSION="2.31.2"
 FB_URL="https://github.com/filebrowser/filebrowser/releases/download/v${FB_VERSION}/linux-${FB_ARCH}-filebrowser.tar.gz"
 
@@ -57,14 +104,21 @@ cd /opt
 curl -fsSL "$FB_URL" | tar xz
 chmod +x /opt/filebrowser
 
-# Initialize filebrowser database and configure
-/opt/filebrowser config init --address "$TS_IP" --port 80 --root /data --database /opt/filebrowser.db
-/opt/filebrowser users add admin admin --database /opt/filebrowser.db
+# Store filebrowser database on the persistent volume so settings survive.
+# config init fails if the DB already exists, so ignore errors.
+/opt/filebrowser config init --address "$TS_IP" --port 80 --root /data --database /data/.filebrowser.db 2>/dev/null || true
+# Update bind address (may have changed between VM lifecycles).
+/opt/filebrowser config set --address "$TS_IP" --port 80 --database /data/.filebrowser.db
+# Add default user only if none exist yet.
+USER_COUNT=$(/opt/filebrowser users ls --database /data/.filebrowser.db 2>/dev/null | tail -n +2 | wc -l)
+if [ "$USER_COUNT" -eq 0 ]; then
+  /opt/filebrowser users add admin adminadminadmin --database /data/.filebrowser.db
+fi
 
-# Start filebrowser in background
-/opt/filebrowser --database /opt/filebrowser.db &
+/opt/filebrowser --database /data/.filebrowser.db &
+FB_PID=$!
 
-# Stats/identity endpoint on port 8245
+# Phase 5: Stats/identity endpoint on port 8245.
 mkdir -p /tmp/stats
 echo "{\"last_active\": $(date +%s)}" > /tmp/stats/stats.json
 
@@ -83,6 +137,16 @@ while sleep 30; do
   activeConns=$(ss -tn state established '( sport = :80 )' 2>/dev/null | tail -n +2 | wc -l)
   if [ "$activeConns" -gt 0 ]; then
     lastActiveTime=$now
+  fi
+
+  # Check if cloudblockdev and filebrowser are still running
+  if ! kill -0 $CBD_PID 2>/dev/null; then
+    echo "cloudblockdev exited unexpectedly" >&2
+    exit 1
+  fi
+  if ! kill -0 $FB_PID 2>/dev/null; then
+    echo "filebrowser exited unexpectedly" >&2
+    exit 1
   fi
 
   echo "{\"last_active\": $lastActiveTime}" > /tmp/stats/stats.json.tmp

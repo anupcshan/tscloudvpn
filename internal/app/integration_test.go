@@ -142,7 +142,7 @@ func TestExitNode(t *testing.T) {
 			require.NoError(t, err, "Failed to create auth key")
 
 			hostname := name + "-" + region
-			userData, err := providers.RenderUserData(providers.InitData, hostname, hostname, key, sshPubKey, "exit", name, region, true)
+			userData, err := providers.RenderUserData(providers.InitData, hostname, hostname, key, sshPubKey, "exit", name, region, true, nil, "")
 			require.NoError(t, err, "Failed to render user data")
 
 			t.Logf("Creating %s exit node in %s", name, region)
