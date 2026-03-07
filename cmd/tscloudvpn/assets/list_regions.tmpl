@@ -27,17 +27,24 @@
     {{ if $svc.NamedInstances }}
     <!-- Named instance form -->
     <div class="named-form" id="form-{{ $svc.Name }}">
-      <div class="form-row">
-        <input type="text" class="form-input" id="name-{{ $svc.Name }}" placeholder="Instance name (e.g. photos, docs)" autocomplete="off">
-        <select class="form-select" id="provider-{{ $svc.Name }}" onchange="updateRegions('{{ $svc.Name }}')">
+      <form hx-post="/services/{{ $svc.Name }}/instances" hx-swap="none" class="form-row">
+        <input type="text" name="name" class="form-input" placeholder="Instance name (e.g. photos, docs)"
+               required pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?"
+               title="Lowercase letters, numbers, and hyphens (no leading/trailing hyphens)" autocomplete="off">
+        <select name="provider" class="form-select"
+                hx-get="/services/{{ $svc.Name }}/regions"
+                hx-trigger="change, load"
+                hx-target="#region-{{ $svc.Name }}"
+                hx-swap="innerHTML"
+                hx-include="this">
           {{ range $svc.Providers }}
           <option value="{{ .Name }}">{{ .Label }}</option>
           {{ end }}
         </select>
-        <select class="form-select" id="region-{{ $svc.Name }}">
+        <select name="region" class="form-select" id="region-{{ $svc.Name }}">
         </select>
-        <button class="btn btn-create" onclick="createNamedInstance('{{ $svc.Name }}')">Create</button>
-      </div>
+        <button type="submit" class="btn btn-create">Create</button>
+      </form>
     </div>
     {{ else }}
     <!-- Region picker -->
@@ -127,45 +134,6 @@ document.getElementById('search').addEventListener('input', function() {
   activePanel.querySelector('.empty').style.display = anyVisible ? 'none' : 'block';
 });
 
-// Region data for named instance dropdowns
-var regionData = {
-  {{ range $svc := .Services }}{{ if $svc.NamedInstances }}{{ range $svc.Providers }}
-  "{{ $svc.Name }}-{{ .Name }}": [{{ range .Regions }}{"code":"{{ .Code }}","name":"{{ .LongName }}"},{{ end }}],
-  {{ end }}{{ end }}{{ end }}
-};
-
-function updateRegions(svc) {
-  var provider = document.getElementById('provider-' + svc).value;
-  var sel = document.getElementById('region-' + svc);
-  var regions = regionData[svc + '-' + provider] || [];
-  sel.innerHTML = '';
-  regions.forEach(function(r) {
-    var opt = document.createElement('option');
-    opt.value = r.code;
-    opt.textContent = r.name;
-    sel.appendChild(opt);
-  });
-}
-
-function createNamedInstance(svc) {
-  var name = document.getElementById('name-' + svc).value.trim();
-  if (!name) { alert('Please enter an instance name'); return; }
-  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
-    alert('Name must be lowercase letters, numbers, and hyphens (no leading/trailing hyphens)');
-    return;
-  }
-  var provider = document.getElementById('provider-' + svc).value;
-  var region = document.getElementById('region-' + svc).value;
-  var url = '/services/' + svc + '/instances/' + name + '/providers/' + provider + '/regions/' + region;
-  fetch(url, {method: 'PUT'}).then(function(r) {
-    if (!r.ok) r.text().then(function(t) { alert('Error: ' + t); });
-  });
-}
-
-// Initialize region dropdowns for named services
-{{ range .Services }}{{ if .NamedInstances }}
-updateRegions('{{ .Name }}');
-{{ end }}{{ end }}
 </script>
 
 {{ template "footer.tmpl" . }}

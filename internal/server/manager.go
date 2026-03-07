@@ -117,16 +117,10 @@ type serviceTabData struct {
 	Providers      []providerOption // for named instance dropdowns
 }
 
-// providerOption is a provider+regions pair for the named instance UI dropdowns.
+// providerOption is a provider entry for the named instance UI dropdowns.
 type providerOption struct {
-	Name    string
-	Label   string
-	Regions []regionOption
-}
-
-type regionOption struct {
-	Code     string
-	LongName string
+	Name  string
+	Label string
 }
 
 func (m *Manager) GetStatus(ctx context.Context, svcType *services.ServiceType) (status.Info[[]mappedRegion], error) {
@@ -487,11 +481,53 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 		}
 	})
 
-	// Create instance: PUT /services/{service}/instances/{name}/providers/{provider}/regions/{region}
-	// Delete instance: DELETE /services/{service}/instances/{name}
+	// GET  /services/{service}/regions?provider={p} — returns <option> HTML for region dropdown
+	// POST /services/{service}/instances — create named instance from form fields
+	// PUT  /services/{service}/instances/{name}/providers/{provider}/regions/{region}
+	// DELETE /services/{service}/instances/{name}
 	mux.HandleFunc("/services/", func(w http.ResponseWriter, r *http.Request) {
-		// Parse path: /services/{service}/instances/{name}[/providers/{provider}/regions/{region}]
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/services/"), "/")
+
+		// GET /services/{svc}/regions?provider={p}
+		if len(parts) == 2 && parts[1] == "regions" && r.Method == "GET" {
+			providerName := r.URL.Query().Get("provider")
+			lazyRegions, ok := m.lazyListRegionsMap[providerName]
+			if !ok {
+				http.Error(w, "unknown provider", http.StatusBadRequest)
+				return
+			}
+			regions := lazyRegions()
+			sort.Slice(regions, func(i, j int) bool { return regions[i].LongName < regions[j].LongName })
+			w.Header().Set("Content-Type", "text/html")
+			for _, region := range regions {
+				fmt.Fprintf(w, "<option value=\"%s\">%s</option>", region.Code, region.LongName)
+			}
+			return
+		}
+
+		// POST /services/{svc}/instances — named instance creation via form
+		if len(parts) == 2 && parts[1] == "instances" && r.Method == "POST" {
+			serviceName := parts[0]
+			svcType := services.ByName(serviceName)
+			if svcType == nil {
+				http.Error(w, "unknown service", http.StatusNotFound)
+				return
+			}
+			name := r.FormValue("name")
+			providerName := r.FormValue("provider")
+			region := r.FormValue("region")
+			if name == "" || providerName == "" || region == "" {
+				http.Error(w, "missing required fields", http.StatusBadRequest)
+				return
+			}
+			err := m.instanceRegistry.CreateInstance(r.Context(), serviceName, name, providerName, region)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 
 		if len(parts) < 3 || parts[1] != "instances" {
 			http.NotFound(w, r)
@@ -623,20 +659,13 @@ func (m *Manager) getAllInstanceRegions() []mappedRegion {
 	return regions
 }
 
-// buildProviderOptions builds the provider/region list for named instance dropdowns.
+// buildProviderOptions builds the provider list for named instance dropdowns.
 func (m *Manager) buildProviderOptions() []providerOption {
 	var opts []providerOption
-	for providerName, lazyRegions := range m.lazyListRegionsMap {
-		regions := lazyRegions()
-		regionOpts := make([]regionOption, len(regions))
-		for i, r := range regions {
-			regionOpts[i] = regionOption{Code: r.Code, LongName: r.LongName}
-		}
-		sort.Slice(regionOpts, func(i, j int) bool { return regionOpts[i].LongName < regionOpts[j].LongName })
+	for providerName := range m.lazyListRegionsMap {
 		opts = append(opts, providerOption{
-			Name:    providerName,
-			Label:   providers.ProviderLabels[providerName],
-			Regions: regionOpts,
+			Name:  providerName,
+			Label: providers.ProviderLabels[providerName],
 		})
 	}
 	sort.Slice(opts, func(i, j int) bool { return opts[i].Name < opts[j].Name })
