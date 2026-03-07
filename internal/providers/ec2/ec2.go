@@ -9,6 +9,8 @@ import (
 	"log"
 	"net/netip"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/anupcshan/tscloudvpn/internal/config"
@@ -31,12 +33,20 @@ const (
 	tailscaledInboundPort = 41641
 )
 
+// instanceTypeSpec holds the specs and pricing for one instance type in one region.
+type instanceTypeSpec struct {
+	Name       string
+	VCPUs      int
+	RamMB      int
+	HourlyCost float64
+}
+
 type ec2Provider struct {
-	mu             sync.Mutex
-	listPricesOnce sync.Once
-	regionPriceMap map[string]float64
-	cfg            aws.Config
-	ownerID        string // Unique identifier for this tscloudvpn instance
+	mu                  sync.Mutex
+	listPricesOnce      sync.Once
+	regionInstanceTypes map[string][]instanceTypeSpec // region -> sorted by cost (cheapest first)
+	cfg                 aws.Config
+	ownerID             string // Unique identifier for this tscloudvpn instance
 }
 
 func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
@@ -309,7 +319,7 @@ func (e *ec2Provider) CreateInstance(ctx context.Context, req providers.CreateRe
 
 	input := &ec2.RunInstancesInput{
 		ImageId:                           imageParam.Parameter.Value,
-		InstanceType:                      types.InstanceTypeT4gNano,
+		InstanceType:                      e.cheapestInstanceType(req.Region),
 		MinCount:                          aws.Int32(1),
 		MaxCount:                          aws.Int32(1),
 		InstanceInitiatedShutdownBehavior: types.ShutdownBehaviorTerminate,
@@ -449,6 +459,16 @@ type productType struct {
 	} `json:"terms"`
 }
 
+// parseMemoryMB parses an AWS memory string like "0.5 GiB" into megabytes.
+func parseMemoryMB(s string) int {
+	s = strings.TrimSuffix(s, " GiB")
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return int(f * 1024)
+}
+
 func (e *ec2Provider) populatePriceCache() {
 	e.listPricesOnce.Do(func() {
 		ctx := context.Background()
@@ -456,15 +476,12 @@ func (e *ec2Provider) populatePriceCache() {
 		client := pricing.NewFromConfig(e.cfg, withRegion("us-east-1"))
 		e.mu.Unlock()
 
-		e.regionPriceMap = make(map[string]float64)
+		regionTypes := make(map[string][]instanceTypeSpec)
+
 		paginator := pricing.NewGetProductsPaginator(client, &pricing.GetProductsInput{
 			ServiceCode: aws.String("AmazonEC2"),
+			MaxResults:  aws.Int32(100),
 			Filters: []pricingtypes.Filter{
-				{
-					Type:  pricingtypes.FilterTypeTermMatch,
-					Field: aws.String("instanceType"),
-					Value: aws.String("t4g.nano"),
-				},
 				{
 					Type:  pricingtypes.FilterTypeTermMatch,
 					Field: aws.String("operatingSystem"),
@@ -475,15 +492,37 @@ func (e *ec2Provider) populatePriceCache() {
 					Field: aws.String("capacitystatus"),
 					Value: aws.String("UnusedCapacityReservation"),
 				},
+				{
+					Type:  pricingtypes.FilterTypeTermMatch,
+					Field: aws.String("tenancy"),
+					Value: aws.String("Shared"),
+				},
+				{
+					Type:  pricingtypes.FilterTypeTermMatch,
+					Field: aws.String("preInstalledSw"),
+					Value: aws.String("NA"),
+				},
+				{
+					Type:  pricingtypes.FilterTypeTermMatch,
+					Field: aws.String("locationType"),
+					Value: aws.String("AWS Region"),
+				},
+				{
+					Type:  pricingtypes.FilterTypeTermMatch,
+					Field: aws.String("currentGeneration"),
+					Value: aws.String("Yes"),
+				},
 			},
 		})
 
+		pages := 0
 		for paginator.HasMorePages() {
 			page, err := paginator.NextPage(ctx)
 			if err != nil {
-				log.Printf("Error getting product list: %v", err)
-				return
+				log.Printf("Error getting EC2 pricing (page %d): %v", pages, err)
+				break
 			}
+			pages++
 
 			for _, product := range page.PriceList {
 				var p productType
@@ -491,24 +530,63 @@ func (e *ec2Provider) populatePriceCache() {
 					log.Printf("Error unmarshalling product: %v", err)
 					continue
 				}
+				region := p.Product.Attributes["regionCode"]
+				instanceType := p.Product.Attributes["instanceType"]
+				vcpus, _ := strconv.Atoi(p.Product.Attributes["vcpu"])
+				ramMB := parseMemoryMB(p.Product.Attributes["memory"])
+
 				for _, term := range p.Terms.OnDemand {
 					for _, price := range term.PriceDimensions {
-						e.regionPriceMap[p.Product.Attributes["regionCode"]] = price.PricePerUnit.USD
+						if price.PricePerUnit.USD > 0 {
+							regionTypes[region] = append(regionTypes[region], instanceTypeSpec{
+								Name:       instanceType,
+								VCPUs:      vcpus,
+								RamMB:      ramMB,
+								HourlyCost: price.PricePerUnit.USD,
+							})
+						}
 					}
 				}
-
 			}
 		}
 
-		log.Printf("EC2 region price cache populated with %d regions", len(e.regionPriceMap))
+		// Sort each region's types by cost (cheapest first)
+		for region := range regionTypes {
+			sort.Slice(regionTypes[region], func(i, j int) bool {
+				return regionTypes[region][i].HourlyCost < regionTypes[region][j].HourlyCost
+			})
+		}
+
+		e.regionInstanceTypes = regionTypes
+		entries := 0
+		for _, v := range regionTypes {
+			entries += len(v)
+		}
+		log.Printf("EC2 price cache populated: %d pages, %d regions, %d entries", pages, len(regionTypes), entries)
 	})
 }
 
-// GetRegionHourlyEstimate returns the hourly price for the t4g.nano instance in the specified region
+// GetRegionHourlyEstimate returns the hourly price for the cheapest instance type in the specified region.
 func (e *ec2Provider) GetRegionHourlyEstimate(region string) float64 {
 	e.populatePriceCache()
 
-	return e.regionPriceMap[region]
+	specs := e.regionInstanceTypes[region]
+	if len(specs) == 0 {
+		return 0
+	}
+	return specs[0].HourlyCost
+}
+
+// cheapestInstanceType returns the cheapest instance type name for a region,
+// falling back to t4g.nano if the price cache isn't populated.
+func (e *ec2Provider) cheapestInstanceType(region string) types.InstanceType {
+	e.populatePriceCache()
+
+	specs := e.regionInstanceTypes[region]
+	if len(specs) == 0 {
+		return types.InstanceTypeT4gNano
+	}
+	return types.InstanceType(specs[0].Name)
 }
 
 func init() {

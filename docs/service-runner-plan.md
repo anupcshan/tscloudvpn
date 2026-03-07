@@ -651,7 +651,7 @@ DKMS compilation). Landing as focused commits:
   for other services). Controller matches peers by hostname, not
   instance name.
 
-- [ ] **Commit 14: R2 persistence for file server.**
+- [x] **Commit 14: R2 persistence for file server.**
   Wire R2 TokenManager into registry lifecycle + update file server
   init script for cloudblockdev+ZFS persistence. Two parts:
 
@@ -676,9 +676,76 @@ DKMS compilation). Landing as focused commits:
   detection via filebrowser I/O activity. No behavior change for
   exit nodes or speed tests.
 
-- [ ] **Commit 15: Cleanup.**
-  GC handles new registry key format. Restore init script ERR/EXIT
-  trap. Improve async error reporting in UI.
+### Phase 0 follow-up: VMRequirements filtering
+
+File server OOMs on instances with <1GB RAM. `VMRequirements` is
+defined but nothing reads it.
+
+**Design.** Providers expose available instance types per region as
+structured data. Filtering and size selection move to the
+orchestration layer — one implementation instead of seven.
+
+```go
+type InstanceType struct {
+    Name       string  // "t4g.nano", "Standard_B1s", "s-1vcpu-1gb"
+    VCPUs      int
+    RamMB      int
+    DiskGB     int
+    HourlyCost float64
+}
+
+type Region struct {
+    Code          string
+    LongName      string
+    InstanceTypes []InstanceType
+}
+```
+
+`ListRegions` returns regions with `[]InstanceType`.
+`GetRegionHourlyEstimate` removed from `Provider` interface —
+computed from `Region.InstanceTypes` by the caller.
+`CreateRequest` gains an `InstanceType` field (the orchestration
+layer already chose the size). `VMRequirements` renamed:
+`MinRAMGB` → `MinRamMB`.
+
+Providers keep existing family/architecture pre-filters (Azure:
+B-series, GCP: x86_64) to keep the dataset small, but expose the
+filtered list as structured data instead of selecting internally.
+
+`lazyListRegionsMap` stays as a cache — 6 of 7 providers don't
+cache `ListRegions` internally. Requirements filtering happens
+after the cache, in the orchestration layer.
+
+#### Commit sequence
+
+- [ ] **Commit 16: EC2 dynamic size selection.**
+  Replace hardcoded `t4g.nano`. Fetch available instance types
+  and prices, select cheapest per region. Same external interface
+  — `ListRegions`, `GetRegionHourlyEstimate`, `CreateInstance`
+  signatures unchanged. Internal refactor only.
+
+- [ ] **Commit 17: Linode dynamic size selection.**
+  Replace hardcoded `g6-nanode-1`. Fetch available types via
+  `ListTypes`, select cheapest per region (with regional pricing).
+  Same external interface, internal refactor only.
+
+- [ ] **Commit 18: InstanceType in Region, remove GetRegionHourlyEstimate.**
+  Add `InstanceType` struct. `Region.InstanceTypes` populated by
+  all 7 providers (all already have dynamic size lists after
+  commits 16–17). `GetRegionHourlyEstimate` removed from
+  `Provider` interface — callers compute from `InstanceTypes`.
+  `CreateRequest` gains `InstanceType` field. No requirements
+  filtering yet — all callers pick absolute cheapest. No behavior
+  change.
+
+- [ ] **Commit 19: VMRequirements filtering in orchestration layer.**
+  Rename `MinRAMGB` → `MinRamMB`. Add filtering function:
+  takes `[]InstanceType` + `VMRequirements`, returns qualifying
+  types sorted by cost. Wire through Manager: `GetStatus` and
+  regions htmx endpoint filter by service requirements, hiding
+  regions with no qualifying sizes. Registry passes cheapest
+  qualifying `InstanceType` in `CreateRequest`. Set
+  `MinRamMB: 2048` on FileServer ServiceType.
 
 ### ZFS for persistent services
 
