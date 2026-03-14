@@ -103,10 +103,11 @@ func (r *Registry) CreateInstance(ctx context.Context, serviceName, instanceName
 			r.logger.Printf("Instance %s already running, no action needed", key)
 			return nil
 		}
-		if status.State == StateFailed {
+		switch status.State {
+		case StateFailed:
 			// Clean up failed controller before creating a new one
 			delete(r.controllers, key)
-		} else if status.State == StateLaunching {
+		case StateLaunching:
 			// Already launching, nothing to do
 			r.mu.Unlock()
 			return nil

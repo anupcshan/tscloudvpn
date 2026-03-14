@@ -394,12 +394,13 @@ func (m *Manager) SetupRoutes(ctx context.Context, mux *http.ServeMux, controlle
 						data[buttonKey] = fmt.Sprintf(`<button class="btn btn-danger" hx-ext="disable-element" hx-disable-element="self" hx-delete="%s">Delete</button>`, deleteURL)
 					} else {
 						disabledFragment := ""
-						if region.State == instances.StateLaunching {
+						switch region.State {
+						case instances.StateLaunching:
 							data[hasNodeKey] = fmt.Sprintf(`<span class="pill pill-blue">launching %s...</span>`, durafmt.ParseShort(time.Since(region.LaunchedTS)).InternationalString())
 							disabledFragment = "disabled"
-						} else if region.State == instances.StateFailed {
+						case instances.StateFailed:
 							data[hasNodeKey] = `<span class="pill pill-red">failed</span>`
-						} else {
+						default:
 							data[hasNodeKey] = ""
 						}
 						data[buttonKey] = fmt.Sprintf(`<button class="btn btn-create" hx-ext="disable-element" hx-disable-element="self" hx-put="%s" %s>Create</button>`, createURL, disabledFragment)
