@@ -187,14 +187,13 @@ func (v *vultrProvider) CreateInstance(ctx context.Context, req providers.Create
 	log.Printf("Selected OS: %+v", oses[0])
 
 	instance, _, err := v.vultrClient.Instance.Create(ctx, &govultr.InstanceCreateReq{
-		Region:     region,
-		Label:      "tscloudvpn",
-		Hostname:   hostname,
-		Tags:       v.buildTags(req.Tags),
-		Plan:       regionSize.PlanID,
-		UserData:   base64.StdEncoding.EncodeToString([]byte(req.UserData)),
-		OsID:       oses[0].ID,
-		EnableVPC2: govultr.BoolToBoolPtr(true),
+		Region:   region,
+		Label:    "tscloudvpn",
+		Hostname: hostname,
+		Tags:     v.buildTags(req.Tags),
+		Plan:     regionSize.PlanID,
+		UserData: base64.StdEncoding.EncodeToString([]byte(req.UserData)),
+		OsID:     oses[0].ID,
 	})
 	if err != nil {
 		return providers.Instance{}, err

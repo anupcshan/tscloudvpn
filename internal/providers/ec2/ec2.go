@@ -22,7 +22,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/pricing"
 	pricingtypes "github.com/aws/aws-sdk-go-v2/service/pricing/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -375,10 +374,6 @@ func (e *ec2Provider) GetInstanceStatus(ctx context.Context, region string) (pro
 	for _, reservation := range listInstances.Reservations {
 		instances = append(instances, reservation.Instances...)
 	}
-
-	slices.SortFunc(instances, func(i, j types.Instance) int {
-		return -aws.ToTime(i.LaunchTime).Compare(aws.ToTime(j.LaunchTime))
-	})
 
 	for _, instance := range instances {
 		if instance.State.Name != types.InstanceStateNameTerminated {

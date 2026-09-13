@@ -109,7 +109,7 @@ func NewProvider(ctx context.Context, cfg *config.Config) (providers.Provider, e
 		return nil, nil
 	}
 
-	credOpt := option.WithCredentialsJSON([]byte(cfg.Providers.GCP.CredentialsJSON))
+	credOpt := option.WithAuthCredentialsJSON(option.ServiceAccount, []byte(cfg.Providers.GCP.CredentialsJSON))
 	service, err := compute.NewService(ctx, credOpt)
 	if err != nil {
 		return nil, err
