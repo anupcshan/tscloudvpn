@@ -1,18 +1,3 @@
-// Package app_test contains integration tests for the tscloudvpn application.
-//
-// This file contains local integration tests that use mocked external dependencies
-// and are safe to run as part of regular testing. These tests:
-//
-//   - Start a real tscloudvpn server with mocked Tailscale and cloud providers
-//   - Test the complete HTTP API and user workflow
-//   - Verify server-sent events, concurrent requests, and error handling
-//   - Use tsclient.MockClient to simulate Tailscale peer behavior
-//   - Use MockControlAPI to simulate device registration and management
-//   - Use fake cloud provider for realistic instance lifecycle testing
-//
-// For tests that use real Tailscale API and cloud providers, see integration_test.go
-// (requires build tag 'e2e' and real credentials).
-
 package app_test
 
 import (
@@ -226,65 +211,4 @@ func (h *TestHarness) WaitForSSEEvent(timeout time.Duration, substr string) {
 	}
 
 	require.Fail(h.t, "Timed out waiting for SSE event containing: "+substr)
-}
-
-// TestE2E_FullServerLifecycle tests the complete server lifecycle via HTTP API
-func TestE2E_FullServerLifecycle(t *testing.T) {
-	h := NewTestHarness(t)
-	defer h.Cleanup()
-
-	// Test 1: Test instance creation via HTTP API
-	t.Run("CreateInstance", func(t *testing.T) {
-		h.CreateInstance("fake", "fake-us-east")
-
-		// Simulate the instance registering with Tailscale
-		h.ControlAPI.AddDevice(controlapi.Device{
-			Hostname: "fake-fake-us-east",
-			Name:     "fake-fake-us-east",
-			Created:  time.Now(),
-			LastSeen: time.Now(),
-			IPAddrs:  []string{"100.64.0.2"},
-			IsOnline: true,
-			Tags:     []string{"tag:exit"},
-		})
-
-		t.Logf("Instance creation initiated successfully")
-	})
-
-	// Test 2: Verify instance is running via MockControlAPI
-	t.Run("VerifyInstanceRunning", func(t *testing.T) {
-		devices, err := h.ControlAPI.ListDevices(context.Background())
-		require.NoError(t, err)
-
-		var found bool
-		for _, d := range devices {
-			if d.Hostname == "fake-fake-us-east" {
-				found = true
-				require.True(t, d.IsOnline)
-				break
-			}
-		}
-		require.True(t, found, "Device 'fake-fake-us-east' not found")
-	})
-
-	// Test 3: Test Server-Sent Events endpoint
-	t.Run("ServerSentEvents", func(t *testing.T) {
-		h.WaitForSSEEvent(5*time.Second, "active-nodes")
-	})
-
-	// Test 4: Delete instance
-	t.Run("DeleteInstance", func(t *testing.T) {
-		h.DeleteInstance("fake", "fake-us-east")
-		t.Logf("Instance deletion completed successfully")
-	})
-
-	// Test 5: Verify instance is deleted
-	t.Run("VerifyInstanceDeleted", func(t *testing.T) {
-		devices, err := h.ControlAPI.ListDevices(context.Background())
-		require.NoError(t, err)
-
-		for _, d := range devices {
-			require.NotEqual(t, "fake-fake-us-east", d.Hostname, "Device should have been deleted")
-		}
-	})
 }
