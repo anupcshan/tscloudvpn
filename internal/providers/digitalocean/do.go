@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,17 @@ import (
 const (
 	cacheDuration = 24 * time.Hour // Cache prices for 24 hours
 )
+
+// ensureTags creates the tags before the droplet so DigitalOcean rejects an
+// invalid tag name before any billable resource exists.
+func (d *digitaloceanProvider) ensureTags(ctx context.Context, tags []string) error {
+	for _, tag := range tags {
+		if _, _, err := d.client.Tags.Create(ctx, &godo.TagCreateRequest{Name: tag}); err != nil {
+			return fmt.Errorf("failed to create tag %q: %w", tag, err)
+		}
+	}
+	return nil
+}
 
 type regionSize struct {
 	SizeSlug   string
@@ -48,8 +60,21 @@ func New(ctx context.Context, cfg *config.Config) (providers.Provider, error) {
 	return &digitaloceanProvider{
 		client:   client,
 		ownerID:  ownerID,
-		ownerTag: fmt.Sprintf("%s:%s", providers.OwnerTagKey, ownerID),
+		ownerTag: fmt.Sprintf("%s:%s", providers.OwnerTagKey, sanitizeTagValue(ownerID)),
 	}, nil
+}
+
+// sanitizeTagValue replaces characters DigitalOcean tag names do not allow
+// with dashes.
+func sanitizeTagValue(v string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			return r
+		default:
+			return '-'
+		}
+	}, v)
 }
 
 func doInstanceHostname(region string) string {
@@ -65,6 +90,12 @@ func (d *digitaloceanProvider) buildTags(extra map[string]string) []string {
 }
 
 func (d *digitaloceanProvider) CreateInstance(ctx context.Context, req providers.CreateRequest) (providers.Instance, error) {
+	tags := d.buildTags(req.Tags)
+
+	if err := d.ensureTags(ctx, tags); err != nil {
+		return providers.Instance{}, err
+	}
+
 	// Ensure region size cache is populated
 	d.regionSizeCacheLock.Lock()
 	if time.Since(d.regionSizeCacheTime) >= cacheDuration || d.regionSizeCache == nil {
@@ -86,7 +117,7 @@ func (d *digitaloceanProvider) CreateInstance(ctx context.Context, req providers
 			Slug: "ubuntu-24-04-x64",
 		},
 		UserData: req.UserData,
-		Tags:     d.buildTags(req.Tags),
+		Tags:     tags,
 	}
 
 	droplet, _, err := d.client.Droplets.Create(ctx, createRequest)
