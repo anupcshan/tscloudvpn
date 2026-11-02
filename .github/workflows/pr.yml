@@ -13,6 +13,10 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version-file: go.mod
+      - name: Check formatting
+        run: |
+          go fmt ./...
+          git diff --exit-code
       - run: go build ./cmd/tscloudvpn
       - run: go test -race -v ./...
       - run: go mod tidy -diff
