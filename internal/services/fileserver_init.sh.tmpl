@@ -68,8 +68,17 @@ sudo apt-get install -y --no-install-recommends tailscale jq curl zfsutils-linux
 
 modprobe zfs
 
-sudo sed -i 's/FLAGS=""/FLAGS="--state=mem: --verbose=1"/' /etc/default/tailscaled
-sudo systemctl restart tailscaled.service
+if [ -d /run/systemd/system ]; then
+  sudo sed -i 's/FLAGS=""/FLAGS="--state=mem: --verbose=1"/' /etc/default/tailscaled
+  sudo systemctl restart tailscaled.service
+else
+  sudo mkdir -p /var/run/tailscale
+  sudo tailscaled --state=mem: --verbose=1 &
+  for _ in $(seq 1 120); do
+    [ -S /var/run/tailscale/tailscaled.sock ] && break
+    sleep 0.5
+  done
+fi
 
 timeout 5m sudo tailscale up --accept-routes {{.Args}}
 

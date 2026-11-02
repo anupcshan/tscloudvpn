@@ -12,6 +12,7 @@ import (
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/gcp"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/hetzner"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/linode"
+	_ "github.com/anupcshan/tscloudvpn/internal/providers/ssh"
 	_ "github.com/anupcshan/tscloudvpn/internal/providers/vultr"
 )
 

@@ -134,7 +134,7 @@ var ExitNode = ServiceType{
 	InstanceName: func(in InstanceNameInput) string {
 		return in.Provider + "-" + in.Region
 	},
-	Hostname: func(instanceName string) string { return instanceName },
+	Hostname:       func(instanceName string) string { return instanceName },
 	InitScript:     providers.InitData,
 	TailscaleFlags: []string{"--advertise-exit-node", "--advertise-connector"},
 	Tags:           []string{"tag:untrusted"},
@@ -152,7 +152,7 @@ var SpeedTest = ServiceType{
 	InstanceName: func(in InstanceNameInput) string {
 		return in.Provider + "-" + in.Region
 	},
-	Hostname: func(instanceName string) string { return "speedtest-" + instanceName },
+	Hostname:       func(instanceName string) string { return "speedtest-" + instanceName },
 	InitScript:     speedtestInitData,
 	TailscaleFlags: nil,
 	Tags:           []string{"tag:untrusted"},
@@ -173,7 +173,7 @@ var FileServer = ServiceType{
 	InstanceName: func(in InstanceNameInput) string {
 		return in.UserProvidedName
 	},
-	Hostname: func(instanceName string) string { return "files-" + instanceName },
+	Hostname:       func(instanceName string) string { return "files-" + instanceName },
 	InitScript:     fileserverInitData,
 	TailscaleFlags: nil,
 	Tags:           []string{"tag:untrusted"},

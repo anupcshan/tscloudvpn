@@ -19,6 +19,7 @@ tscloudvpn is a tool for automatically managing VPN instances across multiple cl
   - Hetzner Cloud
   - Linode
   - Vultr
+- SSH hosts running Docker containers
 - Integration with both Tailscale and Headscale control APIs
 - Automated instance creation and management
 - Web-based management interface
@@ -30,6 +31,7 @@ tscloudvpn is a tool for automatically managing VPN instances across multiple cl
 - Go 1.23 or later
 - SSH public key for instance access
 - API credentials for your chosen cloud provider(s)
+- Docker on any SSH hosts you configure
 - Tailscale account with OAuth client ID and secret, or Headscale API key and URL
 
 ## Installation
@@ -92,6 +94,15 @@ providers:
     client_id: "..."
     client_secret: "..."
     resource_group: "..."
+  ssh:
+    hosts:
+      vps1:                                # region code, used in the ssh-vps1 hostname
+        address: "vps1.invalid"
+        port: 22
+        user: "root"
+        private_key_file: "/etc/tscloudvpn/ssh/id_ed25519"
+        host_key: "ssh-ed25519 AAAA..."    # host public key, not a fingerprint
+        docker_command: "docker"           # or "sudo docker"
 ```
 
 ### Environment Variables (Legacy Support)

@@ -66,8 +66,21 @@ type Config struct {
 			ClientSecret   string `yaml:"client_secret"`
 			ResourceGroup  string `yaml:"resource_group"`
 		} `yaml:"azure"`
+		SSH struct {
+			Hosts map[string]SSHHost `yaml:"hosts"`
+		} `yaml:"ssh"`
 		// Add other providers as needed
 	} `yaml:"providers"`
+}
+
+// SSHHost describes a Docker host reached over SSH.
+type SSHHost struct {
+	Address        string `yaml:"address"`
+	Port           int    `yaml:"port"`
+	User           string `yaml:"user"`
+	PrivateKeyFile string `yaml:"private_key_file"`
+	HostKey        string `yaml:"host_key"`
+	DockerCommand  string `yaml:"docker_command"`
 }
 
 func (cfg *Config) GetController() (controlapi.ControlApi, error) {
