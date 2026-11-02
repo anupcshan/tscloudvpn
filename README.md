@@ -4,8 +4,8 @@
 
 # tscloudvpn
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/tscloudvpn/tscloudvpn.svg)](https://pkg.go.dev/github.com/tscloudvpn/tscloudvpn)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/tscloudvpn/tscloudvpn/blob/main/LICENSE)
+[![Go Reference](https://pkg.go.dev/badge/github.com/anupcshan/tscloudvpn.svg)](https://pkg.go.dev/github.com/anupcshan/tscloudvpn)
+[![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg)](https://github.com/anupcshan/tscloudvpn/blob/main/LICENSE)
 
 tscloudvpn is a tool for automatically managing VPN instances across multiple cloud providers with Tailscale/Headscale integration. It provides a web interface for easy management of cloud VPN exit nodes.
 
@@ -20,6 +20,8 @@ tscloudvpn is a tool for automatically managing VPN instances across multiple cl
   - Linode
   - Vultr
 - SSH hosts running Docker containers
+- Speed test servers powered by LibreSpeed
+- File servers with persistent storage backed by Cloudflare R2
 - Integration with both Tailscale and Headscale control APIs
 - Automated instance creation and management
 - Web-based management interface
@@ -28,7 +30,7 @@ tscloudvpn is a tool for automatically managing VPN instances across multiple cl
 
 ## Prerequisites
 
-- Go 1.23 or later
+- Go
 - SSH public key for instance access
 - API credentials for your chosen cloud provider(s)
 - Docker on any SSH hosts you configure
@@ -66,6 +68,11 @@ control:
     url: "..."
     api_key: "..."
     user_id: 1
+
+# Optional. Required for file server persistent volumes.
+cloudflare:
+  account_id: "..."
+  api_token: "..."
 
 providers:
   digitalocean:
@@ -194,6 +201,7 @@ Use these values in your configuration:
 4. Use the interface to:
    - View available regions across providers
    - Launch new VPN instances
+   - Launch speed test and file server instances
    - Monitor instance status
    - Manage exit nodes
 
